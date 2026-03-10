@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Card, Button, Input, Space, Tag, Modal, Form, Select, message } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
 
 const STORAGE_KEY = 'iterminal_connections'
+
+type TestResult = 'success' | 'failed' | null
 
 function Connections() {
   const navigate = useNavigate()
@@ -19,6 +21,9 @@ function Connections() {
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null)
   const [form] = Form.useForm()
   const [selectedGroup, setSelectedGroup] = useState<string>('全部')
+  const [testLoading, setTestLoading] = useState(false)
+  const [testResult, setTestResult] = useState<TestResult>(null)
+  const [testMessage, setTestMessage] = useState('')
   
   // 从 store 获取已连接的连接
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
@@ -51,12 +56,16 @@ function Connections() {
     setEditingConnection(null)
     form.resetFields()
     form.setFieldsValue({ group: selectedGroup === '全部' ? '默认' : selectedGroup, port: 22 })
+    setTestResult(null)
+    setTestMessage('')
     setIsModalOpen(true)
   }
 
   const handleEdit = (conn: Connection) => {
     setEditingConnection(conn)
     form.setFieldsValue(conn)
+    setTestResult(null)
+    setTestMessage('')
     setIsModalOpen(true)
   }
 
@@ -66,15 +75,18 @@ function Connections() {
   }
 
   const handleSubmit = (values: Partial<Connection>) => {
+    // 确保 port 是数字
+    const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
+    
     if (editingConnection) {
-      setConnections(connections.map(c => c.id === editingConnection.id ? { ...c, ...values } : c))
+      setConnections(connections.map(c => c.id === editingConnection.id ? { ...c, ...values, port } : c))
       message.success('连接已更新')
     } else {
       const newConn: Connection = {
         id: Date.now().toString(),
         name: values.name || '',
         host: values.host || '',
-        port: values.port || 22,
+        port,
         username: values.username || '',
         password: values.password,
         group: values.group || '默认',
@@ -85,6 +97,41 @@ function Connections() {
       message.success('连接已添加')
     }
     setIsModalOpen(false)
+  }
+
+  // 测试连接
+  const handleTestConnection = async () => {
+    try {
+      const values = await form.validateFields(['host', 'port', 'username', 'password'])
+      const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
+      
+      setTestLoading(true)
+      setTestResult(null)
+      setTestMessage('')
+
+      const result = await invoke<boolean>('test_connection', {
+        connection: {
+          host: values.host,
+          port,
+          username: values.username,
+          password: values.password || null,
+          keyFile: null,
+        }
+      })
+
+      if (result) {
+        setTestResult('success')
+        setTestMessage('连接成功')
+      } else {
+        setTestResult('failed')
+        setTestMessage('连接失败：认证失败')
+      }
+    } catch (error) {
+      setTestResult('failed')
+      setTestMessage(`连接失败：${error}`)
+    } finally {
+      setTestLoading(false)
+    }
   }
 
   // 检查连接是否已连接
@@ -294,6 +341,33 @@ function Connections() {
           </Form.Item>
           <Form.Item name="tags" label="标签">
             <Select mode="tags" placeholder="添加标签" />
+          </Form.Item>
+          
+          {/* 测试连接按钮和结果 */}
+          <Form.Item style={{ marginBottom: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Button 
+                onClick={handleTestConnection}
+                loading={testLoading}
+              >
+                测试连接
+              </Button>
+              {testResult && (
+                <Space>
+                  {testResult === 'success' ? (
+                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                  ) : (
+                    <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 16 }} />
+                  )}
+                  <span style={{ 
+                    color: testResult === 'success' ? '#52c41a' : '#ff4d4f',
+                    fontSize: 14
+                  }}>
+                    {testMessage}
+                  </span>
+                </Space>
+              )}
+            </div>
           </Form.Item>
         </Form>
       </Modal>

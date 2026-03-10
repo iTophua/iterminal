@@ -4,6 +4,7 @@ import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, Searc
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
 
@@ -19,66 +20,97 @@ function Terminal() {
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
   const fitAddons = useRef<{ [key: string]: FitAddon }>({})
-  const readingRef = useRef<{ [key: string]: boolean }>({})
   const initializedRef = useRef<Set<string>>(new Set())
+  const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
 
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
   const activeSession = activeConnection?.sessions.find(s => s.id === activeConnection?.activeSessionId)
 
   // 初始化终端
   useEffect(() => {
-    if (!activeSession) return
+    if (!activeSession?.shellId) return
 
     const key = `${activeSession.connectionId}_${activeSession.id}`
+    const shellId = activeSession.shellId
     
+    // 已初始化过，调整大小并获取焦点
     if (initializedRef.current.has(key)) {
       const addon = fitAddons.current[key]
+      const term = terminalInstances.current[key]
       if (addon) setTimeout(() => { try { addon.fit() } catch {} }, 50)
+      if (term) setTimeout(() => { try { term.focus() } catch {} }, 50)
       return
     }
 
     const container = terminalRefs.current[key]
     if (!container) return
 
-    const terminal = new XTerm({
-      cursorBlink: true,
-      fontSize: 14,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-      theme: { background: '#000000', foreground: '#FFFFFF', cursor: '#FFFFFF' },
-      convertEol: true,
-    })
+    let cancelled = false
 
-    const fitAddon = new FitAddon()
-    terminal.loadAddon(fitAddon)
-    container.innerHTML = ''
-    terminal.open(container)
-    
-    terminal.onData(data => {
-      invoke('write_shell', { id: activeSession.shellId, data }).catch(console.error)
-    })
+    // 使用 async 函数确保正确的初始化顺序
+    const init = async () => {
+      // 1. 先创建终端
+      const terminal = new XTerm({
+        cursorBlink: true,
+        fontSize: 14,
+        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        theme: { background: '#000000', foreground: '#FFFFFF', cursor: '#FFFFFF' },
+        convertEol: true,
+      })
 
-    setTimeout(() => { try { fitAddon.fit() } catch {} }, 100)
-    
-    terminalInstances.current[key] = terminal
-    fitAddons.current[key] = fitAddon
-    initializedRef.current.add(key)
-    readingRef.current[key] = true
+      const fitAddon = new FitAddon()
+      terminal.loadAddon(fitAddon)
+      container.innerHTML = ''
+      terminal.open(container)
+      
+      // 输入处理
+      terminal.onData(data => {
+        invoke('write_shell', { id: shellId, data }).catch(console.error)
+      })
 
-    const readLoop = async () => {
-      while (readingRef.current[key]) {
-        try {
-          const result = await invoke<{ data: string; eof: boolean }>('read_shell', { id: activeSession.shellId })
-          if (result?.data && terminalInstances.current[key]) {
-            terminalInstances.current[key].write(result.data)
-          }
-        } catch {}
-        await new Promise(r => setTimeout(r, 50))
+      setTimeout(() => { try { fitAddon.fit() } catch {} }, 100)
+      
+      // 暂存到 ref，供事件回调使用
+      terminalInstances.current[key] = terminal
+      fitAddons.current[key] = fitAddon
+
+      // 2. 注册事件监听
+      const eventName = `shell-output-${shellId}`
+      
+      const unlisten = await listen<string>(eventName, (event) => {
+        const term = terminalInstances.current[key]
+        if (term && event.payload) {
+          term.write(event.payload)
+        }
+      })
+      
+      if (cancelled) {
+        unlisten()
+        return
       }
+      
+      unlistenersRef.current[key] = unlisten
+      // 监听器注册成功后，才标记为已初始化
+      initializedRef.current.add(key)
+      
+      // 3. 通知后端开始发送数据
+      await invoke('start_shell_reader', { id: shellId })
     }
-    readLoop()
 
-    const interval = setInterval(() => { try { fitAddon.fit() } catch {} }, 5000)
-    return () => clearInterval(interval)
+    init().catch(console.error)
+    const interval = setInterval(() => { 
+      const addon = fitAddons.current[key]
+      if (addon) { try { addon.fit() } catch {} }
+    }, 5000)
+    
+    // 注意：不要在这里取消事件监听器！
+    // 切换会话时 useEffect 清理函数会被调用，但我们希望保持事件监听器活跃
+    // 事件监听器只在关闭会话时取消（在 handleCloseSession 中处理）
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+      // 不取消事件监听器 - 保持活跃状态
+    }
   }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId])
 
   // 新建会话
@@ -99,8 +131,16 @@ function Terminal() {
     const sess = conn?.sessions.find(s => s.id === sessId)
     const key = `${connId}_${sessId}`
 
-    readingRef.current[key] = false
-    if (sess?.shellId) await invoke('close_shell', { id: sess.shellId }).catch(() => {})
+    // 清理事件监听
+    if (unlistenersRef.current[key]) {
+      unlistenersRef.current[key]()
+      delete unlistenersRef.current[key]
+    }
+
+    if (sess?.shellId) {
+      await invoke('close_shell', { id: sess.shellId }).catch(() => {})
+    }
+    
     if (terminalInstances.current[key]) {
       terminalInstances.current[key].dispose()
       delete terminalInstances.current[key]
@@ -123,7 +163,13 @@ function Terminal() {
 
     for (const s of conn.sessions) {
       const key = `${connId}_${s.id}`
-      readingRef.current[key] = false
+      
+      // 清理事件监听
+      if (unlistenersRef.current[key]) {
+        unlistenersRef.current[key]()
+        delete unlistenersRef.current[key]
+      }
+      
       if (s.shellId) await invoke('close_shell', { id: s.shellId }).catch(() => {})
       if (terminalInstances.current[key]) {
         terminalInstances.current[key].dispose()
@@ -141,6 +187,13 @@ function Terminal() {
     const resize = () => Object.values(fitAddons.current).forEach(a => { try { a?.fit() } catch {} })
     window.addEventListener('resize', resize)
     return () => window.removeEventListener('resize', resize)
+  }, [])
+
+  // 清理所有事件监听
+  useEffect(() => {
+    return () => {
+      Object.values(unlistenersRef.current).forEach(unlisten => unlisten())
+    }
   }, [])
 
   if (connectedConnections.length === 0) {
@@ -192,6 +245,7 @@ function Terminal() {
           style={{ height: '100%' }}
           tabBarStyle={{ margin: 0, padding: '0 12px', background: '#252526' }}
           onTabClick={(key) => { if (key === '__add__') handleAddSession(conn.connectionId) }}
+          destroyInactiveTabPane={false}
         />
       ),
     }
@@ -205,6 +259,7 @@ function Terminal() {
         items={connectionItems}
         style={{ height: '100%' }}
         tabBarStyle={{ margin: 0, padding: '0 12px', background: '#252526' }}
+        destroyInactiveTabPane={false}
       />
     </div>
   )

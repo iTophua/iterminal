@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::Mutex;
-use std::collections::HashMap;
-use std::time::Duration;
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+use tauri::AppHandle;
+use tauri::Emitter;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SSHConnection {
@@ -26,7 +28,6 @@ pub struct CommandResult {
 lazy_static::lazy_static! {
     static ref SESSIONS: Mutex<HashMap<String, Session>> = Mutex::new(HashMap::new());
     static ref SHELLS: Mutex<HashMap<String, Arc<Mutex<ssh2::Channel>>>> = Mutex::new(HashMap::new());
-    static ref SHELL_OUTPUTS: Mutex<HashMap<String, Vec<u8>>> = Mutex::new(HashMap::new());
     static ref RUNNING: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
     // 连接级别的锁，防止并发 get_shell
     static ref SHELL_LOCKS: Mutex<HashMap<String, Arc<Mutex<()>>>> = Mutex::new(HashMap::new());
@@ -51,10 +52,17 @@ pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String
     session.handshake().map_err(|e| e.to_string())?;
 
     if let Some(password) = &connection.password {
-        session.userauth_password(&connection.username, password)
+        session
+            .userauth_password(&connection.username, password)
             .map_err(|e| format!("Password auth failed: {}", e))?;
     } else if let Some(key_file) = &connection.key_file {
-        session.userauth_pubkey_file(&connection.username, None, std::path::Path::new(key_file), None)
+        session
+            .userauth_pubkey_file(
+                &connection.username,
+                None,
+                std::path::Path::new(key_file),
+                None,
+            )
             .map_err(|e| format!("Key auth failed: {}", e))?;
     }
 
@@ -73,7 +81,11 @@ pub fn disconnect_ssh(id: String) -> Result<bool, String> {
     // 收集需要停止的keys
     let keys_to_stop: Vec<String> = {
         let running = RUNNING.lock().unwrap();
-        running.keys().filter(|k| k.starts_with(&prefix)).cloned().collect()
+        running
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect()
     };
 
     // 停止读取线程
@@ -91,14 +103,6 @@ pub fn disconnect_ssh(id: String) -> Result<bool, String> {
             if let Some(ch) = shells.remove(k) {
                 ch.lock().unwrap().close().ok();
             }
-        }
-    }
-
-    // 清理输出缓冲区
-    {
-        let mut outputs = SHELL_OUTPUTS.lock().unwrap();
-        for k in &keys_to_stop {
-            outputs.remove(k);
         }
     }
 
@@ -122,10 +126,12 @@ pub fn execute_command(id: String, command: String) -> Result<CommandResult, Str
     channel.exec(&command).map_err(|e| e.to_string())?;
 
     let mut output = String::new();
-    channel.read_to_string(&mut output).map_err(|e| e.to_string())?;
+    channel
+        .read_to_string(&mut output)
+        .map_err(|e| e.to_string())?;
     channel.wait_close().ok();
 
-    // 恢复非阻塞模式（如果有shell在使用）
+    // 恢复非阻塞模式
     session.set_blocking(false);
 
     Ok(CommandResult {
@@ -146,10 +152,17 @@ pub fn test_connection(connection: SSHConnection) -> Result<bool, String> {
     session.handshake().map_err(|e| e.to_string())?;
 
     if let Some(password) = &connection.password {
-        session.userauth_password(&connection.username, password)
+        session
+            .userauth_password(&connection.username, password)
             .map_err(|e| format!("Password auth failed: {}", e))?;
     } else if let Some(key_file) = &connection.key_file {
-        session.userauth_pubkey_file(&connection.username, None, std::path::Path::new(key_file), None)
+        session
+            .userauth_pubkey_file(
+                &connection.username,
+                None,
+                std::path::Path::new(key_file),
+                None,
+            )
             .map_err(|e| format!("Key auth failed: {}", e))?;
     }
 
@@ -158,9 +171,7 @@ pub fn test_connection(connection: SSHConnection) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub fn get_shell(id: String) -> Result<String, String> {
-    println!("[DEBUG] get_shell called for connection: {}", id);
-
+pub fn get_shell(id: String, _app: AppHandle) -> Result<String, String> {
     // 获取连接级别的锁
     let shell_lock = {
         let locks = SHELL_LOCKS.lock().unwrap();
@@ -174,11 +185,12 @@ pub fn get_shell(id: String) -> Result<String, String> {
 
     // 获取锁，防止同一连接的并发 get_shell
     let _guard = shell_lock.lock().unwrap();
-    println!("[DEBUG] get_shell acquired lock for: {}", id);
 
     // 收集该连接的所有 shell_id
     let prefix = format!("{}-shell", &id);
-    let shell_ids: Vec<String> = SHELLS.lock().unwrap()
+    let shell_ids: Vec<String> = SHELLS
+        .lock()
+        .unwrap()
         .keys()
         .filter(|k| k.starts_with(&prefix))
         .cloned()
@@ -191,13 +203,11 @@ pub fn get_shell(id: String) -> Result<String, String> {
     // 等待 reader thread 停止
     std::thread::sleep(Duration::from_millis(50));
 
-    println!("[DEBUG] Creating channel in blocking mode");
-
     // 创建 channel - 使用阻塞模式
     let (channel, shell_id) = {
         let sessions = SESSIONS.lock().unwrap();
         let session = sessions.get(&id).ok_or("Session not found")?;
-        
+
         // 切换到阻塞模式
         session.set_blocking(true);
 
@@ -206,14 +216,22 @@ pub fn get_shell(id: String) -> Result<String, String> {
         let mut modes = ssh2::PtyModes::new();
         modes.set_character(ssh2::PtyModeOpcode::ECHO, Some(1 as char));
 
-        channel.request_pty("xterm", Some(modes), Some((80, 24, 0, 0))).map_err(|e| e.to_string())?;
+        channel
+            .request_pty("xterm", Some(modes), Some((80, 24, 0, 0)))
+            .map_err(|e| e.to_string())?;
         channel.shell().map_err(|e| e.to_string())?;
 
         // 切换回非阻塞模式
         session.set_blocking(false);
 
-        let shell_id = format!("{}-shell-{}", id,
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+        let shell_id = format!(
+            "{}-shell-{}",
+            id,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
 
         (channel, shell_id)
     };
@@ -222,24 +240,77 @@ pub fn get_shell(id: String) -> Result<String, String> {
     for sid in &shell_ids {
         RUNNING.lock().unwrap().insert(sid.clone(), true);
     }
-
     let channel_arc = Arc::new(Mutex::new(channel));
-    SHELLS.lock().unwrap().insert(shell_id.clone(), channel_arc.clone());
-    SHELL_OUTPUTS.lock().unwrap().insert(shell_id.clone(), Vec::new());
-    RUNNING.lock().unwrap().insert(shell_id.clone(), true);
+    SHELLS
+        .lock()
+        .unwrap()
+        .insert(shell_id.clone(), channel_arc.clone());
 
-    println!("[DEBUG] get_shell successful, shell_id: {}", shell_id);
+    Ok(shell_id)
+}
+#[tauri::command]
+pub fn write_shell(id: String, data: String) -> Result<bool, String> {
+    let shells = SHELLS.lock().unwrap();
+    let channel = shells.get(&id).ok_or("Shell not found")?;
 
-    let shell_id_clone = shell_id.clone();
+    let mut ch = channel.lock().unwrap();
+    let bytes = data.as_bytes();
+    let mut written = 0;
+
+    while written < bytes.len() {
+        match ch.write(&bytes[written..]) {
+            Ok(n) if n > 0 => {
+                written += n;
+            }
+            Ok(_) => continue,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn close_shell(id: String) -> Result<bool, String> {
+    RUNNING.lock().unwrap().insert(id.clone(), false);
+    if let Some(ch) = SHELLS.lock().unwrap().remove(&id) {
+        ch.lock().unwrap().close().ok();
+    }
+    Ok(true)
+}
+
+/// 启动 shell 的 reader thread（前端准备好后调用）
+#[tauri::command]
+pub fn start_shell_reader(id: String, app: AppHandle) -> Result<bool, String> {
+    let channel_arc = SHELLS
+        .lock()
+        .unwrap()
+        .get(&id)
+        .ok_or("Shell not found")?
+        .clone();
+    
+    // 标记为运行中
+    RUNNING.lock().unwrap().insert(id.clone(), true);
+    
+    // 启动 reader thread
+    let shell_id_clone = id.clone();
+    let app_handle = app.clone();
+
     std::thread::spawn(move || {
-        println!("[DEBUG] Reader thread started for shell: {}", shell_id_clone);
         loop {
             // 检查是否应该暂停
-            let is_running = RUNNING.lock().unwrap().get(&shell_id_clone).copied().unwrap_or(false);
+            let is_running = RUNNING
+                .lock()
+                .unwrap()
+                .get(&shell_id_clone)
+                .copied()
+                .unwrap_or(false);
             if !is_running {
-                // 检查 shell 是否还存在（可能已被删除）
+                // 检查 shell 是否还存在
                 if !SHELLS.lock().unwrap().contains_key(&shell_id_clone) {
-                    println!("[DEBUG] Reader thread stopped (shell removed): {}", shell_id_clone);
                     break;
                 }
                 // 暂停中，等待恢复
@@ -256,93 +327,35 @@ pub fn get_shell(id: String) -> Result<String, String> {
                 match ch.read(&mut buf) {
                     Ok(n) if n > 0 => {
                         data.extend_from_slice(&buf[..n]);
-                        println!("[DEBUG] Reader thread read {} bytes from shell: {}", n, shell_id_clone);
                     }
                     Ok(_) => {
                         if ch.eof() {
                             should_break = true;
-                            println!("[DEBUG] Reader thread EOF for shell: {}", shell_id_clone);
                         }
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        println!("[DEBUG] Reader thread error: {:?} for shell: {}", e, shell_id_clone);
-                    }
+                    Err(_) => {}
                 }
             }
 
+            // 有数据时通过 Event 推送到前端
             if !data.is_empty() {
-                SHELL_OUTPUTS.lock().unwrap().get_mut(&shell_id_clone).map(|o| o.extend_from_slice(&data));
+                let data_str = String::from_utf8_lossy(&data).to_string();
+                let event_name = format!("shell-output-{}", shell_id_clone);
+
+                let _ = app_handle.emit(&event_name, &data_str);
             }
 
-            if should_break { break; }
+            if should_break {
+                // 发送 EOF 事件
+                let event_name = format!("shell-output-{}", shell_id_clone);
+                let _ = app_handle.emit(&event_name, serde_json::json!({"eof": true}));
+                break;
+            }
+
             std::thread::sleep(Duration::from_millis(5));
         }
     });
 
-    Ok(shell_id)
-}
-
-#[tauri::command]
-pub fn write_shell(id: String, data: String) -> Result<bool, String> {
-    let shells = SHELLS.lock().unwrap();
-    let channel = shells.get(&id).ok_or("Shell not found")?;
-
-    println!("[DEBUG] write_shell - id: {}, data length: {}", id, data.len());
-    println!("[DEBUG] write_shell - data: {:?}", data);
-
-    let mut ch = channel.lock().unwrap();
-    let bytes = data.as_bytes();
-    let mut written = 0;
-
-    while written < bytes.len() {
-        match ch.write(&bytes[written..]) {
-            Ok(n) if n > 0 => {
-                written += n;
-                println!("[DEBUG] write_shell - wrote {} bytes, total: {}/{}", n, written, bytes.len());
-            }
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                println!("[DEBUG] write_shell - WouldBlock, sleeping");
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(e) => {
-                println!("[DEBUG] write_shell - error: {}", e);
-                return Err(e.to_string())
-            }
-        }
-    }
-    println!("[DEBUG] write_shell - completed successfully");
-    Ok(true)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ShellReadResult {
-    pub data: String,
-    pub eof: bool,
-}
-
-#[tauri::command]
-pub fn read_shell(id: String) -> Result<ShellReadResult, String> {
-    let mut outputs = SHELL_OUTPUTS.lock().unwrap();
-    if let Some(buffer) = outputs.get_mut(&id) {
-        if buffer.is_empty() {
-            return Ok(ShellReadResult { data: "".to_string(), eof: false });
-        }
-        let data = String::from_utf8_lossy(buffer).to_string();
-        buffer.clear();
-        Ok(ShellReadResult { data, eof: false })
-    } else {
-        Ok(ShellReadResult { data: "".to_string(), eof: true })
-    }
-}
-
-#[tauri::command]
-pub fn close_shell(id: String) -> Result<bool, String> {
-    RUNNING.lock().unwrap().insert(id.clone(), false);
-    if let Some(ch) = SHELLS.lock().unwrap().remove(&id) {
-        ch.lock().unwrap().close().ok();
-    }
-    SHELL_OUTPUTS.lock().unwrap().remove(&id);
     Ok(true)
 }
