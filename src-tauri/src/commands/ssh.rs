@@ -28,6 +28,8 @@ lazy_static::lazy_static! {
     static ref SHELLS: Mutex<HashMap<String, Arc<Mutex<ssh2::Channel>>>> = Mutex::new(HashMap::new());
     static ref SHELL_OUTPUTS: Mutex<HashMap<String, Vec<u8>>> = Mutex::new(HashMap::new());
     static ref RUNNING: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
+    // 连接级别的锁，防止并发 get_shell
+    static ref SHELL_LOCKS: Mutex<HashMap<String, Arc<Mutex<()>>>> = Mutex::new(HashMap::new());
 }
 
 #[tauri::command]
@@ -159,26 +161,67 @@ pub fn test_connection(connection: SSHConnection) -> Result<bool, String> {
 pub fn get_shell(id: String) -> Result<String, String> {
     println!("[DEBUG] get_shell called for connection: {}", id);
 
-    let sessions = SESSIONS.lock().unwrap();
-    let session = sessions.get(&id).ok_or("Session not found")?;
+    // 获取连接级别的锁
+    let shell_lock = {
+        let locks = SHELL_LOCKS.lock().unwrap();
+        locks.get(&id).cloned().unwrap_or_else(|| {
+            let lock = Arc::new(Mutex::new(()));
+            drop(locks);
+            SHELL_LOCKS.lock().unwrap().insert(id.clone(), lock.clone());
+            lock
+        })
+    };
 
-    // 确保session在阻塞模式
-    session.set_blocking(true);
+    // 获取锁，防止同一连接的并发 get_shell
+    let _guard = shell_lock.lock().unwrap();
+    println!("[DEBUG] get_shell acquired lock for: {}", id);
 
-    let mut channel = session.channel_session().map_err(|e| e.to_string())?;
+    // 收集该连接的所有 shell_id
+    let prefix = format!("{}-shell", &id);
+    let shell_ids: Vec<String> = SHELLS.lock().unwrap()
+        .keys()
+        .filter(|k| k.starts_with(&prefix))
+        .cloned()
+        .collect();
 
-    // 设置终端模式，启用 echo (值为 1)
-    let mut modes = ssh2::PtyModes::new();
-    modes.set_character(ssh2::PtyModeOpcode::ECHO, Some(1 as char));
+    // 暂停所有 reader thread
+    for sid in &shell_ids {
+        RUNNING.lock().unwrap().insert(sid.clone(), false);
+    }
+    // 等待 reader thread 停止
+    std::thread::sleep(Duration::from_millis(50));
 
-    channel.request_pty("xterm", Some(modes), Some((80, 24, 0, 0))).map_err(|e| e.to_string())?;
-    channel.shell().map_err(|e| e.to_string())?;
+    println!("[DEBUG] Creating channel in blocking mode");
 
-    // 设置为非阻塞模式
-    session.set_blocking(false);
+    // 创建 channel - 使用阻塞模式
+    let (channel, shell_id) = {
+        let sessions = SESSIONS.lock().unwrap();
+        let session = sessions.get(&id).ok_or("Session not found")?;
+        
+        // 切换到阻塞模式
+        session.set_blocking(true);
 
-    let shell_id = format!("{}-shell-{}", id,
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+        let mut channel = session.channel_session().map_err(|e| e.to_string())?;
+
+        let mut modes = ssh2::PtyModes::new();
+        modes.set_character(ssh2::PtyModeOpcode::ECHO, Some(1 as char));
+
+        channel.request_pty("xterm", Some(modes), Some((80, 24, 0, 0))).map_err(|e| e.to_string())?;
+        channel.shell().map_err(|e| e.to_string())?;
+
+        // 切换回非阻塞模式
+        session.set_blocking(false);
+
+        let shell_id = format!("{}-shell-{}", id,
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis());
+
+        (channel, shell_id)
+    };
+
+    // 恢复所有 reader thread
+    for sid in &shell_ids {
+        RUNNING.lock().unwrap().insert(sid.clone(), true);
+    }
 
     let channel_arc = Arc::new(Mutex::new(channel));
     SHELLS.lock().unwrap().insert(shell_id.clone(), channel_arc.clone());
@@ -191,9 +234,17 @@ pub fn get_shell(id: String) -> Result<String, String> {
     std::thread::spawn(move || {
         println!("[DEBUG] Reader thread started for shell: {}", shell_id_clone);
         loop {
-            if !RUNNING.lock().unwrap().get(&shell_id_clone).copied().unwrap_or(false) {
-                println!("[DEBUG] Reader thread stopped for shell: {}", shell_id_clone);
-                break;
+            // 检查是否应该暂停
+            let is_running = RUNNING.lock().unwrap().get(&shell_id_clone).copied().unwrap_or(false);
+            if !is_running {
+                // 检查 shell 是否还存在（可能已被删除）
+                if !SHELLS.lock().unwrap().contains_key(&shell_id_clone) {
+                    println!("[DEBUG] Reader thread stopped (shell removed): {}", shell_id_clone);
+                    break;
+                }
+                // 暂停中，等待恢复
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
             }
 
             let mut data = Vec::new();
@@ -213,9 +264,7 @@ pub fn get_shell(id: String) -> Result<String, String> {
                             println!("[DEBUG] Reader thread EOF for shell: {}", shell_id_clone);
                         }
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        //println!("[DEBUG] Reader thread WouldBlock for shell: {}", shell_id_clone);
-                    }
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                     Err(e) => {
                         println!("[DEBUG] Reader thread error: {:?} for shell: {}", e, shell_id_clone);
                     }

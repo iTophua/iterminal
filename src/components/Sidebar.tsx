@@ -1,7 +1,8 @@
-import { Layout, Menu } from 'antd'
+import { Layout, Menu, Badge } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { CloudServerOutlined, FolderOutlined, DesktopOutlined } from '@ant-design/icons'
+import { CloudServerOutlined, FolderOutlined, DesktopOutlined, CodeOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
+import { useTerminalStore } from '../stores/terminalStore'
 
 const { Sider } = Layout
 
@@ -15,7 +16,11 @@ interface Connection {
 function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [groups, setGroups] = useState<string[]>(['All', 'Production', 'Development', 'Testing'])
+  const [groups, setGroups] = useState<string[]>(['全部', '生产环境', '开发环境', '测试环境'])
+  
+  // 获取已连接的连接数量
+  const connectedConnections = useTerminalStore(state => state.connectedConnections)
+  const connectedCount = connectedConnections.length
 
   // 从localStorage加载分组
   useEffect(() => {
@@ -23,7 +28,7 @@ function Sidebar() {
     if (saved) {
       const connections: Connection[] = JSON.parse(saved)
       const uniqueGroups = [...new Set(connections.map(c => c.group))]
-      setGroups(['All', ...uniqueGroups])
+      setGroups(['全部', ...uniqueGroups])
     }
   }, [location.pathname])
 
@@ -35,12 +40,24 @@ function Sidebar() {
   const menuItems = [
     { key: 'divider', type: 'divider' as const },
     ...groups.map(group => ({
-      key: group === 'All' ? '/connections' : `/connections?group=${encodeURIComponent(group)}`,
-      icon: group === 'All' ? <DesktopOutlined /> : <CloudServerOutlined />,
+      key: group === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(group)}`,
+      icon: group === '全部' ? <DesktopOutlined /> : <CloudServerOutlined />,
       label: group,
     })),
     { key: 'divider2', type: 'divider' as const },
-    { key: '/files', icon: <FolderOutlined />, label: 'File Manager' },
+    { 
+      key: '/terminal', 
+      icon: <CodeOutlined />,
+      label: (
+        <span>
+          终端
+          {connectedCount > 0 && (
+            <Badge count={connectedCount} size="small" style={{ marginLeft: 8, backgroundColor: '#52c41a' }} />
+          )}
+        </span>
+      )
+    },
+    { key: '/files', icon: <FolderOutlined />, label: '文件管理' },
   ]
 
   const handleMenuClick = (key: string) => {
@@ -51,10 +68,10 @@ function Sidebar() {
       if (group) {
         navigate('/connections', { state: { selectedGroup: group } })
       } else {
-        navigate('/connections', { state: { selectedGroup: 'All' } })
+        navigate('/connections', { state: { selectedGroup: '全部' } })
       }
     } else if (key === '/connections') {
-      navigate('/connections', { state: { selectedGroup: 'All' } })
+      navigate('/connections', { state: { selectedGroup: '全部' } })
     } else {
       navigate(key)
     }

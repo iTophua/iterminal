@@ -39,7 +39,7 @@ function FileManager() {
 
   const columns: ColumnsType<FileItem> = [
     {
-      title: 'Name',
+      title: '名称',
       dataIndex: 'name',
       key: 'name',
       render: (text, record) => (
@@ -50,28 +50,28 @@ function FileManager() {
       ),
     },
     {
-      title: 'Size',
+      title: '大小',
       dataIndex: 'size',
       key: 'size',
       render: (size) => formatSize(size),
     },
     {
-      title: 'Modified',
+      title: '修改时间',
       dataIndex: 'modifiedTime',
       key: 'modifiedTime',
     },
     {
-      title: 'Actions',
+      title: '操作',
       key: 'actions',
       render: (_, record) => (
         <Space>
           {!record.isDirectory && (
             <>
-              <Button size="small" icon={<UploadOutlined />} onClick={() => message.info('Upload: ' + record.name)} />
-              <Button size="small" icon={<DownloadOutlined />} onClick={() => message.info('Download: ' + record.name)} />
+              <Button size="small" icon={<UploadOutlined />} onClick={() => message.info('上传: ' + record.name)} />
+              <Button size="small" icon={<DownloadOutlined />} onClick={() => message.info('下载: ' + record.name)} />
             </>
           )}
-          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => message.info('Delete: ' + record.name)} />
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => message.info('删除: ' + record.name)} />
         </Space>
       ),
     },
@@ -83,10 +83,10 @@ function FileManager() {
         <div style={{ flex: 1, background: '#1f1f1f', padding: 16, borderRadius: 8 }}>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Breadcrumb
-              items={[{ title: 'Local' }, { title: localPath }]}
+              items={[{ title: '本地' }, { title: localPath }]}
             />
             <Space>
-              <Button icon={<UploadOutlined />}>Upload</Button>
+              <Button icon={<UploadOutlined />}>上传</Button>
             </Space>
           </div>
           <Table
@@ -99,10 +99,10 @@ function FileManager() {
         <div style={{ flex: 1, background: '#1f1f1f', padding: 16, borderRadius: 8 }}>
           <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Breadcrumb
-              items={[{ title: 'Remote' }, { title: remotePath }]}
+              items={[{ title: '远程' }, { title: remotePath }]}
             />
             <Space>
-              <Button icon={<DownloadOutlined />}>Download</Button>
+              <Button icon={<DownloadOutlined />}>下载</Button>
             </Space>
           </div>
           <Table

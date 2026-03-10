@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { Layout } from 'antd'
 import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
@@ -7,6 +7,56 @@ import FileManager from './pages/FileManager'
 import './styles/global.css'
 
 const { Content } = Layout
+
+// 主内容组件 - 处理终端的持久化
+function MainContent() {
+  const location = useLocation()
+  
+  return (
+    <Content style={{
+      margin: 0,
+      padding: 0,
+      background: '#1E1E1E',
+      overflow: 'hidden',
+      flex: 1,
+      display: 'flex',
+      flexDirection: 'column',
+      position: 'relative'
+    }}>
+      {/* 终端组件始终挂载，用 CSS 控制显示/隐藏 */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: location.pathname === '/terminal' ? 'flex' : 'none',
+        flexDirection: 'column'
+      }}>
+        <Terminal />
+      </div>
+      
+      {/* 其他页面 */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: location.pathname !== '/terminal' ? 'flex' : 'none',
+        flexDirection: 'column'
+      }}>
+        <Routes>
+          <Route path="/" element={<Navigate to="/connections" replace />} />
+          <Route path="/connections" element={<Connections />} />
+          <Route path="/files" element={<FileManager />} />
+          {/* /terminal 路由不渲染任何东西，因为上面已经渲染了 */}
+          <Route path="/terminal" element={null} />
+        </Routes>
+      </div>
+    </Content>
+  )
+}
 
 function App() {
   return (
@@ -29,22 +79,7 @@ function App() {
           <Sidebar />
 
           {/* 主内容区 */}
-          <Content style={{
-            margin: 0,
-            padding: 0,
-            background: '#1E1E1E',
-            overflow: 'hidden',
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column'
-          }}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/connections" replace />} />
-              <Route path="/connections" element={<Connections />} />
-              <Route path="/terminal" element={<Terminal />} />
-              <Route path="/files" element={<FileManager />} />
-            </Routes>
-          </Content>
+          <MainContent />
         </Layout>
 
         {/* 底部状态栏 */}
@@ -58,7 +93,7 @@ function App() {
           color: '#999999',
           fontSize: 12
         }}>
-          iTerminal - SSH Connection Manager ©2026
+          iTerminal - SSH 连接管理器 ©2026
         </div>
       </Layout>
     </BrowserRouter>
