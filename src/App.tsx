@@ -36,26 +36,44 @@ function MainContent() {
         <Terminal />
       </div>
       
-      {/* 其他页面 */}
+      {/* 连接管理组件始终挂载，用 CSS 控制显示/隐藏 */}
       <div style={{
         position: 'absolute',
         top: 0,
         left: 0,
         right: 0,
         bottom: 0,
-        display: location.pathname !== '/terminal' ? 'flex' : 'none',
+        display: location.pathname === '/connections' ? 'flex' : 'none',
         flexDirection: 'column',
         padding: 16,
         overflow: 'auto'
       }}>
-        <Routes>
-          <Route path="/" element={<Navigate to="/connections" replace />} />
-          <Route path="/connections" element={<Connections />} />
-          <Route path="/files" element={<FileManager />} />
-          {/* /terminal 路由不渲染任何东西，因为上面已经渲染了 */}
-          <Route path="/terminal" element={null} />
-        </Routes>
+        <Connections />
       </div>
+      
+      {/* 文件管理页面 */}
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: location.pathname === '/files' ? 'flex' : 'none',
+        flexDirection: 'column',
+        padding: 16,
+        overflow: 'auto'
+      }}>
+        <FileManager />
+      </div>
+      
+      {/* 路由仅用于 URL 导航 */}
+      <Routes>
+        <Route path="/" element={<Navigate to="/connections" replace />} />
+        <Route path="/connections" element={null} />
+        <Route path="/files" element={null} />
+        <Route path="/terminal" element={null} />
+      </Routes>
+    
     </Content>
   )
 }

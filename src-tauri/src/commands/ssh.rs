@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use ssh2::Session;
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -371,5 +371,28 @@ pub fn resize_shell(id: String, cols: u16, rows: u16) -> Result<bool, String> {
         .map_err(|e| format!("Failed to resize PTY: {}", e))?;
     
     Ok(true)
+}
+
+#[tauri::command]
+pub fn check_port_reachable(host: String, port: u16) -> Result<bool, String> {
+    let addr = format!("{}:{}", host, port);
+    
+    // 解析地址（支持域名和 IP）
+    let socket_addr = match addr.to_socket_addrs() {
+        Ok(mut addrs) => addrs.next(),
+        Err(_) => None,
+    };
+    
+    let Some(socket_addr) = socket_addr else {
+        return Ok(false);
+    };
+    
+    // 尝试连接，3 秒超时
+    let result = TcpStream::connect_timeout(
+        &socket_addr,
+        Duration::from_secs(3)
+    );
+    
+    Ok(result.is_ok())
 }
 

@@ -65,9 +65,15 @@ function Sidebar() {
       setCollapsed(storeSidebarCollapsed)
     }
   }, [storeSidebarCollapsed])
-  // 根据当前路径确定选中的key
+  // 根据当前路径和分组确定选中的key
   const getSelectedKey = () => {
-    return location.pathname
+    if (location.pathname !== '/connections') {
+      return location.pathname
+    }
+    // 从 location.state 获取选中的分组
+    const state = location.state as { selectedGroup?: string } | null
+    const selectedGroup = state?.selectedGroup || '全部'
+    return selectedGroup === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(selectedGroup)}`
   }
 
   const menuItems = [
@@ -103,8 +109,6 @@ function Sidebar() {
       } else {
         navigate('/connections', { state: { selectedGroup: '全部' } })
       }
-    } else if (key === '/connections') {
-      navigate('/connections', { state: { selectedGroup: '全部' } })
     } else {
       navigate(key)
     }

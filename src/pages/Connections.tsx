@@ -14,7 +14,9 @@ function Connections() {
   const location = useLocation()
   const [connections, setConnections] = useState<Connection[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
-    return saved ? JSON.parse(saved) : []
+    const parsed = saved ? JSON.parse(saved) : []
+    // 启动时重置所有连接状态为 offline
+    return parsed.map((conn: Connection) => ({ ...conn, status: 'offline' as const }))
   })
   const [searchText, setSearchText] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -42,6 +44,66 @@ function Connections() {
     // 触发分组刷新事件
     window.dispatchEvent(new CustomEvent('connections-updated'))
   }, [connections])
+
+
+  // 端口探测 - 检测服务器在线状态（完全异步，不阻塞）
+  useEffect(() => {
+    let cancelled = false
+    
+    const checkAllConnections = async (conns: Connection[], connected: typeof connectedConnections) => {
+      // 过滤出需要检测的连接（跳过已连接的和正在连接中的）
+      const toCheck = conns.filter(
+        conn => !connected.some(c => c.connectionId === conn.id)
+          && conn.status !== 'connecting'
+      )
+      
+      if (toCheck.length === 0) return
+      
+      // 并行检测所有连接
+      const results = await Promise.all(
+        toCheck.map(async conn => {
+          try {
+            const reachable = await invoke<boolean>('check_port_reachable', {
+              host: conn.host,
+              port: conn.port
+            })
+            return { id: conn.id, status: reachable ? 'online' : 'offline' } as const
+          } catch (error) {
+            console.error('[PortCheck] Failed:', conn.id, conn.host, error)
+            return { id: conn.id, status: 'offline' } as const
+          }
+        })
+      )
+      
+      // 批量更新状态
+      if (!cancelled && results.length > 0) {
+        setConnections(prev => prev.map(c => {
+          const result = results.find(r => r.id === c.id)
+          return result ? { ...c, status: result.status } : c
+        }))
+      }
+    }
+    
+    // 启动时延迟 3 秒再检测，让应用先完成初始化
+    const initialTimeout = setTimeout(() => {
+      checkAllConnections(connections, connectedConnections)
+    }, 3000)
+    
+    // 每 1 分钟检测一次
+    const interval = setInterval(() => {
+      // 直接使用当前的 connections 和 connectedConnections
+      // 注意：由于依赖数组包含这些值，effect 会重新运行，interval 也会重建
+      checkAllConnections(connections, connectedConnections)
+    }, 60000)
+    
+    return () => {
+      cancelled = true
+      clearTimeout(initialTimeout)
+      clearInterval(interval)
+    }
+  }, [connections, connectedConnections])
+
+
   const filteredConnections = connections.filter(conn => {
     const matchGroup = selectedGroup === '全部' || conn.group === selectedGroup
     const matchSearch = !searchText ||
@@ -202,7 +264,7 @@ function Connections() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'online': return '#4EC9B0'
+      case 'online': return '#52c41a' // 更鲜艳的绿色
       case 'connecting': return '#007ACC'
       default: return '#999999'
     }
@@ -345,7 +407,7 @@ function Connections() {
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        background: isConnected(conn.id) ? '#4EC9B0' : getStatusColor(conn.status),
+                        background: isConnected(conn.id) ? '#52c41a' : getStatusColor(conn.status),
                         marginLeft: 8
                       }} />
                     </div>

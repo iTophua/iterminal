@@ -13,6 +13,7 @@ fn main() {
             iterminal::commands::ssh::write_shell,
             iterminal::commands::ssh::close_shell,
             iterminal::commands::ssh::resize_shell,
+            iterminal::commands::ssh::check_port_reachable,
             iterminal::commands::sftp::list_directory,
             iterminal::commands::sftp::upload_file,
             iterminal::commands::sftp::download_file,
