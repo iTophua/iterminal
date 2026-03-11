@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Card, Button, Input, Space, Tag, Modal, Form, Select, message } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
 
@@ -25,11 +25,9 @@ function Connections() {
   const [testResult, setTestResult] = useState<TestResult>(null)
   const [testMessage, setTestMessage] = useState('')
   
-  // 从 store 获取已连接的连接
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const addConnection = useTerminalStore(state => state.addConnection)
 
-  // 接收侧边栏传递的分组参数
   useEffect(() => {
     const state = location.state as { selectedGroup?: string } | null
     if (state?.selectedGroup) {
@@ -37,12 +35,10 @@ function Connections() {
     }
   }, [location.state])
 
-  // 持久化到localStorage
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
   }, [connections])
 
-  // 根据选中分组和搜索过滤连接
   const filteredConnections = connections.filter(conn => {
     const matchGroup = selectedGroup === '全部' || conn.group === selectedGroup
     const matchSearch = !searchText ||
@@ -61,7 +57,8 @@ function Connections() {
     setIsModalOpen(true)
   }
 
-  const handleEdit = (conn: Connection) => {
+  const handleEdit = (e: React.MouseEvent, conn: Connection) => {
+    e.stopPropagation()
     setEditingConnection(conn)
     form.setFieldsValue(conn)
     setTestResult(null)
@@ -69,13 +66,31 @@ function Connections() {
     setIsModalOpen(true)
   }
 
-  const handleDelete = (id: string) => {
+  const handleCopyConfig = (e: React.MouseEvent, conn: Connection) => {
+    e.stopPropagation()
+    setEditingConnection(null)
+    form.setFieldsValue({
+      ...conn,
+      name: `${conn.name} (副本)`
+    })
+    setTestResult(null)
+    setTestMessage('')
+    setIsModalOpen(true)
+  }
+
+  const handleQuickCopy = (e: React.MouseEvent, text: string, label: string) => {
+    e.stopPropagation()
+    navigator.clipboard.writeText(text)
+    message.success(`已复制${label}`)
+  }
+
+  const handleDelete = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
     setConnections(connections.filter(c => c.id !== id))
     message.success('连接已删除')
   }
 
   const handleSubmit = (values: Partial<Connection>) => {
-    // 确保 port 是数字
     const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
     
     if (editingConnection) {
@@ -99,7 +114,6 @@ function Connections() {
     setIsModalOpen(false)
   }
 
-  // 测试连接
   const handleTestConnection = async () => {
     try {
       const values = await form.validateFields(['host', 'port', 'username', 'password'])
@@ -134,13 +148,11 @@ function Connections() {
     }
   }
 
-  // 检查连接是否已连接
   const isConnected = (connId: string) => {
     return connectedConnections.some(c => c.connectionId === connId)
   }
 
   const handleConnect = async (conn: Connection) => {
-    // 如果已经连接，直接跳转到终端
     if (isConnected(conn.id)) {
       navigate('/terminal')
       return
@@ -167,12 +179,10 @@ function Connections() {
 
       const shellId = await invoke<string>('get_shell', { id: conn.id })
 
-      // 更新连接状态
       setConnections(connections.map(c =>
         c.id === conn.id ? { ...c, status: 'online' as const } : c
       ))
 
-      // 添加到 store
       addConnection(conn, shellId)
 
       message.success(`已连接到 ${conn.name}`)
@@ -194,7 +204,6 @@ function Connections() {
     }
   }
 
-  // 分组名称映射
   const groupOptions = [
     { value: '生产环境', label: '生产环境' },
     { value: '开发环境', label: '开发环境' },
@@ -204,7 +213,6 @@ function Connections() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      {/* 顶部搜索和按钮 */}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Input
           placeholder="搜索连接..."
@@ -218,7 +226,6 @@ function Connections() {
         </Button>
       </div>
 
-      {/* 连接卡片列表 */}
       <div style={{ flex: 1, overflow: 'auto' }}>
         {filteredConnections.length === 0 ? (
           <div style={{ 
@@ -235,7 +242,7 @@ function Connections() {
             </Button>
           </div>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
             {filteredConnections.map(conn => (
               <Card
                 key={conn.id}
@@ -248,36 +255,64 @@ function Connections() {
                 }}
                 onClick={() => handleConnect(conn)}
               >
-                <Card.Meta
-                  title={
-                    <Space>
-                      <span style={{ color: '#CCCCCC' }}>{conn.name}</span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ color: '#CCCCCC', fontWeight: 500 }}>{conn.name}</span>
                       <span style={{
                         display: 'inline-block',
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        background: isConnected(conn.id) ? '#4EC9B0' : getStatusColor(conn.status)
+                        background: isConnected(conn.id) ? '#4EC9B0' : getStatusColor(conn.status),
+                        marginLeft: 8
                       }} />
-                    </Space>
-                  }
-                  description={
-                    <div style={{ color: '#999999', fontSize: 12 }}>
-                      <div>{conn.username}@{conn.host}:{conn.port}</div>
-                      <div style={{ marginTop: 8 }}>
-                        <Tag style={{ background: '#3F3F46', border: 'none', color: '#CCCCCC' }}>
-                          {conn.group}
-                        </Tag>
-                        {conn.tags.map(tag => (
-                          <Tag key={tag} style={{ background: '#094771', border: 'none', color: '#4EC9B0', marginLeft: 4 }}>
-                            {tag}
-                          </Tag>
-                        ))}
-                      </div>
                     </div>
-                  }
-                />
+                    <div style={{ color: '#999999', fontSize: 12 }}>
+                      {conn.username}@{conn.host}:{conn.port}
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <Tag style={{ background: '#3F3F46', border: 'none', color: '#CCCCCC' }}>
+                        {conn.group}
+                      </Tag>
+                      {conn.tags.map(tag => (
+                        <Tag key={tag} style={{ background: '#094771', border: 'none', color: '#4EC9B0', marginLeft: 4 }}>
+                          {tag}
+                        </Tag>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginLeft: 12 }}>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EnvironmentOutlined />}
+                      onClick={(e) => handleQuickCopy(e, conn.host, 'IP')}
+                      style={{ color: '#999', fontSize: 12 }}
+                    >
+                      复制IP
+                    </Button>
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<KeyOutlined />}
+                      onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
+                      style={{ color: '#999', fontSize: 12 }}
+                    >
+                      复制信息
+                    </Button>
+                  </div>
+                </div>
                 <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <Button
+                    type="text"
+                    size="small"
+                    icon={<CopyOutlined />}
+                    onClick={(e) => handleCopyConfig(e, conn)}
+                    style={{ color: '#52c41a' }}
+                  >
+                    复制
+                  </Button>
                   <Button
                     type="text"
                     size="small"
@@ -290,7 +325,7 @@ function Connections() {
                     type="text"
                     size="small"
                     icon={<EditOutlined />}
-                    onClick={(e) => { e.stopPropagation(); handleEdit(conn) }}
+                    onClick={(e) => handleEdit(e, conn)}
                   >
                     编辑
                   </Button>
@@ -299,7 +334,7 @@ function Connections() {
                     size="small"
                     danger
                     icon={<DeleteOutlined />}
-                    onClick={(e) => { e.stopPropagation(); handleDelete(conn.id) }}
+                    onClick={(e) => handleDelete(e, conn.id)}
                   >
                     删除
                   </Button>
@@ -310,7 +345,6 @@ function Connections() {
         )}
       </div>
 
-      {/* 新建/编辑连接弹窗 */}
       <Modal
         title={editingConnection ? '编辑连接' : '新建连接'}
         open={isModalOpen}
@@ -342,8 +376,6 @@ function Connections() {
           <Form.Item name="tags" label="标签">
             <Select mode="tags" placeholder="添加标签" />
           </Form.Item>
-          
-          {/* 测试连接按钮和结果 */}
           <Form.Item style={{ marginBottom: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <Button 

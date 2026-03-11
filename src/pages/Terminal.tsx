@@ -1,6 +1,6 @@
-import { useEffect, useRef, useCallback } from 'react'
-import { Tabs, message, Tooltip, Space } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined } from '@ant-design/icons'
+import { useEffect, useRef, useCallback, useState } from 'react'
+import { Tabs, message, Tooltip } from 'antd'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { invoke } from '@tauri-apps/api/core'
@@ -23,6 +23,9 @@ function Terminal() {
   const initializedRef = useRef<Set<string>>(new Set())
   const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
+  
+  // 工具栏显示状态：'full' = 完整工具栏, 'ball' = 小球形态
+  const [toolbarState, setToolbarState] = useState<'full' | 'ball'>('full')
 
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
   const activeSession = activeConnection?.sessions.find(s => s.id === activeConnection?.activeSessionId)
@@ -247,18 +250,31 @@ function Terminal() {
     const sessionItems = conn.sessions.map((s, idx) => ({
       key: s.id,
       label: (
-        <span style={{ color: '#CCC' }}>
+        <span style={{ color: '#CCC', fontSize: 12 }}>
           会话{idx + 1}
-          <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseSession(conn.connectionId, s.id) }} />
+          <CloseOutlined style={{ marginLeft: 6, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseSession(conn.connectionId, s.id) }} />
         </span>
       ),
       children: (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 12px', background: '#252526', borderBottom: '1px solid #3F3F46', height: 40 }}>
-            <Space>
-              <Tooltip title="复制">
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
+          {/* 悬浮工具栏 */}
+          {toolbarState === 'full' ? (
+            <div style={{
+              position: 'absolute',
+              top: 8,
+              right: 8,
+              zIndex: 100,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              background: 'rgba(45, 45, 48, 0.95)',
+              borderRadius: 6,
+              padding: '4px 8px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+            }}>
+              <Tooltip title="复制选中内容">
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     const key = `${conn.connectionId}_${s.id}`
                     const term = terminalInstances.current[key]
@@ -278,7 +294,7 @@ function Terminal() {
               </Tooltip>
               <Tooltip title="搜索">
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     const key = `${conn.connectionId}_${s.id}`
                     const term = terminalInstances.current[key]
@@ -296,7 +312,7 @@ function Terminal() {
               </Tooltip>
               <Tooltip title="全屏">
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     const key = `${conn.connectionId}_${s.id}`
                     const container = terminalRefs.current[key]
@@ -317,8 +333,40 @@ function Terminal() {
                   <FullscreenOutlined />
                 </span>
               </Tooltip>
-            </Space>
-          </div>
+              <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
+              <Tooltip title="收起工具栏">
+                <span
+                  style={{ color: '#666', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
+                  onClick={() => setToolbarState('ball')}
+                >
+                  <CloseOutlined />
+                </span>
+              </Tooltip>
+            </div>
+          ) : (
+            <Tooltip title="展开工具栏">
+              <div
+                onClick={() => setToolbarState('full')}
+                style={{
+                  position: 'absolute',
+                  top: 8,
+                  right: 8,
+                  zIndex: 100,
+                  width: 28,
+                  height: 28,
+                  borderRadius: '50%',
+                  background: 'rgba(45, 45, 48, 0.9)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                }}
+              >
+                <ToolOutlined style={{ color: '#999', fontSize: 14 }} />
+              </div>
+            </Tooltip>
+          )}
           <div ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }} style={{ flex: 1, width: '100%', background: '#000', overflow: 'hidden' }} />
         </div>
       ),
@@ -327,7 +375,7 @@ function Terminal() {
     return {
       key: conn.connectionId,
       label: (
-        <span style={{ color: '#CCC' }}>
+        <span style={{ color: '#CCC', fontWeight: 500 }}>
           {conn.connection.username}@{conn.connection.host}
           <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} />
         </span>
@@ -336,12 +384,13 @@ function Terminal() {
         <Tabs
           activeKey={conn.activeSessionId || undefined}
           onChange={sid => { if (sid !== '__add__') setActiveSession(conn.connectionId, sid) }}
-          items={[...sessionItems, { key: '__add__', label: <span style={{ color: '#0b9' }}><PlusOutlined /> 新建会话</span>, children: <div /> }]}
+          items={[...sessionItems, { key: '__add__', label: <span style={{ color: '#0b9', fontSize: 12 }}><PlusOutlined /> 新建</span>, children: <div /> }]}
           type="card"
           style={{ height: '100%' }}
-          tabBarStyle={{ margin: 0, padding: '0 12px', background: '#252526' }}
+          tabBarStyle={{ margin: 0, padding: '0 8px', background: '#1E1E1E', minHeight: 28 }}
           onTabClick={(key) => { if (key === '__add__') handleAddSession(conn.connectionId) }}
           destroyInactiveTabPane={false}
+          size="small"
         />
       ),
     }
