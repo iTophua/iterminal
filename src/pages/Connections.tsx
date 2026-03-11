@@ -37,8 +37,9 @@ function Connections() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
+    // 触发分组刷新事件
+    window.dispatchEvent(new CustomEvent('connections-updated'))
   }, [connections])
-
   const filteredConnections = connections.filter(conn => {
     const matchGroup = selectedGroup === '全部' || conn.group === selectedGroup
     const matchSearch = !searchText ||
@@ -113,7 +114,6 @@ function Connections() {
     }
     setIsModalOpen(false)
   }
-
   const handleTestConnection = async () => {
     try {
       const values = await form.validateFields(['host', 'port', 'username', 'password'])

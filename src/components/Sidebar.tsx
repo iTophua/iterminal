@@ -39,7 +39,21 @@ function Sidebar() {
       setGroups(['全部', ...uniqueGroups])
     }
   }, [location.pathname])
-
+  
+  // 监听连接更新事件，刷新分组
+  useEffect(() => {
+    const handleConnectionsUpdate = () => {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const connections: Connection[] = JSON.parse(saved)
+        const uniqueGroups = [...new Set(connections.map(c => c.group))]
+        setGroups(['全部', ...uniqueGroups])
+      }
+    }
+    
+    window.addEventListener('connections-updated', handleConnectionsUpdate)
+    return () => window.removeEventListener('connections-updated', handleConnectionsUpdate)
+  }, [])
   // 持久化折叠状态（同步 localStorage 和 store）
   useEffect(() => {
     localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))

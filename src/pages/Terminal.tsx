@@ -552,7 +552,7 @@ function Terminal() {
           
           <div 
             ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }} 
-            style={{ flex: 1, width: '100%', background: '#000', overflow: 'hidden' }}
+            style={{ flex: 1, width: '100%', background: '#000', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
             onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
           />
         </div>
