@@ -26,7 +26,10 @@ function Sidebar() {
   // 获取已连接的连接数量
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const connectedCount = connectedConnections.length
-
+  
+  // 从 store 获取侧边栏折叠状态
+  const storeSidebarCollapsed = useTerminalStore(state => state.sidebarCollapsed)
+  const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
   // 从localStorage加载分组
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -37,11 +40,17 @@ function Sidebar() {
     }
   }, [location.pathname])
 
-  // 持久化折叠状态
+  // 持久化折叠状态（同步 localStorage 和 store）
   useEffect(() => {
     localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
   }, [collapsed])
-
+  
+  // 监听 store 状态变化
+  useEffect(() => {
+    if (storeSidebarCollapsed !== collapsed) {
+      setCollapsed(storeSidebarCollapsed)
+    }
+  }, [storeSidebarCollapsed])
   // 根据当前路径确定选中的key
   const getSelectedKey = () => {
     return location.pathname
@@ -111,7 +120,11 @@ function Sidebar() {
           borderBottom: '1px solid #3F3F46',
           cursor: 'pointer'
         }}
-        onClick={() => setCollapsed(!collapsed)}
+        onClick={() => {
+          const newState = !collapsed
+          setCollapsed(newState)
+          setSidebarCollapsed(newState)
+        }}
       >
         <span style={{ color: '#00b96b', fontSize: 16, fontWeight: 'bold' }}>
           {collapsed ? 'i' : 'iTerminal'}

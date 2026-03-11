@@ -49,12 +49,16 @@ interface TerminalState {
   setActiveSession: (connectionId: string, sessionId: string) => void
   // 获取当前激活的会话
   getActiveSession: () => Session | null
+  // 设置侧边栏折叠状态
+  setSidebarCollapsed: (collapsed: boolean) => void
+  // 获取侧边栏折叠状态
+  sidebarCollapsed: boolean
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   connectedConnections: [],
   activeConnectionId: null,
-
+  sidebarCollapsed: false,
   addConnection: (connection, shellId) => {
     const sessionId = Date.now().toString()
     const newSession: Session = {
@@ -175,5 +179,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const conn = state.connectedConnections.find(c => c.connectionId === state.activeConnectionId)
     if (!conn || !conn.activeSessionId) return null
     return conn.sessions.find(s => s.id === conn.activeSessionId) || null
+  },
+
+  setSidebarCollapsed: (collapsed: boolean) => {
+    set({ sidebarCollapsed: collapsed })
   },
 }))
