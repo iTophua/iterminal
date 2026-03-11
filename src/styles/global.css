@@ -110,3 +110,21 @@ body {
 .xterm-viewport {
   overflow-y: auto !important;
 }
+
+.xterm-screen {
+  width: 100% !important;
+}
+
+.xterm-rows {
+  width: 100% !important;
+}
+.xterm {
+  padding: 0 !important;
+  margin: 0 !important;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.xterm-viewport {
+  overflow-y: auto !important;
+}

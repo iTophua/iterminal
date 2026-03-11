@@ -213,6 +213,7 @@ pub fn get_shell(id: String, _app: AppHandle) -> Result<String, String> {
 
         let mut channel = session.channel_session().map_err(|e| e.to_string())?;
 
+        // PTY 模式设置
         let mut modes = ssh2::PtyModes::new();
         modes.set_character(ssh2::PtyModeOpcode::ECHO, Some(1 as char));
 
@@ -359,3 +360,16 @@ pub fn start_shell_reader(id: String, app: AppHandle) -> Result<bool, String> {
 
     Ok(true)
 }
+/// 调整终端 PTY 尺寸
+#[tauri::command]
+pub fn resize_shell(id: String, cols: u16, rows: u16) -> Result<bool, String> {
+    let shells = SHELLS.lock().unwrap();
+    let channel = shells.get(&id).ok_or("Shell not found")?;
+    
+    let mut ch = channel.lock().unwrap();
+    ch.request_pty_size(cols as u32, rows as u32, None, None)
+        .map_err(|e| format!("Failed to resize PTY: {}", e))?;
+    
+    Ok(true)
+}
+

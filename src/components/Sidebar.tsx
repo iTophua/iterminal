@@ -7,6 +7,7 @@ import { useTerminalStore } from '../stores/terminalStore'
 const { Sider } = Layout
 
 const STORAGE_KEY = 'iterminal_connections'
+const COLLAPSED_KEY = 'iterminal_sidebar_collapsed'
 
 interface Connection {
   id: string
@@ -17,6 +18,10 @@ function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const [groups, setGroups] = useState<string[]>(['全部', '生产环境', '开发环境', '测试环境'])
+  const [collapsed, setCollapsed] = useState(() => {
+    const saved = localStorage.getItem(COLLAPSED_KEY)
+    return saved ? JSON.parse(saved) : false
+  })
   
   // 获取已连接的连接数量
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
@@ -31,6 +36,11 @@ function Sidebar() {
       setGroups(['全部', ...uniqueGroups])
     }
   }, [location.pathname])
+
+  // 持久化折叠状态
+  useEffect(() => {
+    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
+  }, [collapsed])
 
   // 根据当前路径确定选中的key
   const getSelectedKey = () => {
@@ -80,11 +90,37 @@ function Sidebar() {
   return (
     <Sider
       width={240}
+      collapsedWidth={48}
+      collapsible
+      collapsed={collapsed}
+      onCollapse={(collapsed) => setCollapsed(collapsed)}
       style={{
         background: '#252526',
         borderRight: '1px solid #3F3F46'
       }}
+      trigger={null}
     >
+      {/* 标题和折叠按钮 */}
+      <div
+        style={{
+          height: 48,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'space-between',
+          padding: collapsed ? 0 : '0 16px',
+          borderBottom: '1px solid #3F3F46',
+          cursor: 'pointer'
+        }}
+        onClick={() => setCollapsed(!collapsed)}
+      >
+        <span style={{ color: '#00b96b', fontSize: 16, fontWeight: 'bold' }}>
+          {collapsed ? 'i' : 'iTerminal'}
+        </span>
+        {!collapsed && (
+          <span style={{ color: '#CCCCCC', fontSize: 16 }}>←</span>
+        )}
+      </div>
+      
       <Menu
         mode="inline"
         selectedKeys={[getSelectedKey()]}
@@ -101,3 +137,4 @@ function Sidebar() {
 }
 
 export default Sidebar
+

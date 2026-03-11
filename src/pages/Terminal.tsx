@@ -22,6 +22,7 @@ function Terminal() {
   const fitAddons = useRef<{ [key: string]: FitAddon }>({})
   const initializedRef = useRef<Set<string>>(new Set())
   const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
+  const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
 
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
   const activeSession = activeConnection?.sessions.find(s => s.id === activeConnection?.activeSessionId)
@@ -49,13 +50,32 @@ function Terminal() {
 
     // 使用 async 函数确保正确的初始化顺序
     const init = async () => {
-      // 1. 先创建终端
+      // 1. 等待容器有有效尺寸
+      const waitForContainerSize = (): Promise<void> => {
+        return new Promise((resolve) => {
+          const checkSize = () => {
+            const rect = container.getBoundingClientRect()
+            if (rect.width > 0 && rect.height > 0) {
+              resolve()
+            } else {
+              requestAnimationFrame(checkSize)
+            }
+          }
+          checkSize()
+        })
+      }
+      
+      await waitForContainerSize()
+      
+      // 2. 创建终端
       const terminal = new XTerm({
         cursorBlink: true,
         fontSize: 14,
         fontFamily: 'Menlo, Monaco, "Courier New", monospace',
         theme: { background: '#000000', foreground: '#FFFFFF', cursor: '#FFFFFF' },
         convertEol: true,
+        // 禁用本地回显，由 SSH 服务器控制回显
+        disableStdin: false,
       })
 
       const fitAddon = new FitAddon()
@@ -67,14 +87,17 @@ function Terminal() {
       terminal.onData(data => {
         invoke('write_shell', { id: shellId, data }).catch(console.error)
       })
-
-      setTimeout(() => { try { fitAddon.fit() } catch {} }, 100)
       
+      // 终端尺寸变化时通知 SSH 服务器
+      terminal.onResize(({ cols, rows }) => {
+        invoke('resize_shell', { id: shellId, cols, rows }).catch(console.error)
+      })
+
       // 暂存到 ref，供事件回调使用
       terminalInstances.current[key] = terminal
       fitAddons.current[key] = fitAddon
-
-      // 2. 注册事件监听
+      
+      // 3. 注册事件监听
       const eventName = `shell-output-${shellId}`
       
       const unlisten = await listen<string>(eventName, (event) => {
@@ -90,28 +113,40 @@ function Terminal() {
       }
       
       unlistenersRef.current[key] = unlisten
-      // 监听器注册成功后，才标记为已初始化
+      
+      // 4. 设置 ResizeObserver 监听容器尺寸变化
+      const resizeObserver = new ResizeObserver(() => {
+        const addon = fitAddons.current[key]
+        if (addon) { try { addon.fit() } catch {} }
+      })
+      resizeObserver.observe(container)
+      resizeObserversRef.current[key] = resizeObserver
+      
+      // 5. 初始调整终端大小（延迟确保 xterm 完成渲染）
+      setTimeout(() => {
+        try { fitAddon.fit() } catch {}
+      }, 100)
+      
+      // 标记为已初始化
       initializedRef.current.add(key)
       
-      // 3. 通知后端开始发送数据
+      // 6. 通知后端开始发送数据
       await invoke('start_shell_reader', { id: shellId })
     }
 
     init().catch(console.error)
-    const interval = setInterval(() => { 
-      const addon = fitAddons.current[key]
-      if (addon) { try { addon.fit() } catch {} }
-    }, 5000)
-    
-    // 注意：不要在这里取消事件监听器！
-    // 切换会话时 useEffect 清理函数会被调用，但我们希望保持事件监听器活跃
-    // 事件监听器只在关闭会话时取消（在 handleCloseSession 中处理）
+
     return () => {
       cancelled = true
-      clearInterval(interval)
+      // 清理 ResizeObserver
+      if (resizeObserversRef.current[key]) {
+        resizeObserversRef.current[key].disconnect()
+        delete resizeObserversRef.current[key]
+      }
       // 不取消事件监听器 - 保持活跃状态
     }
   }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId])
+
 
   // 新建会话
   const handleAddSession = useCallback(async (connectionId: string) => {
@@ -146,6 +181,7 @@ function Terminal() {
       delete terminalInstances.current[key]
     }
     delete fitAddons.current[key]
+    delete resizeObserversRef.current[key]
     initializedRef.current.delete(key)
 
     if (conn && conn.sessions.length === 1) {
@@ -176,8 +212,10 @@ function Terminal() {
         delete terminalInstances.current[key]
       }
       delete fitAddons.current[key]
+      delete resizeObserversRef.current[key]
       initializedRef.current.delete(key)
     }
+
     await invoke('disconnect_ssh', { id: connId }).catch(() => {})
     closeConnection(connId)
   }, [connectedConnections, closeConnection])
@@ -218,12 +256,70 @@ function Terminal() {
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 12px', background: '#252526', borderBottom: '1px solid #3F3F46', height: 40 }}>
             <Space>
-              <Tooltip title="复制"><span style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}><ScissorOutlined /></span></Tooltip>
-              <Tooltip title="搜索"><span style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}><SearchOutlined /></span></Tooltip>
-              <Tooltip title="全屏"><span style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}><FullscreenOutlined /></span></Tooltip>
+              <Tooltip title="复制">
+                <span
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}
+                  onClick={() => {
+                    const key = `${conn.connectionId}_${s.id}`
+                    const term = terminalInstances.current[key]
+                    if (term) {
+                      const selection = term.getSelection()
+                      if (selection) {
+                        navigator.clipboard.writeText(selection)
+                        message.success('已复制')
+                      } else {
+                        message.info('请先选择要复制的内容')
+                      }
+                    }
+                  }}
+                >
+                  <ScissorOutlined />
+                </span>
+              </Tooltip>
+              <Tooltip title="搜索">
+                <span
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}
+                  onClick={() => {
+                    const key = `${conn.connectionId}_${s.id}`
+                    const term = terminalInstances.current[key]
+                    if (term) {
+                      const searchText = prompt('输入搜索内容:')
+                      if (searchText) {
+                        term.write(`\x1b[2J\x1b[H`)
+                        message.info('搜索功能开发中')
+                      }
+                    }
+                  }}
+                >
+                  <SearchOutlined />
+                </span>
+              </Tooltip>
+              <Tooltip title="全屏">
+                <span
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 8px' }}
+                  onClick={() => {
+                    const key = `${conn.connectionId}_${s.id}`
+                    const container = terminalRefs.current[key]
+                    if (container?.parentElement?.parentElement) {
+                      const elem = container.parentElement.parentElement
+                      if (document.fullscreenElement) {
+                        document.exitFullscreen()
+                      } else {
+                        elem.requestFullscreen().then(() => {
+                          setTimeout(() => {
+                            fitAddons.current[key]?.fit()
+                          }, 100)
+                        }).catch(console.error)
+                      }
+                    }
+                  }}
+                >
+                  <FullscreenOutlined />
+                </span>
+              </Tooltip>
             </Space>
           </div>
-          <div ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }} style={{ flex: 1, background: '#000' }} />
+          <div ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }} style={{ flex: 1, width: '100%', background: '#000', overflow: 'hidden' }} />
         </div>
       ),
     }))

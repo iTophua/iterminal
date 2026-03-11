@@ -44,7 +44,9 @@ function MainContent() {
         right: 0,
         bottom: 0,
         display: location.pathname !== '/terminal' ? 'flex' : 'none',
-        flexDirection: 'column'
+        flexDirection: 'column',
+        padding: 16,
+        overflow: 'auto'
       }}>
         <Routes>
           <Route path="/" element={<Navigate to="/connections" replace />} />
@@ -62,17 +64,6 @@ function App() {
   return (
     <BrowserRouter>
       <Layout style={{ minHeight: '100vh', background: '#1E1E1E' }}>
-        {/* 顶部导航栏 */}
-        <div style={{
-          height: 48,
-          background: '#252526',
-          borderBottom: '1px solid #3F3F46',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 16px'
-        }}>
-          <span style={{ color: '#00b96b', fontSize: 16, fontWeight: 'bold' }}>iTerminal</span>
-        </div>
 
         <Layout style={{ flex: 1, display: 'flex' }}>
           {/* 左侧导航栏 */}
