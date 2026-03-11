@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Card, Button, Input, Space, Tag, Modal, Form, Select, message } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined } from '@ant-design/icons'
+import { Card, Button, Input, Space, Tag, Modal, Form, Select, message, Typography } from 'antd'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
 
@@ -24,6 +24,8 @@ function Connections() {
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<TestResult>(null)
   const [testMessage, setTestMessage] = useState('')
+  const [isQuickImportOpen, setIsQuickImportOpen] = useState(false)
+  const [quickImportText, setQuickImportText] = useState('')
   
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const addConnection = useTerminalStore(state => state.addConnection)
@@ -160,7 +162,8 @@ function Connections() {
 
     if (conn.status === 'connecting') return
 
-    setConnections(connections.map(c =>
+    // 使用函数式更新，确保使用最新状态
+    setConnections(prev => prev.map(c =>
       c.id === conn.id ? { ...c, status: 'connecting' as const } : c
     ))
     message.info(`正在连接 ${conn.name}...`)
@@ -179,7 +182,7 @@ function Connections() {
 
       const shellId = await invoke<string>('get_shell', { id: conn.id })
 
-      setConnections(connections.map(c =>
+      setConnections(prev => prev.map(c =>
         c.id === conn.id ? { ...c, status: 'online' as const } : c
       ))
 
@@ -189,12 +192,13 @@ function Connections() {
       navigate('/terminal')
     } catch (error) {
       console.error('[Connections] Connection failed:', error)
-      setConnections(connections.map(c =>
+      setConnections(prev => prev.map(c =>
         c.id === conn.id ? { ...c, status: 'offline' as const } : c
       ))
       message.error(`连接失败: ${error}`)
     }
   }
+
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -211,9 +215,83 @@ function Connections() {
     { value: '默认', label: '默认' },
   ]
 
+  // 解析快速导入文本
+  const parseQuickImportText = (text: string): Partial<Connection> | null => {
+    const lines = text.trim().split('\n')
+    const result: Partial<Connection> = {}
+    
+    for (const line of lines) {
+      const colonIndex = line.indexOf(':')
+      if (colonIndex === -1) continue
+      
+      const key = line.substring(0, colonIndex).trim()
+      const value = line.substring(colonIndex + 1).trim()
+      
+      switch (key) {
+        case '名称':
+          result.name = value
+          break
+        case '地址':
+        case '主机':
+          result.host = value
+          break
+        case '端口':
+          result.port = parseInt(value, 10) || 22
+          break
+        case '用户':
+        case '用户名':
+          result.username = value
+          break
+        case '密码':
+          result.password = value
+          break
+      }
+    }
+    
+    // 验证必填字段
+    if (!result.name || !result.host || !result.username) {
+      return null
+    }
+    
+    return result
+  }
+
+  // 快速导入保存
+  const handleQuickImportSave = (shouldConnect: boolean = false) => {
+    const parsed = parseQuickImportText(quickImportText)
+    
+    if (!parsed) {
+      message.error('格式错误，请检查输入内容')
+      return
+    }
+    
+    const newConn: Connection = {
+      id: Date.now().toString(),
+      name: parsed.name || '',
+      host: parsed.host || '',
+      port: parsed.port || 22,
+      username: parsed.username || '',
+      password: parsed.password,
+      group: '默认',
+      tags: [],
+      status: 'offline'
+    }
+    
+    setConnections([...connections, newConn])
+    setIsQuickImportOpen(false)
+    setQuickImportText('')
+    message.success('连接已添加')
+    
+    if (shouldConnect) {
+      // 延迟执行，确保状态已更新到 localStorage
+      setTimeout(() => handleConnect(newConn), 100)
+    }
+  }
+
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
         <Input
           placeholder="搜索连接..."
           prefix={<SearchOutlined />}
@@ -223,6 +301,9 @@ function Connections() {
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
           新建连接
+        </Button>
+        <Button icon={<ImportOutlined />} onClick={() => setIsQuickImportOpen(true)}>
+          快速导入
         </Button>
       </div>
 
@@ -402,6 +483,61 @@ function Connections() {
             </div>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* 快速导入弹窗 */}
+      <Modal
+        title="快速导入"
+        open={isQuickImportOpen}
+        onCancel={() => {
+          setIsQuickImportOpen(false)
+          setQuickImportText('')
+        }}
+        footer={null}
+        width={500}
+      >
+        <div style={{ marginBottom: 12 }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            请按以下格式粘贴连接信息：
+          </Typography.Text>
+          <pre style={{ 
+            background: '#2D2D30', 
+            padding: 12, 
+            borderRadius: 4, 
+            marginTop: 8, 
+            fontSize: 12, 
+            color: '#CCCCCC',
+            border: '1px solid #3F3F46'
+          }}>
+{`名称: test
+地址: 127.0.0.1
+端口: 22
+用户: test
+密码: test`}
+          </pre>
+        </div>
+
+        <Input.TextArea
+          value={quickImportText}
+          onChange={e => setQuickImportText(e.target.value)}
+          placeholder="粘贴连接信息..."
+          rows={8}
+          style={{ marginBottom: 16 }}
+        />
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button onClick={() => {
+            setIsQuickImportOpen(false)
+            setQuickImportText('')
+          }}>
+            取消
+          </Button>
+          <Button onClick={() => handleQuickImportSave(false)}>
+            保存
+          </Button>
+          <Button type="primary" onClick={() => handleQuickImportSave(true)}>
+            保存并连接
+          </Button>
+        </div>
       </Modal>
     </div>
   )
