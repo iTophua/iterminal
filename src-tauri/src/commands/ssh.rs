@@ -396,3 +396,147 @@ pub fn check_port_reachable(host: String, port: u16) -> Result<bool, String> {
     Ok(result.is_ok())
 }
 
+
+
+// ==================== 系统监控 ====================
+
+/// 解析磁盘大小字符串（支持 K, M, G, T 后缀）
+fn parse_disk_size(s: &str) -> u64 {
+    let s = s.trim();
+    if s.is_empty() {
+        return 0;
+    }
+    
+    let multiplier = if s.ends_with('T') {
+        1024 * 1024
+    } else if s.ends_with('G') {
+        1024
+    } else if s.ends_with('M') {
+        1
+    } else if s.ends_with('K') {
+        1 / 1024
+    } else {
+        1024 // 无后缀默认按 GB 处理
+    };
+    
+    let num_str = s.trim_end_matches(|c| c == 'K' || c == 'M' || c == 'G' || c == 'T');
+    num_str.parse::<u64>().unwrap_or(0) * multiplier
+}
+
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SystemInfo { pub hostname: String, pub os: String, pub kernel: String, pub uptime: String }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CpuInfo { pub usage: f32, pub cores: u32, pub load_avg: String, pub per_core_usage: Vec<f32> }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MemoryInfo { pub total: u64, pub used: u64, pub free: u64, pub usage_percent: f32, pub swap_total: u64, pub swap_used: u64 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DiskInfo { pub filesystem: String, pub mount_point: String, pub total: u64, pub used: u64, pub available: u64, pub usage_percent: f32 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MonitorData { pub system: SystemInfo, pub cpu: CpuInfo, pub memory: MemoryInfo, pub disks: Vec<DiskInfo> }
+
+#[tauri::command]
+pub fn get_system_monitor(id: String) -> Result<MonitorData, String> {
+    // 获取连接级别的锁，防止与 get_shell 并发
+    let shell_lock = {
+        let locks = SHELL_LOCKS.lock().unwrap();
+        locks.get(&id).cloned().unwrap_or_else(|| {
+            let lock = Arc::new(Mutex::new(()));
+            drop(locks);
+            SHELL_LOCKS.lock().unwrap().insert(id.clone(), lock.clone());
+            lock
+        })
+    };
+    let _guard = shell_lock.lock().unwrap();
+
+    let prefix = format!("{}-shell", &id);
+    let sids: Vec<String> = SHELLS.lock().unwrap().keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+    for s in &sids { RUNNING.lock().unwrap().insert(s.clone(), false); }
+    std::thread::sleep(Duration::from_millis(30));
+    for s in &sids { RUNNING.lock().unwrap().insert(s.clone(), false); }
+    std::thread::sleep(Duration::from_millis(30));
+
+    let script = r#"
+echo "<<H>>";hostname
+echo "<<O>>";cat /etc/os-release 2>/dev/null|grep PRETTY_NAME|cut -d'"' -f2||echo Linux
+echo "<<K>>";uname -r
+echo "<<U>>";uptime -p 2>/dev/null|sed 's/up //'||echo unknown
+echo "<<C>>";nproc
+echo "<<L>>";cat /proc/loadavg
+echo "<<P>>";top -bn1 2>/dev/null|grep -E 'Cpu|CPU'|head -1|awk '{print $2}'|cut -d'%' -f1||echo 0
+echo "<<PC>>";mpstat -P ALL 1 1 2>/dev/null|awk '/Average/&&$2!="CPU"{print 100-$NF}'||for i in $(seq 0 $(($(nproc)-1)));do echo 0;done
+echo "<<M>>";free -m|grep -E '^Mem|^Swap'
+echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
+"#;
+
+    let res = {
+        let ss = SESSIONS.lock().unwrap();
+        let sess = ss.get(&id).ok_or("Session not found")?;
+        sess.set_blocking(true);
+        let mut ch = sess.channel_session().map_err(|e| e.to_string())?;
+        ch.exec(script).map_err(|e| e.to_string())?;
+        let mut out = String::new();
+        ch.read_to_string(&mut out).map_err(|e| e.to_string())?;
+        ch.wait_close().ok();
+        sess.set_blocking(false);
+        
+        let mut sec = "";
+        let (mut h, mut o, mut k, mut u) = ("unknown".into(), "Linux".into(), "unknown".into(), "unknown".into());
+        let (mut cr, mut la, mut cu) = (1u32, "N/A".into(), 0.0f32);
+        let mut pcu: Vec<f32> = Vec::new();
+        let (mut mt, mut mu, mut mf, mut st, mut su) = (0u64, 0u64, 0u64, 0u64, 0u64);
+        let mut dsk: Vec<DiskInfo> = Vec::new();
+        
+        for l in out.lines() {
+            let t = l.trim();
+            if t.contains("<<H>>") { sec = "h"; continue; }
+            if t.contains("<<O>>") { sec = "o"; continue; }
+            if t.contains("<<K>>") { sec = "k"; continue; }
+            if t.contains("<<U>>") { sec = "u"; continue; }
+            if t.contains("<<C>>") { sec = "c"; continue; }
+            if t.contains("<<L>>") { sec = "l"; continue; }
+            if t.contains("<<P>>") { sec = "p"; continue; }
+            if t.contains("<<PC>>") { sec = "pc"; continue; }
+            if t.contains("<<M>>") { sec = "m"; continue; }
+            if t.contains("<<D>>") { sec = "d"; continue; }
+            
+            match sec {
+                "h" => { h = t.to_string(); sec = ""; }
+                "o" => { o = t.to_string(); sec = ""; }
+                "k" => { k = t.to_string(); sec = ""; }
+                "u" => { u = t.to_string(); sec = ""; }
+                "c" => { cr = t.parse().unwrap_or(1); sec = ""; }
+                "l" => { let p: Vec<&str> = t.split_whitespace().collect(); if p.len() >= 3 { la = format!("{} / {} / {}", p[0], p[1], p[2]); } sec = ""; }
+                "p" => { cu = t.parse().unwrap_or(0.0); sec = ""; }
+                "pc" => { if let Ok(v) = t.parse::<f32>() { pcu.push(v); } }
+                "m" => { let p: Vec<&str> = t.split_whitespace().collect();
+                    if t.starts_with("Mem:") && p.len() >= 4 { mt = p[1].parse().unwrap_or(0); mu = p[2].parse().unwrap_or(0); mf = p[3].parse().unwrap_or(0); }
+                    else if t.starts_with("Swap:") && p.len() >= 3 { st = p[1].parse().unwrap_or(0); su = p[2].parse().unwrap_or(0); } }
+                "d" => { let p: Vec<&str> = t.split_whitespace().collect();
+                    if p.len() >= 6 { dsk.push(DiskInfo { filesystem: p[0].to_string(), mount_point: p[5].to_string(),
+                        total: parse_disk_size(p[1]),
+                        used: parse_disk_size(p[2]),
+                        available: parse_disk_size(p[3]),
+                        usage_percent: p[4].trim_end_matches('%').parse().unwrap_or(0.0) }); }}
+
+
+                _ => {}
+            }
+        }
+        if pcu.is_empty() { for _ in 0..cr { pcu.push(cu); } }
+        
+        Ok(MonitorData {
+            system: SystemInfo { hostname: h, os: o, kernel: k, uptime: u },
+            cpu: CpuInfo { usage: cu, cores: cr, load_avg: la, per_core_usage: pcu },
+            memory: MemoryInfo { total: mt, used: mu, free: mf, usage_percent: if mt > 0 { (mu as f64 / mt as f64 * 100.0) as f32 } else { 0.0 }, swap_total: st, swap_used: su },
+            disks: dsk,
+        })
+    };
+
+    for s in &sids { RUNNING.lock().unwrap().insert(s.clone(), true); }
+    res
+}

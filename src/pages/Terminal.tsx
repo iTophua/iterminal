@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, message, Tooltip, Input, Button } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -9,6 +9,7 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
+import MonitorPanel from '../components/MonitorPanel'
 function Terminal() {
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
@@ -35,6 +36,9 @@ function Terminal() {
   const searchAddons = useRef<{ [key: string]: SearchAddon }>({})
   // 右键菜单状态
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean; sessionKey: string }>({ x: 0, y: 0, visible: false, sessionKey: '' })
+  
+  // 监控面板状态
+  const [monitorVisible, setMonitorVisible] = useState(false)
   
   // 全屏状态
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -438,6 +442,15 @@ function Terminal() {
                 </span>
               </Tooltip>
               <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
+              <Tooltip title="系统监控">
+                <span
+                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  onClick={() => setMonitorVisible(true)}
+                >
+                  <DashboardOutlined />
+                </span>
+              </Tooltip>
+              <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
               <Tooltip title="收起工具栏">
                 <span
                   style={{ color: '#666', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
@@ -584,16 +597,19 @@ function Terminal() {
   })
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <Tabs
-        activeKey={activeConnectionId || undefined}
-        onChange={setActiveConnection}
-        items={connectionItems}
-        style={{ height: '100%' }}
-        tabBarStyle={{ margin: 0, padding: '0 12px', background: '#252526' }}
-        destroyInactiveTabPane={false}
-      />
-    </div>
+    <>
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', marginRight: monitorVisible ? 320 : 0, transition: 'margin-right 0.3s ease' }}>
+        <Tabs
+          activeKey={activeConnectionId || undefined}
+          onChange={setActiveConnection}
+          items={connectionItems}
+          style={{ height: '100%' }}
+          tabBarStyle={{ margin: 0, padding: '0 12px', background: '#252526' }}
+          destroyInactiveTabPane={false}
+        />
+      </div>
+      <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
+    </>
   )
 }
 

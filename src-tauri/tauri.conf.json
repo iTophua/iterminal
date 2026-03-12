@@ -13,8 +13,9 @@
     "windows": [
       {
         "title": "iTerminal - SSH Manager",
-        "width": 1200,
-        "height": 800,
+        "width": 1400,
+        "height": 900,
+
         "resizable": true,
         "fullscreen": false,
         "minWidth": 800,
