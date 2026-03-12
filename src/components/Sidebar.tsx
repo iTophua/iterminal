@@ -1,8 +1,9 @@
 import { Layout, Menu, Badge } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { CloudServerOutlined, DesktopOutlined, CodeOutlined } from '@ant-design/icons'
-import { useState, useEffect } from 'react'
+import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined } from '@ant-design/icons'
+import { useState, useEffect, useMemo } from 'react'
 import { useTerminalStore } from '../stores/terminalStore'
+import { useTransferStore } from '../stores/transferStore'
 
 const { Sider } = Layout
 
@@ -23,14 +24,11 @@ function Sidebar() {
     return saved ? JSON.parse(saved) : false
   })
   
-  // 获取已连接的连接数量
-  const connectedConnections = useTerminalStore(state => state.connectedConnections)
-  const connectedCount = connectedConnections.length
-  
-  // 从 store 获取侧边栏折叠状态
+  const connectedCount = useTerminalStore(state => state.connectedConnections.length)
+  const transferringCount = useTransferStore(state => state.transferringCount)
   const storeSidebarCollapsed = useTerminalStore(state => state.sidebarCollapsed)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
-  // 从localStorage加载分组
+  
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
@@ -40,7 +38,6 @@ function Sidebar() {
     }
   }, [location.pathname])
   
-  // 监听连接更新事件，刷新分组
   useEffect(() => {
     const handleConnectionsUpdate = () => {
       const saved = localStorage.getItem(STORAGE_KEY)
@@ -54,29 +51,27 @@ function Sidebar() {
     window.addEventListener('connections-updated', handleConnectionsUpdate)
     return () => window.removeEventListener('connections-updated', handleConnectionsUpdate)
   }, [])
-  // 持久化折叠状态（同步 localStorage 和 store）
+  
   useEffect(() => {
     localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
   }, [collapsed])
   
-  // 监听 store 状态变化
   useEffect(() => {
     if (storeSidebarCollapsed !== collapsed) {
       setCollapsed(storeSidebarCollapsed)
     }
-  }, [storeSidebarCollapsed])
-  // 根据当前路径和分组确定选中的key
-  const getSelectedKey = () => {
+  }, [storeSidebarCollapsed, collapsed])
+  
+  const selectedKey = useMemo(() => {
     if (location.pathname !== '/connections') {
       return location.pathname
     }
-    // 从 location.state 获取选中的分组
     const state = location.state as { selectedGroup?: string } | null
     const selectedGroup = state?.selectedGroup || '全部'
     return selectedGroup === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(selectedGroup)}`
-  }
+  }, [location.pathname, location.state])
 
-  const menuItems = [
+  const menuItems = useMemo(() => [
     { key: 'divider', type: 'divider' as const },
     ...groups.map(group => ({
       key: group === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(group)}`,
@@ -96,12 +91,22 @@ function Sidebar() {
         </span>
       )
     },
-
-  ]
+    {
+      key: '/transfers',
+      icon: <SwapOutlined />,
+      label: (
+        <span>
+          传输管理
+          {transferringCount > 0 && (
+            <Badge count={transferringCount} size="small" style={{ marginLeft: 8, backgroundColor: '#1890ff' }} />
+          )}
+        </span>
+      ),
+    },
+  ], [groups, connectedCount, transferringCount])
 
   const handleMenuClick = (key: string) => {
     if (key.startsWith('/connections')) {
-      // 如果是分组菜单，传递分组参数
       const url = new URLSearchParams(key.split('?')[1] || '')
       const group = url.get('group')
       if (group) {
@@ -154,7 +159,7 @@ function Sidebar() {
       
       <Menu
         mode="inline"
-        selectedKeys={[getSelectedKey()]}
+        selectedKeys={[selectedKey]}
         style={{
           background: '#252526',
           borderRight: 'none',

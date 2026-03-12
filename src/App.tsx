@@ -3,6 +3,7 @@ import { Layout } from 'antd'
 import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
+import Transfers from './pages/Transfers'
 import './styles/global.css'
 
 const { Content } = Layout
@@ -50,10 +51,25 @@ function MainContent() {
         <Connections />
       </div>
       
+      <div style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: location.pathname === '/transfers' ? 'flex' : 'none',
+        flexDirection: 'column',
+        padding: 16,
+        overflow: 'auto'
+      }}>
+        <Transfers />
+      </div>
+      
       {/* 路由仅用于 URL 导航 */}
       <Routes>
         <Route path="/" element={<Navigate to="/connections" replace />} />
         <Route path="/connections" element={null} />
+        <Route path="/transfers" element={null} />
         <Route path="/terminal" element={null} />
       </Routes>
     

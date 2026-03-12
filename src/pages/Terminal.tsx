@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, message, Tooltip, Input, Button } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, SwapOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -11,7 +11,6 @@ import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
-import TransferManagerPanel from '../components/TransferManagerPanel'
 function Terminal() {
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
@@ -22,9 +21,7 @@ function Terminal() {
   const closeConnection = useTerminalStore(state => state.closeConnection)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
-  const transferManagerVisible = useTerminalStore(state => state.transferManagerVisible)
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
-  const setTransferManagerVisible = useTerminalStore(state => state.setTransferManagerVisible)
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -467,33 +464,12 @@ function Terminal() {
                   onClick={() => {
                     const isVisible = fileManagerVisible[conn.connectionId]
                     setFileManagerVisible(conn.connectionId, !isVisible)
-                    if (!isVisible) {
-                      setTransferManagerVisible(conn.connectionId, false)
-                    }
                   }}
                 >
                   <FolderOutlined />
                 </span>
               </Tooltip>
-              <Tooltip title="传输管理">
-                <span
-                  style={{
-                    color: transferManagerVisible[conn.connectionId] ? '#00b96b' : '#999',
-                    cursor: 'pointer',
-                    padding: '4px 6px',
-                    fontSize: 14
-                  }}
-                  onClick={() => {
-                    const isVisible = transferManagerVisible[conn.connectionId]
-                    setTransferManagerVisible(conn.connectionId, !isVisible)
-                    if (!isVisible) {
-                      setFileManagerVisible(conn.connectionId, false)
-                    }
-                  }}
-                >
-                  <SwapOutlined />
-                </span>
-              </Tooltip>
+              
               <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
               <Tooltip title="收起工具栏">
                 <span
@@ -665,11 +641,6 @@ function Terminal() {
             connectionId={activeConnectionId}
             visible={!!fileManagerVisible[activeConnectionId]}
             onClose={() => setFileManagerVisible(activeConnectionId, false)}
-          />
-          <TransferManagerPanel
-            connectionId={activeConnectionId}
-            visible={!!transferManagerVisible[activeConnectionId]}
-            onClose={() => setTransferManagerVisible(activeConnectionId, false)}
           />
         </>
       )}

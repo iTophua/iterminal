@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use ssh2::Sftp;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::process::Command;
+use std::time::Instant;
+use tauri::{AppHandle, Emitter};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -24,38 +27,35 @@ fn with_session<F, T>(connection_id: &str, operation: F) -> Result<T, String>
 where
     F: FnOnce(&ssh2::Session) -> Result<T, String>,
 {
-    let sessions = crate::commands::ssh::SESSIONS.lock().unwrap();
-    let session = sessions
-        .get(connection_id)
-        .ok_or_else(|| "Session not found".to_string())?;
-
-    let shell_ids: Vec<String> = {
-        let shells = crate::commands::ssh::SHELLS.lock().unwrap();
-        shells
-            .keys()
-            .filter(|k| k.starts_with(connection_id))
-            .cloned()
-            .collect()
+    let session = {
+        let sftp_sessions = crate::commands::ssh::SFTP_SESSIONS.lock().unwrap();
+        sftp_sessions
+            .get(connection_id)
+            .ok_or_else(|| "SFTP session not found".to_string())?
+            .clone()
     };
 
-    for sid in &shell_ids {
-        crate::commands::ssh::RUNNING
-            .lock()
-            .unwrap()
-            .insert(sid.clone(), false);
-    }
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
     session.set_blocking(true);
-    let result = operation(session);
+    let result = operation(&session);
     session.set_blocking(false);
 
-    for sid in &shell_ids {
-        crate::commands::ssh::RUNNING
-            .lock()
-            .unwrap()
-            .insert(sid.clone(), true);
-    }
+    result
+}
+
+fn with_session_blocking<F, T>(connection_id: &str, operation: F) -> Result<T, String>
+where
+    F: FnOnce(&ssh2::Session) -> Result<T, String>,
+{
+    let session = {
+        let sftp_sessions = crate::commands::ssh::SFTP_SESSIONS.lock().unwrap();
+        sftp_sessions
+            .get(connection_id)
+            .ok_or_else(|| "SFTP session not found".to_string())?
+            .clone()
+    };
+
+    session.set_blocking(true);
+    let result = operation(&session);
 
     result
 }
@@ -206,22 +206,30 @@ pub fn delete_directory(connection_id: String, path: String) -> Result<bool, Str
 
 #[tauri::command]
 pub async fn upload_file(
+    app: AppHandle,
+    task_id: String,
     connection_id: String,
     local_path: String,
     remote_path: String,
 ) -> Result<TransferResult, String> {
     tokio::task::spawn_blocking(move || {
-        with_session(&connection_id, |session| {
+        with_session_blocking(&connection_id, |session| {
             let sftp = session.sftp().map_err(|e| e.to_string())?;
 
             let mut local_file = std::fs::File::open(&local_path)
                 .map_err(|e| format!("Failed to open local file: {}", e))?;
+            
+            let file_size = std::fs::metadata(&local_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+
             let mut remote_file = sftp
                 .create(Path::new(&remote_path))
                 .map_err(|e| format!("Failed to create remote file: {}", e))?;
 
             let mut buffer = [0u8; 8192];
             let mut total = 0u64;
+            let mut last_emit = Instant::now();
 
             loop {
                 let n = local_file
@@ -234,7 +242,20 @@ pub async fn upload_file(
                     .write_all(&buffer[..n])
                     .map_err(|e| format!("Failed to write: {}", e))?;
                 total += n as u64;
+
+                if last_emit.elapsed().as_millis() >= 100 {
+                    let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
+                        "transferred": total,
+                        "total": file_size
+                    }));
+                    last_emit = Instant::now();
+                }
             }
+
+            let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
+                "transferred": total,
+                "total": file_size
+            }));
 
             remote_file
                 .flush()
@@ -251,22 +272,31 @@ pub async fn upload_file(
 
 #[tauri::command]
 pub async fn download_file(
+    app: AppHandle,
+    task_id: String,
     connection_id: String,
     remote_path: String,
     local_path: String,
 ) -> Result<TransferResult, String> {
     tokio::task::spawn_blocking(move || {
-        with_session(&connection_id, |session| {
+        with_session_blocking(&connection_id, |session| {
             let sftp = session.sftp().map_err(|e| e.to_string())?;
 
             let mut remote_file = sftp
                 .open(Path::new(&remote_path))
                 .map_err(|e| format!("Failed to open remote file: {}", e))?;
+            
+            let file_size = sftp
+                .stat(Path::new(&remote_path))
+                .map(|s| s.size.unwrap_or(0))
+                .unwrap_or(0);
+
             let mut local_file = std::fs::File::create(&local_path)
                 .map_err(|e| format!("Failed to create local file: {}", e))?;
 
             let mut buffer = [0u8; 8192];
             let mut total = 0u64;
+            let mut last_emit = Instant::now();
 
             loop {
                 let n = remote_file
@@ -279,7 +309,20 @@ pub async fn download_file(
                     .write_all(&buffer[..n])
                     .map_err(|e| format!("Failed to write: {}", e))?;
                 total += n as u64;
+
+                if last_emit.elapsed().as_millis() >= 100 {
+                    let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
+                        "transferred": total,
+                        "total": file_size
+                    }));
+                    last_emit = Instant::now();
+                }
             }
+
+            let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
+                "transferred": total,
+                "total": file_size
+            }));
 
             local_file
                 .flush()
@@ -296,15 +339,36 @@ pub async fn download_file(
 
 #[tauri::command]
 pub async fn upload_folder(
+    app: AppHandle,
+    task_id: String,
     connection_id: String,
     local_path: String,
     remote_path: String,
 ) -> Result<TransferResult, String> {
+    fn get_dir_size(path: &Path) -> u64 {
+        let mut total = 0u64;
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    total += get_dir_size(&path);
+                } else if let Ok(metadata) = entry.metadata() {
+                    total += metadata.len();
+                }
+            }
+        }
+        total
+    }
+
     fn upload_dir_recursive(
         sftp: &ssh2::Sftp,
         local_dir: &Path,
         remote_dir: &str,
         total: &mut u64,
+        total_size: u64,
+        app: &AppHandle,
+        task_id: &str,
+        last_emit: &mut Instant,
     ) -> Result<(), String> {
         sftp.mkdir(Path::new(remote_dir), 0o755).ok();
 
@@ -321,7 +385,7 @@ pub async fn upload_folder(
             let remote_entry_path = format!("{}/{}", remote_dir, file_name);
 
             if local_entry_path.is_dir() {
-                upload_dir_recursive(sftp, &local_entry_path, &remote_entry_path, total)?;
+                upload_dir_recursive(sftp, &local_entry_path, &remote_entry_path, total, total_size, app, task_id, last_emit)?;
             } else {
                 let mut local_file = std::fs::File::open(&local_entry_path)
                     .map_err(|e| format!("Failed to open {}: {}", local_entry_path.display(), e))?;
@@ -339,6 +403,14 @@ pub async fn upload_folder(
                         .write_all(&buffer[..n])
                         .map_err(|e| e.to_string())?;
                     *total += n as u64;
+
+                    if last_emit.elapsed().as_millis() >= 100 {
+                        let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
+                            "transferred": *total,
+                            "total": total_size
+                        }));
+                        *last_emit = Instant::now();
+                    }
                 }
                 remote_file.flush().map_err(|e| e.to_string())?;
             }
@@ -347,10 +419,19 @@ pub async fn upload_folder(
     }
 
     tokio::task::spawn_blocking(move || {
-        with_session(&connection_id, |session| {
+        with_session_blocking(&connection_id, |session| {
             let sftp = session.sftp().map_err(|e| e.to_string())?;
             let mut total = 0u64;
-            upload_dir_recursive(&sftp, Path::new(&local_path), &remote_path, &mut total)?;
+            let mut last_emit = Instant::now();
+            
+            let total_size = get_dir_size(Path::new(&local_path));
+            
+            upload_dir_recursive(&sftp, Path::new(&local_path), &remote_path, &mut total, total_size, &app, &task_id, &mut last_emit)?;
+
+            let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
+                "transferred": total,
+                "total": total_size
+            }));
 
             Ok(TransferResult {
                 success: true,
@@ -397,4 +478,33 @@ pub fn compress_file(
 
         Ok(true)
     })
+}
+
+#[tauri::command]
+pub fn open_folder(path: String) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open folder: {}", e))?;
+    }
+
+    Ok(true)
 }

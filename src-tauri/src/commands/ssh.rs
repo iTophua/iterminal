@@ -27,6 +27,7 @@ pub struct CommandResult {
 
 lazy_static::lazy_static! {
     pub static ref SESSIONS: Mutex<HashMap<String, Session>> = Mutex::new(HashMap::new());
+    pub static ref SFTP_SESSIONS: Mutex<HashMap<String, Session>> = Mutex::new(HashMap::new());
     pub static ref SHELLS: Mutex<HashMap<String, Arc<Mutex<ssh2::Channel>>>> = Mutex::new(HashMap::new());
     pub static ref RUNNING: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
     static ref SHELL_LOCKS: Mutex<HashMap<String, Arc<Mutex<()>>>> = Mutex::new(HashMap::new());
@@ -42,6 +43,8 @@ pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String
     }
 
     let addr = format!("{}:{}", connection.host, connection.port);
+
+    // 创建主 session（用于 shell）
     let tcp = TcpStream::connect(&addr).map_err(|e| e.to_string())?;
     tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
@@ -69,7 +72,41 @@ pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String
         return Err("Authentication failed".to_string());
     }
 
-    SESSIONS.lock().unwrap().insert(id, session);
+    SESSIONS.lock().unwrap().insert(id.clone(), session);
+
+    // 创建独立 SFTP session
+    let sftp_tcp =
+        TcpStream::connect(&addr).map_err(|e| format!("SFTP connection failed: {}", e))?;
+    sftp_tcp
+        .set_read_timeout(Some(Duration::from_secs(30)))
+        .ok();
+    sftp_tcp
+        .set_write_timeout(Some(Duration::from_secs(30)))
+        .ok();
+
+    let mut sftp_session = Session::new().map_err(|e| e.to_string())?;
+    sftp_session.set_tcp_stream(sftp_tcp);
+    sftp_session.handshake().map_err(|e| e.to_string())?;
+
+    if let Some(password) = &connection.password {
+        sftp_session
+            .userauth_password(&connection.username, password)
+            .map_err(|e| format!("SFTP auth failed: {}", e))?;
+    } else if let Some(key_file) = &connection.key_file {
+        sftp_session
+            .userauth_pubkey_file(
+                &connection.username,
+                None,
+                std::path::Path::new(key_file),
+                None,
+            )
+            .map_err(|e| format!("SFTP key auth failed: {}", e))?;
+    }
+
+    if sftp_session.authenticated() {
+        SFTP_SESSIONS.lock().unwrap().insert(id, sftp_session);
+    }
+
     Ok(true)
 }
 
@@ -77,7 +114,6 @@ pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String
 pub fn disconnect_ssh(id: String) -> Result<bool, String> {
     let prefix = format!("{}-shell", id);
 
-    // 收集需要停止的keys
     let keys_to_stop: Vec<String> = {
         let running = RUNNING.lock().unwrap();
         running
@@ -87,7 +123,6 @@ pub fn disconnect_ssh(id: String) -> Result<bool, String> {
             .collect()
     };
 
-    // 停止读取线程
     {
         let mut running = RUNNING.lock().unwrap();
         for k in &keys_to_stop {
@@ -95,7 +130,6 @@ pub fn disconnect_ssh(id: String) -> Result<bool, String> {
         }
     }
 
-    // 关闭shells
     {
         let mut shells = SHELLS.lock().unwrap();
         for k in &keys_to_stop {
@@ -105,9 +139,14 @@ pub fn disconnect_ssh(id: String) -> Result<bool, String> {
         }
     }
 
-    // 关闭session
     if let Some(session) = SESSIONS.lock().unwrap().remove(&id) {
         session.disconnect(None, "Disconnected", None).ok();
+    }
+
+    if let Some(sftp_session) = SFTP_SESSIONS.lock().unwrap().remove(&id) {
+        sftp_session
+            .disconnect(None, "SFTP Disconnected", None)
+            .ok();
     }
 
     Ok(true)

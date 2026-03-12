@@ -15,6 +15,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import type { DataNode } from 'antd/es/tree'
 import { useTerminalStore } from '../stores/terminalStore'
+import { listen } from '@tauri-apps/api/event'
+import { useTransferStore } from '../stores/transferStore'
 
 interface FileManagerPanelProps {
   connectionId: string
@@ -273,8 +275,15 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   }
 
   const uploadFile = async (localPath: string, remotePath: string, fileName: string) => {
-    const taskId = store.addTransferTask(connectionId, {
+    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const now = Date.now()
+    const conn = connection
+
+    useTransferStore.getState().addRecord({
+      id: taskId,
       connectionId,
+      connectionName: conn?.name || 'Unknown',
+      connectionHost: conn?.host || '',
       type: 'upload',
       localPath,
       remotePath,
@@ -282,22 +291,40 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       fileSize: 0,
       transferred: 0,
       status: 'pending',
+      startTime: now,
     })
 
-    try {
-      store.updateTransferTask(connectionId, taskId, { status: 'transferring' })
-      await invoke('upload_file', { connectionId, localPath, remotePath })
-      store.updateTransferTask(connectionId, taskId, { status: 'completed', endTime: Date.now() })
-      message.success(`上传完成: ${fileName}`)
-    } catch (err) {
-      store.updateTransferTask(connectionId, taskId, { status: 'failed', error: String(err) })
-      message.error(`上传失败: ${err}`)
-    }
+    useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
+
+    listen<{ transferred: number; total: number }>(
+      `transfer-progress-${taskId}`,
+      (event) => {
+        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+      }
+    ).then((unlisten) => {
+      invoke('upload_file', { taskId, connectionId, localPath, remotePath })
+        .then(() => {
+          useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+          message.success(`上传完成: ${fileName}`)
+        })
+        .catch((err) => {
+          useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
+          message.error(`上传失败: ${err}`)
+        })
+        .finally(() => unlisten())
+    })
   }
 
   const uploadFolder = async (localPath: string, remotePath: string, folderName: string) => {
-    const taskId = store.addTransferTask(connectionId, {
+    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const now = Date.now()
+    const conn = connection
+
+    useTransferStore.getState().addRecord({
+      id: taskId,
       connectionId,
+      connectionName: conn?.name || 'Unknown',
+      connectionHost: conn?.host || '',
       type: 'upload',
       localPath,
       remotePath,
@@ -305,17 +332,28 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       fileSize: 0,
       transferred: 0,
       status: 'pending',
+      startTime: now,
     })
 
-    try {
-      store.updateTransferTask(connectionId, taskId, { status: 'transferring' })
-      await invoke('upload_folder', { connectionId, localPath, remotePath })
-      store.updateTransferTask(connectionId, taskId, { status: 'completed', endTime: Date.now() })
-      message.success(`上传完成: ${folderName}`)
-    } catch (err) {
-      store.updateTransferTask(connectionId, taskId, { status: 'failed', error: String(err) })
-      message.error(`上传失败: ${err}`)
-    }
+    useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
+
+    listen<{ transferred: number; total: number }>(
+      `transfer-progress-${taskId}`,
+      (event) => {
+        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+      }
+    ).then((unlisten) => {
+      invoke('upload_folder', { taskId, connectionId, localPath, remotePath })
+        .then(() => {
+          useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+          message.success(`上传完成: ${folderName}`)
+        })
+        .catch((err) => {
+          useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
+          message.error(`上传失败: ${err}`)
+        })
+        .finally(() => unlisten())
+    })
   }
 
   const handleDownload = async (remotePath: string, fileName: string) => {
@@ -325,8 +363,15 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         title: '保存文件',
       })
       if (savePath) {
-        const taskId = store.addTransferTask(connectionId, {
+        const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+        const now = Date.now()
+        const conn = connection
+
+        useTransferStore.getState().addRecord({
+          id: taskId,
           connectionId,
+          connectionName: conn?.name || 'Unknown',
+          connectionHost: conn?.host || '',
           type: 'download',
           localPath: savePath,
           remotePath,
@@ -334,17 +379,28 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           fileSize: 0,
           transferred: 0,
           status: 'pending',
+          startTime: now,
         })
 
-        try {
-          store.updateTransferTask(connectionId, taskId, { status: 'transferring' })
-          await invoke('download_file', { connectionId, remotePath, localPath: savePath })
-          store.updateTransferTask(connectionId, taskId, { status: 'completed', endTime: Date.now() })
-          message.success(`下载完成: ${fileName}`)
-        } catch (err) {
-          store.updateTransferTask(connectionId, taskId, { status: 'failed', error: String(err) })
-          message.error(`下载失败: ${err}`)
-        }
+        useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
+
+        listen<{ transferred: number; total: number }>(
+          `transfer-progress-${taskId}`,
+          (event) => {
+            useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+          }
+        ).then((unlisten) => {
+          invoke('download_file', { taskId, connectionId, remotePath, localPath: savePath })
+            .then(() => {
+              useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+              message.success(`下载完成: ${fileName}`)
+            })
+            .catch((err) => {
+              useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
+              message.error(`下载失败: ${err}`)
+            })
+            .finally(() => unlisten())
+        })
       }
     } catch (err) {
       console.error('保存对话框取消:', err)
