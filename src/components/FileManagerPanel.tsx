@@ -5,7 +5,7 @@ import {
 } from 'antd'
 const { DirectoryTree } = Tree
 import {
-  FolderOutlined, FileOutlined, HomeOutlined, ReloadOutlined,
+  HomeOutlined, ReloadOutlined,
   UploadOutlined, DownloadOutlined, DeleteOutlined, EditOutlined,
   FolderAddOutlined, FileAddOutlined, ScissorOutlined,
   CopyOutlined, CompressOutlined, EyeOutlined, EyeInvisibleOutlined,
@@ -13,8 +13,8 @@ import {
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import type { DataNode, TreeProps } from 'antd/es/tree'
-import { useTerminalStore, FileItem } from '../stores/terminalStore'
+import type { DataNode } from 'antd/es/tree'
+import { useTerminalStore } from '../stores/terminalStore'
 
 interface FileManagerPanelProps {
   connectionId: string
