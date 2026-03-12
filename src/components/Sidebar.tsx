@@ -1,6 +1,6 @@
 import { Layout, Menu, Badge } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { CloudServerOutlined, FolderOutlined, DesktopOutlined, CodeOutlined } from '@ant-design/icons'
+import { CloudServerOutlined, DesktopOutlined, CodeOutlined } from '@ant-design/icons'
 import { useState, useEffect } from 'react'
 import { useTerminalStore } from '../stores/terminalStore'
 
@@ -96,7 +96,7 @@ function Sidebar() {
         </span>
       )
     },
-    { key: '/files', icon: <FolderOutlined />, label: '文件管理' },
+
   ]
 
   const handleMenuClick = (key: string) => {

@@ -29,12 +29,56 @@ export interface ConnectedConnection {
   activeSessionId: string | null
 }
 
+// 传输任务状态
+export type TransferStatus = 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled'
+
+// 传输任务类型
+export type TransferType = 'upload' | 'download'
+
+// 传输任务
+export interface TransferTask {
+  id: string
+  connectionId: string
+  type: TransferType
+  localPath: string
+  remotePath: string
+  fileName: string
+  fileSize: number
+  transferred: number
+  status: TransferStatus
+  error?: string
+  startTime: number
+  endTime?: number
+}
+
+// 文件项
+export interface FileItem {
+  name: string
+  path: string
+  isDirectory: boolean
+  size: number
+  modified: string
+  permissions?: string
+}
+
 interface TerminalState {
   // 已连接的连接列表
   connectedConnections: ConnectedConnection[]
   // 当前激活的连接 ID
   activeConnectionId: string | null
-  
+  // 侧边栏折叠状态
+  sidebarCollapsed: boolean
+  // 文件管理面板显示状态（按连接ID）
+  fileManagerVisible: { [connectionId: string]: boolean }
+  // 传输管理面板显示状态（按连接ID）
+  transferManagerVisible: { [connectionId: string]: boolean }
+  // 传输任务列表（按连接ID）
+  transferTasks: { [connectionId: string]: TransferTask[] }
+  // 当前文件路径（按连接ID）
+  currentPaths: { [connectionId: string]: string }
+  // 展开的文件树节点（按连接ID）
+  expandedKeys: { [connectionId: string]: string[] }
+
   // 添加连接
   addConnection: (connection: Connection, shellId: string) => string
   // 添加会话
@@ -51,14 +95,35 @@ interface TerminalState {
   getActiveSession: () => Session | null
   // 设置侧边栏折叠状态
   setSidebarCollapsed: (collapsed: boolean) => void
-  // 获取侧边栏折叠状态
-  sidebarCollapsed: boolean
+
+  // 文件管理面板控制
+  setFileManagerVisible: (connectionId: string, visible: boolean) => void
+  // 传输管理面板控制
+  setTransferManagerVisible: (connectionId: string, visible: boolean) => void
+  // 添加传输任务
+  addTransferTask: (connectionId: string, task: Omit<TransferTask, 'id' | 'startTime'>) => string
+  // 更新传输任务
+  updateTransferTask: (connectionId: string, taskId: string, updates: Partial<TransferTask>) => void
+  // 移除传输任务
+  removeTransferTask: (connectionId: string, taskId: string) => void
+  // 清除连接的所有传输任务
+  clearTransferTasks: (connectionId: string) => void
+  // 设置当前路径
+  setCurrentPath: (connectionId: string, path: string) => void
+  // 设置展开的文件树节点
+  setExpandedKeys: (connectionId: string, keys: string[]) => void
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   connectedConnections: [],
   activeConnectionId: null,
   sidebarCollapsed: false,
+  fileManagerVisible: {},
+  transferManagerVisible: {},
+  transferTasks: {},
+  currentPaths: {},
+  expandedKeys: {},
+
   addConnection: (connection, shellId) => {
     const sessionId = Date.now().toString()
     const newSession: Session = {
@@ -78,8 +143,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
       ],
       activeConnectionId: connection.id,
+      // 初始化新连接的默认路径
+      currentPaths: {
+        ...state.currentPaths,
+        [connection.id]: '/home/' + connection.username
+      }
     }))
-    
+
     return sessionId
   },
 
@@ -87,7 +157,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const state = get()
     const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
     if (!conn) return ''
-    
+
     const sessionId = Date.now().toString()
     const sessionCount = conn.sessions.length + 1
     const newSession: Session = {
@@ -107,7 +177,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           : c
       ),
     }))
-    
+
     return sessionId
   },
 
@@ -115,26 +185,42 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     set((state) => {
       const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
       if (!conn) return state
-      
+
       const newSessions = conn.sessions.filter(s => s.id !== sessionId)
-      
-      // 如果没有会话了，移除整个连接
+
+      // 如果没有会话了，移除整个连接并清理相关状态
       if (newSessions.length === 0) {
+        const newTransferTasks = { ...state.transferTasks }
+        delete newTransferTasks[connectionId]
+        const newFileManagerVisible = { ...state.fileManagerVisible }
+        delete newFileManagerVisible[connectionId]
+        const newTransferManagerVisible = { ...state.transferManagerVisible }
+        delete newTransferManagerVisible[connectionId]
+        const newCurrentPaths = { ...state.currentPaths }
+        delete newCurrentPaths[connectionId]
+        const newExpandedKeys = { ...state.expandedKeys }
+        delete newExpandedKeys[connectionId]
+
         return {
           connectedConnections: state.connectedConnections.filter(c => c.connectionId !== connectionId),
-          activeConnectionId: state.activeConnectionId === connectionId 
-            ? (state.connectedConnections.length > 1 
-              ? state.connectedConnections.find(c => c.connectionId !== connectionId)?.connectionId || null 
+          activeConnectionId: state.activeConnectionId === connectionId
+            ? (state.connectedConnections.length > 1
+              ? state.connectedConnections.find(c => c.connectionId !== connectionId)?.connectionId || null
               : null)
             : state.activeConnectionId,
+          transferTasks: newTransferTasks,
+          fileManagerVisible: newFileManagerVisible,
+          transferManagerVisible: newTransferManagerVisible,
+          currentPaths: newCurrentPaths,
+          expandedKeys: newExpandedKeys,
         }
       }
-      
+
       // 更新会话列表
       const newActiveSessionId = conn.activeSessionId === sessionId
         ? newSessions[0].id
         : conn.activeSessionId
-      
+
       return {
         connectedConnections: state.connectedConnections.map(c =>
           c.connectionId === connectionId
@@ -151,10 +237,27 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const newActiveId = state.activeConnectionId === connectionId
         ? (newConnections.length > 0 ? newConnections[0].connectionId : null)
         : state.activeConnectionId
-      
+
+      // 清理连接相关的所有状态
+      const newTransferTasks = { ...state.transferTasks }
+      delete newTransferTasks[connectionId]
+      const newFileManagerVisible = { ...state.fileManagerVisible }
+      delete newFileManagerVisible[connectionId]
+      const newTransferManagerVisible = { ...state.transferManagerVisible }
+      delete newTransferManagerVisible[connectionId]
+      const newCurrentPaths = { ...state.currentPaths }
+      delete newCurrentPaths[connectionId]
+      const newExpandedKeys = { ...state.expandedKeys }
+      delete newExpandedKeys[connectionId]
+
       return {
         connectedConnections: newConnections,
         activeConnectionId: newActiveId,
+        transferTasks: newTransferTasks,
+        fileManagerVisible: newFileManagerVisible,
+        transferManagerVisible: newTransferManagerVisible,
+        currentPaths: newCurrentPaths,
+        expandedKeys: newExpandedKeys,
       }
     })
   },
@@ -183,5 +286,85 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setSidebarCollapsed: (collapsed: boolean) => {
     set({ sidebarCollapsed: collapsed })
+  },
+
+  setFileManagerVisible: (connectionId: string, visible: boolean) => {
+    set((state) => ({
+      fileManagerVisible: {
+        ...state.fileManagerVisible,
+        [connectionId]: visible
+      }
+    }))
+  },
+
+  setTransferManagerVisible: (connectionId: string, visible: boolean) => {
+    set((state) => ({
+      transferManagerVisible: {
+        ...state.transferManagerVisible,
+        [connectionId]: visible
+      }
+    }))
+  },
+
+  addTransferTask: (connectionId: string, task: Omit<TransferTask, 'id' | 'startTime'>) => {
+    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const newTask: TransferTask = {
+      ...task,
+      id: taskId,
+      startTime: Date.now(),
+    }
+    set((state) => ({
+      transferTasks: {
+        ...state.transferTasks,
+        [connectionId]: [...(state.transferTasks[connectionId] || []), newTask]
+      }
+    }))
+    return taskId
+  },
+
+  updateTransferTask: (connectionId: string, taskId: string, updates: Partial<TransferTask>) => {
+    set((state) => ({
+      transferTasks: {
+        ...state.transferTasks,
+        [connectionId]: state.transferTasks[connectionId]?.map(task =>
+          task.id === taskId ? { ...task, ...updates } : task
+        ) || []
+      }
+    }))
+  },
+
+  removeTransferTask: (connectionId: string, taskId: string) => {
+    set((state) => ({
+      transferTasks: {
+        ...state.transferTasks,
+        [connectionId]: state.transferTasks[connectionId]?.filter(task => task.id !== taskId) || []
+      }
+    }))
+  },
+
+  clearTransferTasks: (connectionId: string) => {
+    set((state) => {
+      const newTasks = { ...state.transferTasks }
+      delete newTasks[connectionId]
+      return { transferTasks: newTasks }
+    })
+  },
+
+  setCurrentPath: (connectionId: string, path: string) => {
+    set((state) => ({
+      currentPaths: {
+        ...state.currentPaths,
+        [connectionId]: path
+      }
+    }))
+  },
+
+  setExpandedKeys: (connectionId: string, keys: string[]) => {
+    set((state) => ({
+      expandedKeys: {
+        ...state.expandedKeys,
+        [connectionId]: keys
+      }
+    }))
   },
 }))

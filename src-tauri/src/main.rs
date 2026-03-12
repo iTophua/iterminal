@@ -3,6 +3,7 @@
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             iterminal::commands::ssh::connect_ssh,
             iterminal::commands::ssh::disconnect_ssh,
@@ -16,8 +17,16 @@ fn main() {
             iterminal::commands::ssh::check_port_reachable,
             iterminal::commands::ssh::get_system_monitor,
             iterminal::commands::sftp::list_directory,
+            iterminal::commands::sftp::create_file,
+            iterminal::commands::sftp::create_directory,
+            iterminal::commands::sftp::rename_file,
+            iterminal::commands::sftp::delete_file,
+            iterminal::commands::sftp::delete_directory,
+            iterminal::commands::sftp::chmod_file,
             iterminal::commands::sftp::upload_file,
             iterminal::commands::sftp::download_file,
+            iterminal::commands::sftp::upload_folder,
+            iterminal::commands::sftp::compress_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
