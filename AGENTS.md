@@ -1,6 +1,10 @@
 # iTerminal - SSH Connection Manager
 
-**技术栈:** Tauri 2 + React 19 + TypeScript + Vite + Ant Design + xterm.js + Rust (ssh2)
+**Generated:** 2026-03-13
+**Commit:** 8fbd6ce
+**Branch:** main
+
+**技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 5.3 + Rust (ssh2 0.9)
 
 ## 架构概览
 
@@ -48,7 +52,8 @@
 │   │   ├── Connections.tsx     # 连接管理 (CRUD + 测试连接)
 │   │   └── FileManager.tsx     # 文件管理 (占位)
 │   ├── stores/                 # Zustand 状态管理
-│   │   └── terminalStore.ts    # 连接/会话状态
+│   │   └── terminalStore.ts    # 连接/会话/文件管理/传输状态
+│   ├── utils/                  # 工具函数
 │   └── styles/                 # 全局 CSS
 │       └── global.css          # xterm.js 样式覆盖
 ├── src-tauri/                  # Rust 后端
@@ -73,7 +78,7 @@
 |------|------|------|
 | 添加新 SSH 功能 | `src-tauri/src/commands/ssh.rs` | 核心 SSH 逻辑 |
 | 修改终端事件监听 | `src/pages/Terminal.tsx` | Events 订阅/取消订阅 |
-| 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话状态 |
+| 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话/文件管理/传输状态 |
 | 添加新页面 | `src/pages/` | 创建组件 + 在 App.tsx 添加路由 |
 | 修改终端样式 | `src/styles/global.css` | xterm.js CSS 覆盖 |
 | 添加 Tauri 命令 | `src-tauri/src/commands/` + `main.rs` | 创建命令 + 注册 |
@@ -94,44 +99,14 @@
 
 ### 1. Tauri Events 实时通信
 
-**问题**：轮询方式性能差、延迟高
+**前端监听** → **后端推送**，避免轮询。
 
-**方案**：使用 Tauri 内置事件系统
+**事件名格式**: `shell-output-{shellId}`
 
-```
-前端                              后端
-  │──── listen("shell-{id}") ───►│  监听事件
-  │                              │
-  │◄─── emit("shell-{id}", data) │  有数据时推送
-```
-
-**关键代码**：
-
-```rust
-// 后端: ssh.rs
-#[tauri::command]
-pub fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
-    let app_handle = app.clone();
-    
-    std::thread::spawn(move || {
-        loop {
-            let data = channel.read();
-            let event_name = format!("shell-output-{}", shell_id);
-            app_handle.emit(&event_name, data);
-        }
-    });
-}
-```
-
-```typescript
-// 前端: Terminal.tsx
-import { listen } from '@tauri-apps/api/event'
-
-const eventName = `shell-output-${shellId}`
-listen<string>(eventName, (event) => {
-    terminal.write(event.payload)
-})
-```
+**关键实现**:
+- 后端: `get_shell` 中启动 reader thread，循环调用 `app_handle.emit(event_name, data)`
+- 前端: `listen<string>(eventName, (event) => terminal.write(event.payload))`
+- 清理: 关闭会话时调用 `unlisten()` 取消订阅
 
 ### 2. 多连接多会话管理
 
@@ -174,24 +149,22 @@ connectedConnections: [
 **方案**：连接级别锁 + 暂停 reader thread
 
 ```rust
-// 获取连接级别的锁
-let shell_lock = SHELL_LOCKS.lock().unwrap()
-    .get(&id).cloned().unwrap_or_else(|| { /* 创建新锁 */ });
-
+// 1. 获取连接级别锁
+let shell_lock = SHELL_LOCKS.lock().unwrap().get(&id).cloned()...;
 let _guard = shell_lock.lock().unwrap();
 
-// 暂停所有 reader thread
+// 2. 暂停所有 reader thread
 for sid in &shell_ids {
     RUNNING.lock().unwrap().insert(sid.clone(), false);
 }
 std::thread::sleep(Duration::from_millis(50));
 
-// 创建 channel
+// 3. 创建 channel (阻塞模式)
 session.set_blocking(true);
 let channel = session.channel_session()?;
 session.set_blocking(false);
 
-// 恢复 reader thread
+// 4. 恢复 reader thread
 for sid in &shell_ids {
     RUNNING.lock().unwrap().insert(sid.clone(), true);
 }
@@ -243,3 +216,5 @@ npm run tauri build
 - 连接数据存储在 `localStorage` key `iterminal_connections`
 - Shell 输出通过 Events 推送，事件名格式 `shell-output-{shellId}`
 - 关闭会话时需调用 `unlisten()` 取消事件订阅
+- 无 CI/CD 配置（无 .github 目录）
+- 无测试文件
