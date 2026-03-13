@@ -448,7 +448,13 @@ function Terminal() {
               <Tooltip title="系统监控">
                 <span
                   style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={() => setMonitorVisible(true)}
+                  onClick={() => {
+                    setMonitorVisible(true)
+                    // 打开系统监控时关闭文件管理
+                    if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
+                      setFileManagerVisible(activeConnectionId, false)
+                    }
+                  }}
                 >
                   <DashboardOutlined />
                 </span>
@@ -464,6 +470,9 @@ function Terminal() {
                   onClick={() => {
                     const isVisible = fileManagerVisible[conn.connectionId]
                     setFileManagerVisible(conn.connectionId, !isVisible)
+                    if (!isVisible) {
+                      setMonitorVisible(false)
+                    }
                   }}
                 >
                   <FolderOutlined />
