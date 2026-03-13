@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Card, Button, Input, Space, Tag, Modal, Form, Select, message, Typography } from 'antd'
+import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App } from 'antd'
 import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
@@ -13,6 +13,7 @@ type TestResult = 'success' | 'failed' | null
 function Connections() {
   const navigate = useNavigate()
   const location = useLocation()
+  const { modal, message } = App.useApp()
   const [connections, setConnections] = useState<Connection[]>(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
     const parsed = saved ? JSON.parse(saved) : []
@@ -189,10 +190,19 @@ function Connections() {
     message.success(`已复制${label}`)
   }
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
+  const handleDelete = (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation()
-    setConnections(connections.filter(c => c.id !== id))
-    message.success('连接已删除')
+    modal.confirm({
+      title: '确认删除',
+      content: `确定要删除连接「${name}」吗？此操作不可恢复。`,
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: () => {
+        setConnections(connections.filter(c => c.id !== id))
+        message.success('连接已删除')
+      }
+    })
   }
 
   const handleSubmit = (values: Partial<Connection>) => {
@@ -389,9 +399,8 @@ function Connections() {
     setQuickImportText('')
     setQuickImportGroup('默认')
     message.success('连接已添加')
-    
+
     if (shouldConnect) {
-      // 异步执行连接，不阻塞弹窗关闭
       setTimeout(() => handleConnect(newConn), 50)
     }
   }
@@ -452,21 +461,14 @@ function Connections() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
                       <span style={{ color: '#CCCCCC', fontWeight: 500 }}>{conn.name}</span>
-                      {conn.status === 'connecting' ? (
-                        <>
-                          <LoadingOutlined style={{ color: '#007ACC', marginLeft: 8, fontSize: 14 }} />
-                          <span style={{ color: '#007ACC', marginLeft: 6, fontSize: 12 }}>连接中...</span>
-                        </>
-                      ) : (
-                        <span style={{
-                          display: 'inline-block',
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: isConnected(conn.id) ? '#52c41a' : getStatusColor(conn.status),
-                          marginLeft: 8
-                        }} />
-                      )}
+                      <span style={{
+                        display: 'inline-block',
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: conn.status === 'connecting' ? '#007ACC' : (isConnected(conn.id) ? '#52c41a' : getStatusColor(conn.status)),
+                        marginLeft: 8
+                      }} />
                     </div>
                     <div style={{ color: '#999999', fontSize: 12 }}>
                       {conn.username}@{conn.host}:{conn.port}
@@ -538,7 +540,7 @@ function Connections() {
                       size="small"
                       danger
                       icon={<DeleteOutlined />}
-                      onClick={(e) => handleDelete(e, conn.id)}
+                      onClick={(e) => handleDelete(e, conn.id, conn.name)}
                     >
                       删除
                     </Button>

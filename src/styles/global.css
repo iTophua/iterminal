@@ -155,8 +155,8 @@ body {
     left: 0;
   }
   50% {
-    width: 70%;
-    left: 15%;
+    width: 100%;
+    left: 0;
   }
   100% {
     width: 0%;
@@ -164,11 +164,21 @@ body {
   }
 }
 
+@keyframes connecting-glow {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .connecting-progress-bar {
   position: absolute;
   bottom: 0;
   left: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #007ACC, transparent);
-  animation: connecting-progress 2s ease-in-out infinite;
+  height: 3px;
+  background: linear-gradient(90deg, #007ACC, #00b96b, #007ACC);
+  animation: connecting-progress 1.5s ease-in-out infinite;
+  box-shadow: 0 0 8px rgba(0, 122, 204, 0.6);
 }

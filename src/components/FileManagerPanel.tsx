@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Tree, Input, Button, Tooltip, message, Modal, Empty, Spin
+  Tree, Input, Button, Tooltip, Modal, Empty, Spin, App
 } from 'antd'
 const { DirectoryTree } = Tree
 import {
@@ -37,6 +37,7 @@ interface TreeNode extends DataNode {
 }
 
 export default function FileManagerPanel({ connectionId, visible, onClose }: FileManagerPanelProps) {
+  const { message } = App.useApp()
   const store = useTerminalStore()
   const connection = store.connectedConnections.find(c => c.connectionId === connectionId)?.connection
   const currentPath = store.currentPaths[connectionId] || '/'

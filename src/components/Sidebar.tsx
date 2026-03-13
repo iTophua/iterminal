@@ -19,6 +19,7 @@ function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
   const [groups, setGroups] = useState<string[]>(['全部', '生产环境', '开发环境', '测试环境'])
+  const [groupCounts, setGroupCounts] = useState<Record<string, number>>({})
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem(COLLAPSED_KEY)
     return saved ? JSON.parse(saved) : false
@@ -35,6 +36,12 @@ function Sidebar() {
       const connections: Connection[] = JSON.parse(saved)
       const uniqueGroups = [...new Set(connections.map(c => c.group))]
       setGroups(['全部', ...uniqueGroups])
+      
+      const counts: Record<string, number> = { '全部': connections.length }
+      connections.forEach(c => {
+        counts[c.group] = (counts[c.group] || 0) + 1
+      })
+      setGroupCounts(counts)
     }
   }, [location.pathname])
   
@@ -45,6 +52,12 @@ function Sidebar() {
         const connections: Connection[] = JSON.parse(saved)
         const uniqueGroups = [...new Set(connections.map(c => c.group))]
         setGroups(['全部', ...uniqueGroups])
+        
+        const counts: Record<string, number> = { '全部': connections.length }
+        connections.forEach(c => {
+          counts[c.group] = (counts[c.group] || 0) + 1
+        })
+        setGroupCounts(counts)
       }
     }
     
@@ -76,7 +89,14 @@ function Sidebar() {
     ...groups.map(group => ({
       key: group === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(group)}`,
       icon: group === '全部' ? <DesktopOutlined /> : <CloudServerOutlined />,
-      label: group,
+      label: (
+        <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+          <span>{group}</span>
+          {groupCounts[group] !== undefined && (
+            <span style={{ color: '#666', fontSize: 12 }}>{groupCounts[group]}</span>
+          )}
+        </span>
+      ),
     })),
     { key: 'divider2', type: 'divider' as const },
     { 
@@ -103,7 +123,7 @@ function Sidebar() {
         </span>
       ),
     },
-  ], [groups, connectedCount, transferringCount])
+  ], [groups, groupCounts, connectedCount, transferringCount])
 
   const handleMenuClick = (key: string) => {
     if (key.startsWith('/connections')) {

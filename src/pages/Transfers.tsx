@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { List, Button, Tag, Empty, Select, Tabs, Dropdown, message, Space, Progress, Tooltip } from 'antd'
+import { List, Button, Tag, Empty, Select, Tabs, Dropdown, Space, Progress, Tooltip, App } from 'antd'
 import {
   DownloadOutlined, UploadOutlined, SwapOutlined, FilterOutlined,
   CloseCircleOutlined, ReloadOutlined
@@ -18,6 +18,7 @@ const RETENTION_OPTIONS = [
 ]
 
 function Transfers() {
+  const { message } = App.useApp()
   const records = useTransferStore(state => state.records)
   const progress = useTransferStore(state => state.progress)
   const retentionPeriod = useTransferStore(state => state.retentionPeriod)

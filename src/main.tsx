@@ -1,6 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { ConfigProvider, theme } from 'antd'
+import { ConfigProvider, theme, App as AntdApp } from 'antd'
 import App from './App'
 import { useTransferStore } from './stores/transferStore'
 import { setupNightlyCleanup } from './utils/transferCleanup'
@@ -9,6 +9,18 @@ import './styles/global.css'
 const initializeApp = () => {
   useTransferStore.getState().cleanupExpiredRecords()
   setupNightlyCleanup()
+  
+  document.addEventListener('contextmenu', (e) => {
+    const target = e.target as HTMLElement
+    const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA'
+    const isEditable = target.isContentEditable
+    const hasAllowAttr = target.closest('[data-allow-contextmenu]')
+    const isInTextArea = !!target.closest('.ant-input')
+    
+    if (!isInput && !isEditable && !hasAllowAttr && !isInTextArea) {
+      e.preventDefault()
+    }
+  })
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -22,7 +34,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         },
       }}
     >
-      <App />
+      <AntdApp>
+        <App />
+      </AntdApp>
     </ConfigProvider>
   </React.StrictMode>
 )

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Tabs, message, Tooltip, Input, Button } from 'antd'
+import { Tabs, Tooltip, Input, Button, App } from 'antd'
 import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
@@ -12,6 +12,7 @@ import { useTerminalStore } from '../stores/terminalStore'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 function Terminal() {
+  const { message } = App.useApp()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
@@ -608,7 +609,7 @@ function Terminal() {
     return {
       key: conn.connectionId,
       label: (
-        <span style={{ color: '#CCC', fontWeight: 500 }}>
+        <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : '#CCC', fontWeight: 500 }}>
           {conn.connection.username}@{conn.connection.host}
           <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} />
         </span>
