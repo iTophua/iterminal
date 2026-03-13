@@ -44,8 +44,19 @@ pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String
 
     let addr = format!("{}:{}", connection.host, connection.port);
 
-    // 创建主 session（用于 shell）
-    let tcp = TcpStream::connect(&addr).map_err(|e| e.to_string())?;
+    // 解析地址（支持域名和 IP）
+    let socket_addr = match addr.to_socket_addrs() {
+        Ok(mut addrs) => addrs.next(),
+        Err(e) => return Err(format!("Failed to resolve address: {}", e)),
+    };
+
+    let Some(socket_addr) = socket_addr else {
+        return Err("Failed to resolve address".to_string());
+    };
+
+    // 创建主 session（用于 shell）- 5 秒连接超时
+    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
+        .map_err(|e| format!("连接失败: {}", e))?;
     tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
     tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
 
@@ -74,9 +85,9 @@ pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String
 
     SESSIONS.lock().unwrap().insert(id.clone(), session);
 
-    // 创建独立 SFTP session
-    let sftp_tcp =
-        TcpStream::connect(&addr).map_err(|e| format!("SFTP connection failed: {}", e))?;
+    // 创建独立 SFTP session - 5 秒连接超时
+    let sftp_tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
+        .map_err(|e| format!("SFTP 连接失败: {}", e))?;
     sftp_tcp
         .set_read_timeout(Some(Duration::from_secs(30)))
         .ok();
@@ -182,7 +193,20 @@ pub fn execute_command(id: String, command: String) -> Result<CommandResult, Str
 #[tauri::command]
 pub fn test_connection(connection: SSHConnection) -> Result<bool, String> {
     let addr = format!("{}:{}", connection.host, connection.port);
-    let tcp = TcpStream::connect(&addr).map_err(|e| e.to_string())?;
+
+    // 解析地址
+    let socket_addr = match addr.to_socket_addrs() {
+        Ok(mut addrs) => addrs.next(),
+        Err(e) => return Err(format!("Failed to resolve address: {}", e)),
+    };
+
+    let Some(socket_addr) = socket_addr else {
+        return Err("Failed to resolve address".to_string());
+    };
+
+    // 5 秒连接超时
+    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
+        .map_err(|e| format!("连接失败: {}", e))?;
     tcp.set_read_timeout(Some(Duration::from_secs(10))).ok();
 
     let mut session = Session::new().map_err(|e| e.to_string())?;
@@ -425,8 +449,8 @@ pub fn check_port_reachable(host: String, port: u16) -> Result<bool, String> {
         return Ok(false);
     };
 
-    // 尝试连接，3 秒超时
-    let result = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(3));
+    // 5 秒连接超时
+    let result = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5));
 
     Ok(result.is_ok())
 }

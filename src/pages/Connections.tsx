@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { flushSync } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Card, Button, Input, Space, Tag, Modal, Form, Select, message, Typography } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
 
@@ -28,9 +29,33 @@ function Connections() {
   const [testMessage, setTestMessage] = useState('')
   const [isQuickImportOpen, setIsQuickImportOpen] = useState(false)
   const [quickImportText, setQuickImportText] = useState('')
+  const [quickImportGroup, setQuickImportGroup] = useState<string>('默认')
   
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const addConnection = useTerminalStore(state => state.addConnection)
+
+  // 使用 ref 存储最新值，避免 useEffect 依赖变化导致频繁重建
+  const connectionsRef = useRef(connections)
+  const connectedRef = useRef(connectedConnections)
+  const checkingRef = useRef(false) // 防止并发检测
+
+  // 同步最新值到 ref
+  useEffect(() => {
+    connectionsRef.current = connections
+  }, [connections])
+
+  useEffect(() => {
+    connectedRef.current = connectedConnections
+  }, [connectedConnections])
+
+  // localStorage 写入防抖，避免频繁写入阻塞
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
+      window.dispatchEvent(new CustomEvent('connections-updated'))
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [connections])
 
   useEffect(() => {
     const state = location.state as { selectedGroup?: string } | null
@@ -39,25 +64,29 @@ function Connections() {
     }
   }, [location.state])
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
-    // 触发分组刷新事件
-    window.dispatchEvent(new CustomEvent('connections-updated'))
-  }, [connections])
-
 
   // 端口探测 - 检测服务器在线状态（完全异步，不阻塞）
   useEffect(() => {
     let cancelled = false
     
-    const checkAllConnections = async (conns: Connection[], connected: typeof connectedConnections) => {
+    const checkAllConnections = async () => {
+      // 防止并发检测
+      if (checkingRef.current) return
+      checkingRef.current = true
+      
+      const conns = connectionsRef.current
+      const connected = connectedRef.current
+      
       // 过滤出需要检测的连接（跳过已连接的和正在连接中的）
       const toCheck = conns.filter(
         conn => !connected.some(c => c.connectionId === conn.id)
           && conn.status !== 'connecting'
       )
       
-      if (toCheck.length === 0) return
+      if (toCheck.length === 0) {
+        checkingRef.current = false
+        return
+      }
       
       // 并行检测所有连接
       const results = await Promise.all(
@@ -75,33 +104,41 @@ function Connections() {
         })
       )
       
-      // 批量更新状态
+      // 批量更新状态（仅当状态真正变化时）
       if (!cancelled && results.length > 0) {
-        setConnections(prev => prev.map(c => {
-          const result = results.find(r => r.id === c.id)
-          return result ? { ...c, status: result.status } : c
-        }))
+        setConnections(prev => {
+          let hasChange = false
+          const next = prev.map(c => {
+            const result = results.find(r => r.id === c.id)
+            if (result && result.status !== c.status) {
+              hasChange = true
+              return { ...c, status: result.status }
+            }
+            return c
+          })
+          return hasChange ? next : prev
+        })
       }
+      
+      checkingRef.current = false
     }
     
     // 启动时延迟 3 秒再检测，让应用先完成初始化
     const initialTimeout = setTimeout(() => {
-      checkAllConnections(connections, connectedConnections)
+      checkAllConnections()
     }, 3000)
     
-    // 每 1 分钟检测一次
+    // 每 10 分钟检测一次
     const interval = setInterval(() => {
-      // 直接使用当前的 connections 和 connectedConnections
-      // 注意：由于依赖数组包含这些值，effect 会重新运行，interval 也会重建
-      checkAllConnections(connections, connectedConnections)
-    }, 60000)
+      checkAllConnections()
+    }, 600000)
     
     return () => {
       cancelled = true
       clearTimeout(initialTimeout)
       clearInterval(interval)
     }
-  }, [connections, connectedConnections])
+  }, []) // 空依赖数组，只在挂载时运行一次
 
 
   const filteredConnections = connections.filter(conn => {
@@ -224,10 +261,13 @@ function Connections() {
 
     if (conn.status === 'connecting') return
 
-    // 使用函数式更新，确保使用最新状态
-    setConnections(prev => prev.map(c =>
-      c.id === conn.id ? { ...c, status: 'connecting' as const } : c
-    ))
+    // 使用 flushSync 强制同步渲染，确保 UI 立即更新
+    flushSync(() => {
+      setConnections(prev => prev.map(c =>
+        c.id === conn.id ? { ...c, status: 'connecting' as const } : c
+      ))
+    })
+    
     message.info(`正在连接 ${conn.name}...`)
 
     try {
@@ -334,19 +374,22 @@ function Connections() {
       port: parsed.port || 22,
       username: parsed.username || '',
       password: parsed.password,
-      group: '默认',
+      group: quickImportGroup,
       tags: [],
       status: 'offline'
     }
     
-    setConnections([...connections, newConn])
+    flushSync(() => {
+      setConnections([...connections, newConn])
+    })
     setIsQuickImportOpen(false)
     setQuickImportText('')
+    setQuickImportGroup('默认')
     message.success('连接已添加')
     
     if (shouldConnect) {
-      // 延迟执行，确保状态已更新到 localStorage
-      setTimeout(() => handleConnect(newConn), 100)
+      // 异步执行连接，不阻塞弹窗关闭
+      setTimeout(() => handleConnect(newConn), 50)
     }
   }
 
@@ -390,26 +433,37 @@ function Connections() {
               <Card
                 key={conn.id}
                 size="small"
-                hoverable
+                hoverable={conn.status !== 'connecting'}
                 style={{
                   background: '#2D2D30',
-                  borderColor: '#3F3F46',
-                  cursor: 'pointer'
+                  borderColor: conn.status === 'connecting' ? '#007ACC' : '#3F3F46',
+                  cursor: 'pointer',
+                  opacity: conn.status === 'connecting' ? 0.85 : 1,
+                  transition: 'all 0.3s ease',
+                  position: 'relative',
+                  overflow: 'hidden'
                 }}
-                onClick={() => handleConnect(conn)}
+                onClick={() => conn.status !== 'connecting' && handleConnect(conn)}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
                       <span style={{ color: '#CCCCCC', fontWeight: 500 }}>{conn.name}</span>
-                      <span style={{
-                        display: 'inline-block',
-                        width: 8,
-                        height: 8,
-                        borderRadius: '50%',
-                        background: isConnected(conn.id) ? '#52c41a' : getStatusColor(conn.status),
-                        marginLeft: 8
-                      }} />
+                      {conn.status === 'connecting' ? (
+                        <>
+                          <LoadingOutlined style={{ color: '#007ACC', marginLeft: 8, fontSize: 14 }} />
+                          <span style={{ color: '#007ACC', marginLeft: 6, fontSize: 12 }}>连接中...</span>
+                        </>
+                      ) : (
+                        <span style={{
+                          display: 'inline-block',
+                          width: 8,
+                          height: 8,
+                          borderRadius: '50%',
+                          background: isConnected(conn.id) ? '#52c41a' : getStatusColor(conn.status),
+                          marginLeft: 8
+                        }} />
+                      )}
                     </div>
                     <div style={{ color: '#999999', fontSize: 12 }}>
                       {conn.username}@{conn.host}:{conn.port}
@@ -459,10 +513,14 @@ function Connections() {
                   <Button
                     type="text"
                     size="small"
-                    icon={<PlayCircleOutlined />}
-                    onClick={(e) => { e.stopPropagation(); handleConnect(conn) }}
+                    icon={conn.status === 'connecting' ? <LoadingOutlined /> : <PlayCircleOutlined />}
+                    onClick={(e) => { 
+                      e.stopPropagation()
+                      if (conn.status !== 'connecting') handleConnect(conn) 
+                    }}
+                    style={{ color: conn.status === 'connecting' ? '#007ACC' : undefined }}
                   >
-                    {isConnected(conn.id) ? '打开' : '连接'}
+                    {conn.status === 'connecting' ? '连接中' : (isConnected(conn.id) ? '打开' : '连接')}
                   </Button>
                   <Button
                     type="text"
@@ -473,16 +531,19 @@ function Connections() {
                     编辑
                   </Button>
                   <Button
-                    type="text"
-                    size="small"
-                    danger
-                    icon={<DeleteOutlined />}
-                    onClick={(e) => handleDelete(e, conn.id)}
-                  >
-                    删除
-                  </Button>
-                </div>
-              </Card>
+                      type="text"
+                      size="small"
+                      danger
+                      icon={<DeleteOutlined />}
+                      onClick={(e) => handleDelete(e, conn.id)}
+                    >
+                      删除
+                    </Button>
+                  </div>
+                  {conn.status === 'connecting' && (
+                    <div className="connecting-progress-bar" />
+                  )}
+                </Card>
             ))}
           </div>
         )}
@@ -554,6 +615,7 @@ function Connections() {
         onCancel={() => {
           setIsQuickImportOpen(false)
           setQuickImportText('')
+          setQuickImportGroup('默认')
         }}
         footer={null}
         width={500}
@@ -584,12 +646,24 @@ function Connections() {
           onChange={e => setQuickImportText(e.target.value)}
           placeholder="粘贴连接信息..."
           rows={8}
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
         />
+        
+        <div style={{ marginBottom: 16 }}>
+          <span style={{ marginRight: 8, color: '#CCCCCC' }}>分组：</span>
+          <Select
+            value={quickImportGroup}
+            onChange={setQuickImportGroup}
+            options={groupOptions}
+            style={{ width: 150 }}
+          />
+        </div>
+        
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Button onClick={() => {
             setIsQuickImportOpen(false)
             setQuickImportText('')
+            setQuickImportGroup('默认')
           }}>
             取消
           </Button>

@@ -141,3 +141,34 @@ body {
 .file-manager-panel .ant-tree-treenode .ant-tree-node-content-wrapper {
   flex: 1;
 }
+
+/* 禁用按钮时保持默认光标，不显示禁止图标 */
+.ant-btn[disabled],
+.ant-btn:disabled {
+  cursor: default !important;
+}
+
+/* 连接进度条动画 */
+@keyframes connecting-progress {
+  0% {
+    width: 0%;
+    left: 0;
+  }
+  50% {
+    width: 70%;
+    left: 15%;
+  }
+  100% {
+    width: 0%;
+    left: 100%;
+  }
+}
+
+.connecting-progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #007ACC, transparent);
+  animation: connecting-progress 2s ease-in-out infinite;
+}
