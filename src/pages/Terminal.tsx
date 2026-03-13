@@ -128,6 +128,10 @@ function Terminal() {
       const unlisten = await listen<string>(eventName, (event) => {
         const term = terminalInstances.current[key]
         if (term && event.payload) {
+          // 处理 EOF 信号（后端发送 { eof: true }）
+          if (typeof event.payload === 'object' && (event.payload as any).eof) {
+            return
+          }
           term.write(event.payload)
         }
       })

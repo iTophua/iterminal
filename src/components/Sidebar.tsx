@@ -66,10 +66,10 @@ function Sidebar() {
     if (location.pathname !== '/connections') {
       return location.pathname
     }
-    const state = location.state as { selectedGroup?: string } | null
-    const selectedGroup = state?.selectedGroup || '全部'
-    return selectedGroup === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(selectedGroup)}`
-  }, [location.pathname, location.state])
+    const params = new URLSearchParams(location.search)
+    const group = params.get('group') || '全部'
+    return group === '全部' ? '/connections' : `/connections?group=${encodeURIComponent(group)}`
+  }, [location.pathname, location.search])
 
   const menuItems = useMemo(() => [
     { key: 'divider', type: 'divider' as const },
@@ -110,9 +110,9 @@ function Sidebar() {
       const url = new URLSearchParams(key.split('?')[1] || '')
       const group = url.get('group')
       if (group) {
-        navigate('/connections', { state: { selectedGroup: group } })
+        navigate(`/connections?group=${encodeURIComponent(group)}`)
       } else {
-        navigate('/connections', { state: { selectedGroup: '全部' } })
+        navigate('/connections')
       }
     } else {
       navigate(key)

@@ -1,13 +1,13 @@
+use once_cell::sync::Lazy;
+use russh::client::{Handle, Handler};
+use russh::{ChannelMsg, Disconnect};
 use serde::{Deserialize, Serialize};
-use ssh2::Session;
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 use std::sync::Arc;
-use std::sync::Mutex;
-use std::time::Duration;
 use tauri::AppHandle;
 use tauri::Emitter;
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SSHConnection {
@@ -25,459 +25,319 @@ pub struct CommandResult {
     pub error: Option<String>,
 }
 
-lazy_static::lazy_static! {
-    pub static ref SESSIONS: Mutex<HashMap<String, Session>> = Mutex::new(HashMap::new());
-    pub static ref SFTP_SESSIONS: Mutex<HashMap<String, Session>> = Mutex::new(HashMap::new());
-    pub static ref SHELLS: Mutex<HashMap<String, Arc<Mutex<ssh2::Channel>>>> = Mutex::new(HashMap::new());
-    pub static ref RUNNING: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
-    static ref SHELL_LOCKS: Mutex<HashMap<String, Arc<Mutex<()>>>> = Mutex::new(HashMap::new());
+pub struct SshClientHandler;
+
+impl Handler for SshClientHandler {
+    type Error = anyhow::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::PublicKey,
+    ) -> Result<bool, Self::Error> {
+        // SECURITY: 跳过主机密钥验证，生产环境应实现 known_hosts 验证
+        Ok(true)
+    }
 }
 
+pub struct SshSession {
+    pub handle: Handle<SshClientHandler>,
+    pub connection: SSHConnection,
+}
+
+pub struct ShellSession {
+    pub cancel_tx: oneshot::Sender<()>,
+    pub resize_tx: mpsc::Sender<(u32, u32)>,
+    pub write_tx: mpsc::Sender<Vec<u8>>,
+}
+
+pub static SESSIONS: Lazy<RwLock<HashMap<String, SshSession>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+static SHELLS: Lazy<RwLock<HashMap<String, ShellSession>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 #[tauri::command]
-pub fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String> {
-    {
-        let sessions = SESSIONS.lock().unwrap();
-        if sessions.contains_key(&id) {
-            return Ok(true);
-        }
+pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String> {
+    if SESSIONS.read().await.contains_key(&id) {
+        return Ok(true);
     }
 
     let addr = format!("{}:{}", connection.host, connection.port);
+    let socket_addr = addr
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+        .ok_or("解析地址失败")?;
 
-    // 解析地址（支持域名和 IP）
-    let socket_addr = match addr.to_socket_addrs() {
-        Ok(mut addrs) => addrs.next(),
-        Err(e) => return Err(format!("Failed to resolve address: {}", e)),
+    let config = Arc::new(russh::client::Config::default());
+    let addr_str = socket_addr.to_string();
+
+    let connect_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        russh::client::connect(config, &addr_str, SshClientHandler)
+    ).await;
+
+    let mut handle = match connect_result {
+        Ok(Ok(handle)) => handle,
+        Ok(Err(e)) => return Err(format!("连接失败: {}", e)),
+        Err(_) => return Err("连接超时，请检查网络或服务器地址".to_string()),
     };
 
-    let Some(socket_addr) = socket_addr else {
-        return Err("Failed to resolve address".to_string());
+let auth_success = if let Some(password) = &connection.password {
+        let auth_result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle.authenticate_password(&connection.username, password)
+        ).await;
+
+        match auth_result {
+            Ok(Ok(auth)) => auth.success(),
+            Ok(Err(e)) => return Err(format!("认证失败: {}", e)),
+            Err(_) => return Err("认证超时".to_string()),
+        }
+    } else if let Some(_key_file) = &connection.key_file {
+        return Err("密钥认证暂未实现".to_string());
+    } else {
+        return Err("未提供认证信息".to_string());
     };
 
-    // 创建主 session（用于 shell）- 5 秒连接超时
-    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
-        .map_err(|e| format!("连接失败: {}", e))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
-
-    let mut session = Session::new().map_err(|e| e.to_string())?;
-    session.set_tcp_stream(tcp);
-    session.handshake().map_err(|e| e.to_string())?;
-
-    if let Some(password) = &connection.password {
-        session
-            .userauth_password(&connection.username, password)
-            .map_err(|e| format!("Password auth failed: {}", e))?;
-    } else if let Some(key_file) = &connection.key_file {
-        session
-            .userauth_pubkey_file(
-                &connection.username,
-                None,
-                std::path::Path::new(key_file),
-                None,
-            )
-            .map_err(|e| format!("Key auth failed: {}", e))?;
+    if !auth_success {
+        return Err("认证失败".to_string());
     }
 
-    if !session.authenticated() {
-        return Err("Authentication failed".to_string());
-    }
-
-    SESSIONS.lock().unwrap().insert(id.clone(), session);
-
-    // 创建独立 SFTP session - 5 秒连接超时
-    let sftp_tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
-        .map_err(|e| format!("SFTP 连接失败: {}", e))?;
-    sftp_tcp
-        .set_read_timeout(Some(Duration::from_secs(30)))
-        .ok();
-    sftp_tcp
-        .set_write_timeout(Some(Duration::from_secs(30)))
-        .ok();
-
-    let mut sftp_session = Session::new().map_err(|e| e.to_string())?;
-    sftp_session.set_tcp_stream(sftp_tcp);
-    sftp_session.handshake().map_err(|e| e.to_string())?;
-
-    if let Some(password) = &connection.password {
-        sftp_session
-            .userauth_password(&connection.username, password)
-            .map_err(|e| format!("SFTP auth failed: {}", e))?;
-    } else if let Some(key_file) = &connection.key_file {
-        sftp_session
-            .userauth_pubkey_file(
-                &connection.username,
-                None,
-                std::path::Path::new(key_file),
-                None,
-            )
-            .map_err(|e| format!("SFTP key auth failed: {}", e))?;
-    }
-
-    if sftp_session.authenticated() {
-        SFTP_SESSIONS.lock().unwrap().insert(id, sftp_session);
-    }
-
+    SESSIONS.write().await.insert(id, SshSession { handle, connection });
     Ok(true)
 }
 
 #[tauri::command]
-pub fn disconnect_ssh(id: String) -> Result<bool, String> {
-    let prefix = format!("{}-shell", id);
-
-    let keys_to_stop: Vec<String> = {
-        let running = RUNNING.lock().unwrap();
-        running
+pub async fn disconnect_ssh(id: String) -> Result<bool, String> {
+    let prefix = format!("{}-shell", &id);
+    {
+        let mut shells = SHELLS.write().await;
+        let shell_ids: Vec<String> = shells
             .keys()
             .filter(|k| k.starts_with(&prefix))
             .cloned()
-            .collect()
-    };
-
-    {
-        let mut running = RUNNING.lock().unwrap();
-        for k in &keys_to_stop {
-            running.insert(k.clone(), false);
-        }
-    }
-
-    {
-        let mut shells = SHELLS.lock().unwrap();
-        for k in &keys_to_stop {
-            if let Some(ch) = shells.remove(k) {
-                ch.lock().unwrap().close().ok();
+            .collect();
+        for shell_id in shell_ids {
+            if let Some(shell) = shells.remove(&shell_id) {
+                let _ = shell.cancel_tx.send(());
             }
         }
     }
 
-    if let Some(session) = SESSIONS.lock().unwrap().remove(&id) {
-        session.disconnect(None, "Disconnected", None).ok();
-    }
+    // 关闭 SFTP 会话
+    super::sftp::close_sftp_session(&id).await;
 
-    if let Some(sftp_session) = SFTP_SESSIONS.lock().unwrap().remove(&id) {
-        sftp_session
-            .disconnect(None, "SFTP Disconnected", None)
-            .ok();
+    if let Some(session) = SESSIONS.write().await.remove(&id) {
+        let _ = session
+            .handle
+            .disconnect(Disconnect::ByApplication, "Disconnected", "en")
+            .await;
     }
-
     Ok(true)
 }
 
 #[tauri::command]
-pub fn execute_command(id: String, command: String) -> Result<CommandResult, String> {
-    let sessions = SESSIONS.lock().unwrap();
+pub async fn execute_command(id: String, command: String) -> Result<CommandResult, String> {
+    let sessions = SESSIONS.read().await;
     let session = sessions.get(&id).ok_or("Session not found")?;
-
-    // 临时设置为阻塞模式以执行命令
-    session.set_blocking(true);
-
-    let mut channel = session.channel_session().map_err(|e| e.to_string())?;
-    channel.exec(&command).map_err(|e| e.to_string())?;
-
-    let mut output = String::new();
-    channel
-        .read_to_string(&mut output)
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
         .map_err(|e| e.to_string())?;
-    channel.wait_close().ok();
+    drop(sessions);
 
-    // 恢复非阻塞模式
-    session.set_blocking(false);
+    channel
+        .exec(true, command.as_str())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut output = Vec::new();
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            ChannelMsg::Data { data } => output.extend_from_slice(&data),
+            ChannelMsg::ExitStatus { exit_status } => {
+                return Ok(CommandResult {
+                    success: exit_status == 0,
+                    output: String::from_utf8_lossy(&output).to_string(),
+                    error: None,
+                });
+            }
+            ChannelMsg::Eof => break,
+            _ => {}
+        }
+    }
 
     Ok(CommandResult {
-        success: channel.exit_status().unwrap_or(1) == 0,
-        output,
+        success: true,
+        output: String::from_utf8_lossy(&output).to_string(),
         error: None,
     })
 }
 
 #[tauri::command]
-pub fn test_connection(connection: SSHConnection) -> Result<bool, String> {
+pub async fn test_connection(connection: SSHConnection) -> Result<bool, String> {
     let addr = format!("{}:{}", connection.host, connection.port);
+    let socket_addr = addr
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+        .ok_or("解析地址失败")?;
 
-    // 解析地址
-    let socket_addr = match addr.to_socket_addrs() {
-        Ok(mut addrs) => addrs.next(),
-        Err(e) => return Err(format!("Failed to resolve address: {}", e)),
-    };
-
-    let Some(socket_addr) = socket_addr else {
-        return Err("Failed to resolve address".to_string());
-    };
-
-    // 5 秒连接超时
-    let tcp = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5))
+    let config = Arc::new(russh::client::Config::default());
+    let mut handle = russh::client::connect(config, &socket_addr.to_string(), SshClientHandler)
+        .await
         .map_err(|e| format!("连接失败: {}", e))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(10))).ok();
 
-    let mut session = Session::new().map_err(|e| e.to_string())?;
-    session.set_tcp_stream(tcp);
-    session.handshake().map_err(|e| e.to_string())?;
-
-    if let Some(password) = &connection.password {
-        session
-            .userauth_password(&connection.username, password)
-            .map_err(|e| format!("Password auth failed: {}", e))?;
-    } else if let Some(key_file) = &connection.key_file {
-        session
-            .userauth_pubkey_file(
-                &connection.username,
-                None,
-                std::path::Path::new(key_file),
-                None,
-            )
-            .map_err(|e| format!("Key auth failed: {}", e))?;
-    }
-
-    session.disconnect(None, "Test complete", None).ok();
-    Ok(session.authenticated())
-}
-
-#[tauri::command]
-pub fn get_shell(id: String, _app: AppHandle) -> Result<String, String> {
-    // 获取连接级别的锁
-    let shell_lock = {
-        let locks = SHELL_LOCKS.lock().unwrap();
-        locks.get(&id).cloned().unwrap_or_else(|| {
-            let lock = Arc::new(Mutex::new(()));
-            drop(locks);
-            SHELL_LOCKS.lock().unwrap().insert(id.clone(), lock.clone());
-            lock
-        })
+    let auth_success = if let Some(password) = &connection.password {
+        handle
+            .authenticate_password(&connection.username, password)
+            .await
+            .map(|auth| auth.success())
+            .unwrap_or(false)
+    } else {
+        false
     };
 
-    // 获取锁，防止同一连接的并发 get_shell
-    let _guard = shell_lock.lock().unwrap();
-
-    // 收集该连接的所有 shell_id
-    let prefix = format!("{}-shell", &id);
-    let shell_ids: Vec<String> = SHELLS
-        .lock()
-        .unwrap()
-        .keys()
-        .filter(|k| k.starts_with(&prefix))
-        .cloned()
-        .collect();
-
-    // 暂停所有 reader thread
-    for sid in &shell_ids {
-        RUNNING.lock().unwrap().insert(sid.clone(), false);
-    }
-    // 等待 reader thread 停止
-    std::thread::sleep(Duration::from_millis(50));
-
-    // 创建 channel - 使用阻塞模式
-    let (channel, shell_id) = {
-        let sessions = SESSIONS.lock().unwrap();
-        let session = sessions.get(&id).ok_or("Session not found")?;
-
-        // 切换到阻塞模式
-        session.set_blocking(true);
-
-        let mut channel = session.channel_session().map_err(|e| e.to_string())?;
-
-        // PTY 模式设置
-        let mut modes = ssh2::PtyModes::new();
-        modes.set_character(ssh2::PtyModeOpcode::ECHO, Some(1 as char));
-
-        channel
-            .request_pty("xterm", Some(modes), Some((80, 24, 0, 0)))
-            .map_err(|e| e.to_string())?;
-        channel.shell().map_err(|e| e.to_string())?;
-
-        // 切换回非阻塞模式
-        session.set_blocking(false);
-
-        let shell_id = format!(
-            "{}-shell-{}",
-            id,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
-
-        (channel, shell_id)
-    };
-
-    // 恢复所有 reader thread
-    for sid in &shell_ids {
-        RUNNING.lock().unwrap().insert(sid.clone(), true);
-    }
-    let channel_arc = Arc::new(Mutex::new(channel));
-    SHELLS
-        .lock()
-        .unwrap()
-        .insert(shell_id.clone(), channel_arc.clone());
-
-    Ok(shell_id)
-}
-#[tauri::command]
-pub fn write_shell(id: String, data: String) -> Result<bool, String> {
-    let shells = SHELLS.lock().unwrap();
-    let channel = shells.get(&id).ok_or("Shell not found")?;
-
-    let mut ch = channel.lock().unwrap();
-    let bytes = data.as_bytes();
-    let mut written = 0;
-
-    while written < bytes.len() {
-        match ch.write(&bytes[written..]) {
-            Ok(n) if n > 0 => {
-                written += n;
-            }
-            Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(e) => return Err(e.to_string()),
-        }
-    }
-
-    Ok(true)
+    let _ = handle
+        .disconnect(Disconnect::ByApplication, "Test complete", "en")
+        .await;
+    Ok(auth_success)
 }
 
 #[tauri::command]
-pub fn close_shell(id: String) -> Result<bool, String> {
-    RUNNING.lock().unwrap().insert(id.clone(), false);
-    if let Some(ch) = SHELLS.lock().unwrap().remove(&id) {
-        ch.lock().unwrap().close().ok();
-    }
-    Ok(true)
-}
+pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
+    let sessions = SESSIONS.read().await;
+    let session = sessions.get(&id).ok_or("Session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(sessions);
 
-/// 启动 shell 的 reader thread（前端准备好后调用）
-#[tauri::command]
-pub fn start_shell_reader(id: String, app: AppHandle) -> Result<bool, String> {
-    let channel_arc = SHELLS
-        .lock()
-        .unwrap()
-        .get(&id)
-        .ok_or("Shell not found")?
-        .clone();
+    channel
+        .request_pty(true, "xterm", 80, 24, 0, 0, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+    channel
+        .request_shell(true)
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // 标记为运行中
-    RUNNING.lock().unwrap().insert(id.clone(), true);
+    let (cancel_tx, mut cancel_rx) = oneshot::channel();
+    let (resize_tx, mut resize_rx) = mpsc::channel::<(u32, u32)>(10);
+    let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(100);
 
-    // 启动 reader thread
-    let shell_id_clone = id.clone();
+    let shell_id = format!(
+        "{}-shell-{}",
+        id,
+        chrono::Utc::now().timestamp_millis()
+    );
+
+    let shell_id_clone = shell_id.clone();
     let app_handle = app.clone();
 
-    std::thread::spawn(move || {
+    tokio::spawn(async move {
         loop {
-            // 检查是否应该暂停
-            let is_running = RUNNING
-                .lock()
-                .unwrap()
-                .get(&shell_id_clone)
-                .copied()
-                .unwrap_or(false);
-            if !is_running {
-                // 检查 shell 是否还存在
-                if !SHELLS.lock().unwrap().contains_key(&shell_id_clone) {
-                    break;
-                }
-                // 暂停中，等待恢复
-                std::thread::sleep(Duration::from_millis(10));
-                continue;
-            }
+            tokio::select! {
+                _ = &mut cancel_rx => break,
 
-            let mut data = Vec::new();
-            let mut should_break = false;
-
-            {
-                let mut ch = channel_arc.lock().unwrap();
-                let mut buf = [0u8; 8192];
-                match ch.read(&mut buf) {
-                    Ok(n) if n > 0 => {
-                        data.extend_from_slice(&buf[..n]);
+                Some((cols, rows)) = resize_rx.recv() => {
+                    if let Err(e) = channel.window_change(cols, rows, 0, 0).await {
+                        eprintln!("Resize error for {}: {}", shell_id_clone, e);
                     }
-                    Ok(_) => {
-                        if ch.eof() {
-                            should_break = true;
+                }
+
+                Some(data) = write_rx.recv() => {
+                    if let Err(e) = channel.data(&data[..]).await {
+                        eprintln!("Write error for {}: {}", shell_id_clone, e);
+                        break;
+                    }
+                }
+
+                msg = channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            let data_str = String::from_utf8_lossy(&data).to_string();
+                            let event_name = format!("shell-output-{}", shell_id_clone);
+                            let _ = app_handle.emit(&event_name, &data_str);
                         }
+                        Some(ChannelMsg::Eof) | None => {
+                            let event_name = format!("shell-output-{}", shell_id_clone);
+                            let _ = app_handle.emit(&event_name, serde_json::json!({"eof": true}));
+                            break;
+                        }
+                        _ => {}
                     }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
-                    Err(_) => {}
                 }
             }
-
-            // 有数据时通过 Event 推送到前端
-            if !data.is_empty() {
-                let data_str = String::from_utf8_lossy(&data).to_string();
-                let event_name = format!("shell-output-{}", shell_id_clone);
-
-                let _ = app_handle.emit(&event_name, &data_str);
-            }
-
-            if should_break {
-                // 发送 EOF 事件
-                let event_name = format!("shell-output-{}", shell_id_clone);
-                let _ = app_handle.emit(&event_name, serde_json::json!({"eof": true}));
-                break;
-            }
-
-            std::thread::sleep(Duration::from_millis(5));
         }
     });
 
-    Ok(true)
-}
-/// 调整终端 PTY 尺寸
-#[tauri::command]
-pub fn resize_shell(id: String, cols: u16, rows: u16) -> Result<bool, String> {
-    let shells = SHELLS.lock().unwrap();
-    let channel = shells.get(&id).ok_or("Shell not found")?;
-
-    let mut ch = channel.lock().unwrap();
-    ch.request_pty_size(cols as u32, rows as u32, None, None)
-        .map_err(|e| format!("Failed to resize PTY: {}", e))?;
-
-    Ok(true)
+    SHELLS.write().await.insert(
+        shell_id.clone(),
+        ShellSession {
+            cancel_tx,
+            resize_tx,
+            write_tx,
+        },
+    );
+    Ok(shell_id)
 }
 
 #[tauri::command]
-pub fn check_port_reachable(host: String, port: u16) -> Result<bool, String> {
+pub async fn write_shell(id: String, data: String) -> Result<bool, String> {
+    let shells = SHELLS.read().await;
+    let shell = shells.get(&id).ok_or("Shell not found")?;
+    shell
+        .write_tx
+        .send(data.into_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn close_shell(id: String) -> Result<bool, String> {
+    if let Some(shell) = SHELLS.write().await.remove(&id) {
+        let _ = shell.cancel_tx.send(());
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn start_shell_reader(_id: String, _app: AppHandle) -> Result<bool, String> {
+    // russh 版本中 reader 已在 get_shell 中启动，此函数保留以保持前端兼容性
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn resize_shell(id: String, cols: u16, rows: u16) -> Result<bool, String> {
+    let shells = SHELLS.read().await;
+    let shell = shells.get(&id).ok_or("Shell not found")?;
+    shell
+        .resize_tx
+        .send((cols as u32, rows as u32))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn check_port_reachable(host: String, port: u16) -> Result<bool, String> {
     let addr = format!("{}:{}", host, port);
-
-    // 解析地址（支持域名和 IP）
-    let socket_addr = match addr.to_socket_addrs() {
-        Ok(mut addrs) => addrs.next(),
-        Err(_) => None,
-    };
-
+    let socket_addr = addr.to_socket_addrs().ok().and_then(|mut a| a.next());
     let Some(socket_addr) = socket_addr else {
         return Ok(false);
     };
-
-    // 5 秒连接超时
-    let result = TcpStream::connect_timeout(&socket_addr, Duration::from_secs(5));
-
-    Ok(result.is_ok())
-}
-
-// ==================== 系统监控 ====================
-
-/// 解析磁盘大小字符串（支持 K, M, G, T 后缀）
-fn parse_disk_size(s: &str) -> u64 {
-    let s = s.trim();
-    if s.is_empty() {
-        return 0;
-    }
-
-    let multiplier = if s.ends_with('T') {
-        1024 * 1024
-    } else if s.ends_with('G') {
-        1024
-    } else if s.ends_with('M') {
-        1
-    } else if s.ends_with('K') {
-        1 / 1024
-    } else {
-        1024 // 无后缀默认按 GB 处理
-    };
-
-    let num_str = s.trim_end_matches(|c| c == 'K' || c == 'M' || c == 'G' || c == 'T');
-    num_str.parse::<u64>().unwrap_or(0) * multiplier
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::TcpStream::connect(&socket_addr),
+    )
+    .await;
+    Ok(result.is_ok() && result.unwrap().is_ok())
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -524,32 +384,38 @@ pub struct MonitorData {
     pub disks: Vec<DiskInfo>,
 }
 
-#[tauri::command]
-pub fn get_system_monitor(id: String) -> Result<MonitorData, String> {
-    // 获取连接级别的锁，防止与 get_shell 并发
-    let shell_lock = {
-        let locks = SHELL_LOCKS.lock().unwrap();
-        locks.get(&id).cloned().unwrap_or_else(|| {
-            let lock = Arc::new(Mutex::new(()));
-            drop(locks);
-            SHELL_LOCKS.lock().unwrap().insert(id.clone(), lock.clone());
-            lock
-        })
-    };
-    let _guard = shell_lock.lock().unwrap();
-
-    let prefix = format!("{}-shell", &id);
-    let sids: Vec<String> = SHELLS
-        .lock()
-        .unwrap()
-        .keys()
-        .filter(|k| k.starts_with(&prefix))
-        .cloned()
-        .collect();
-    for s in &sids {
-        RUNNING.lock().unwrap().insert(s.clone(), false);
+fn parse_disk_size(s: &str) -> u64 {
+    let s = s.trim();
+    if s.is_empty() {
+        return 0;
     }
-    std::thread::sleep(Duration::from_millis(50));
+    let num_str = s.trim_end_matches(|c| c == 'K' || c == 'M' || c == 'G' || c == 'T');
+    let num = num_str.parse::<u64>().unwrap_or(0);
+
+    let mb = if s.ends_with('T') {
+        num * 1024 * 1024
+    } else if s.ends_with('G') {
+        num * 1024
+    } else if s.ends_with('M') {
+        num
+    } else if s.ends_with('K') {
+        num / 1024
+    } else {
+        num * 1024
+    };
+    mb
+}
+
+#[tauri::command]
+pub async fn get_system_monitor(id: String) -> Result<MonitorData, String> {
+    let sessions = SESSIONS.read().await;
+    let session = sessions.get(&id).ok_or("Session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(sessions);
 
     let script = r#"
 echo "<<H>>";hostname
@@ -564,174 +430,99 @@ echo "<<M>>";free -m|grep -E '^Mem|^Swap'
 echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
 "#;
 
-    let res = {
-        let ss = SESSIONS.lock().unwrap();
-        let sess = ss.get(&id).ok_or("Session not found")?;
-        sess.set_blocking(true);
-        let mut ch = sess.channel_session().map_err(|e| e.to_string())?;
-        ch.exec(script).map_err(|e| e.to_string())?;
-        let mut out = String::new();
-        ch.read_to_string(&mut out).map_err(|e| e.to_string())?;
-        ch.wait_close().ok();
-        sess.set_blocking(false);
+    channel
+        .exec(true, script)
+        .await
+        .map_err(|e| e.to_string())?;
 
-        let mut sec = "";
-        let (mut h, mut o, mut k, mut u) = (
-            "unknown".into(),
-            "Linux".into(),
-            "unknown".into(),
-            "unknown".into(),
-        );
-        let (mut cr, mut la, mut cu) = (1u32, "N/A".into(), 0.0f32);
-        let mut pcu: Vec<f32> = Vec::new();
-        let (mut mt, mut mu, mut mf, mut st, mut su) = (0u64, 0u64, 0u64, 0u64, 0u64);
-        let mut dsk: Vec<DiskInfo> = Vec::new();
-
-        for l in out.lines() {
-            let t = l.trim();
-            if t.contains("<<H>>") {
-                sec = "h";
-                continue;
-            }
-            if t.contains("<<O>>") {
-                sec = "o";
-                continue;
-            }
-            if t.contains("<<K>>") {
-                sec = "k";
-                continue;
-            }
-            if t.contains("<<U>>") {
-                sec = "u";
-                continue;
-            }
-            if t.contains("<<C>>") {
-                sec = "c";
-                continue;
-            }
-            if t.contains("<<L>>") {
-                sec = "l";
-                continue;
-            }
-            if t.contains("<<P>>") {
-                sec = "p";
-                continue;
-            }
-            if t.contains("<<PC>>") {
-                sec = "pc";
-                continue;
-            }
-            if t.contains("<<M>>") {
-                sec = "m";
-                continue;
-            }
-            if t.contains("<<D>>") {
-                sec = "d";
-                continue;
-            }
-
-            match sec {
-                "h" => {
-                    h = t.to_string();
-                    sec = "";
-                }
-                "o" => {
-                    o = t.to_string();
-                    sec = "";
-                }
-                "k" => {
-                    k = t.to_string();
-                    sec = "";
-                }
-                "u" => {
-                    u = t.to_string();
-                    sec = "";
-                }
-                "c" => {
-                    cr = t.parse().unwrap_or(1);
-                    sec = "";
-                }
-                "l" => {
-                    let p: Vec<&str> = t.split_whitespace().collect();
-                    if p.len() >= 3 {
-                        la = format!("{} / {} / {}", p[0], p[1], p[2]);
-                    }
-                    sec = "";
-                }
-                "p" => {
-                    cu = t.parse().unwrap_or(0.0);
-                    sec = "";
-                }
-                "pc" => {
-                    if let Ok(v) = t.parse::<f32>() {
-                        pcu.push(v);
-                    }
-                }
-                "m" => {
-                    let p: Vec<&str> = t.split_whitespace().collect();
-                    if t.starts_with("Mem:") && p.len() >= 4 {
-                        mt = p[1].parse().unwrap_or(0);
-                        mu = p[2].parse().unwrap_or(0);
-                        mf = p[3].parse().unwrap_or(0);
-                    } else if t.starts_with("Swap:") && p.len() >= 3 {
-                        st = p[1].parse().unwrap_or(0);
-                        su = p[2].parse().unwrap_or(0);
-                    }
-                }
-                "d" => {
-                    let p: Vec<&str> = t.split_whitespace().collect();
-                    if p.len() >= 6 {
-                        dsk.push(DiskInfo {
-                            filesystem: p[0].to_string(),
-                            mount_point: p[5].to_string(),
-                            total: parse_disk_size(p[1]),
-                            used: parse_disk_size(p[2]),
-                            available: parse_disk_size(p[3]),
-                            usage_percent: p[4].trim_end_matches('%').parse().unwrap_or(0.0),
-                        });
-                    }
-                }
-
-                _ => {}
-            }
+    let mut output = Vec::new();
+    while let Some(msg) = channel.wait().await {
+        if let ChannelMsg::Data { data } = msg {
+            output.extend_from_slice(&data);
         }
-        if pcu.is_empty() {
-            for _ in 0..cr {
-                pcu.push(cu);
-            }
-        }
-
-        Ok(MonitorData {
-            system: SystemInfo {
-                hostname: h,
-                os: o,
-                kernel: k,
-                uptime: u,
-            },
-            cpu: CpuInfo {
-                usage: cu,
-                cores: cr,
-                load_avg: la,
-                per_core_usage: pcu,
-            },
-            memory: MemoryInfo {
-                total: mt,
-                used: mu,
-                free: mf,
-                usage_percent: if mt > 0 {
-                    (mu as f64 / mt as f64 * 100.0) as f32
-                } else {
-                    0.0
-                },
-                swap_total: st,
-                swap_used: su,
-            },
-            disks: dsk,
-        })
-    };
-
-    for s in &sids {
-        RUNNING.lock().unwrap().insert(s.clone(), true);
     }
-    res
+
+    let output_str = String::from_utf8_lossy(&output).to_string();
+    let mut section = "";
+    let (mut hostname, mut os, mut kernel, mut uptime) =
+        ("unknown".to_string(), "Linux".to_string(), "unknown".to_string(), "unknown".to_string());
+    let (mut cores, mut load_avg, mut cpu_usage) = (1u32, "N/A".to_string(), 0.0f32);
+    let mut per_core_usage: Vec<f32> = Vec::new();
+    let (mut mem_total, mut mem_used, mut mem_free, mut swap_total, mut swap_used) =
+        (0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut disks: Vec<DiskInfo> = Vec::new();
+
+    for line in output_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains("<<H>>") { section = "h"; continue; }
+        if trimmed.contains("<<O>>") { section = "o"; continue; }
+        if trimmed.contains("<<K>>") { section = "k"; continue; }
+        if trimmed.contains("<<U>>") { section = "u"; continue; }
+        if trimmed.contains("<<C>>") { section = "c"; continue; }
+        if trimmed.contains("<<L>>") { section = "l"; continue; }
+        if trimmed.contains("<<P>>") { section = "p"; continue; }
+        if trimmed.contains("<<PC>>") { section = "pc"; continue; }
+        if trimmed.contains("<<M>>") { section = "m"; continue; }
+        if trimmed.contains("<<D>>") { section = "d"; continue; }
+
+        match section {
+            "h" => { hostname = trimmed.to_string(); section = ""; }
+            "o" => { os = trimmed.to_string(); section = ""; }
+            "k" => { kernel = trimmed.to_string(); section = ""; }
+            "u" => { uptime = trimmed.to_string(); section = ""; }
+            "c" => { cores = trimmed.parse().unwrap_or(1); section = ""; }
+            "l" => {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    load_avg = format!("{} / {} / {}", parts[0], parts[1], parts[2]);
+                }
+                section = "";
+            }
+            "p" => { cpu_usage = trimmed.parse().unwrap_or(0.0); section = ""; }
+            "pc" => { if let Ok(v) = trimmed.parse::<f32>() { per_core_usage.push(v); } }
+            "m" => {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if trimmed.starts_with("Mem:") && parts.len() >= 4 {
+                    mem_total = parts[1].parse().unwrap_or(0);
+                    mem_used = parts[2].parse().unwrap_or(0);
+                    mem_free = parts[3].parse().unwrap_or(0);
+                } else if trimmed.starts_with("Swap:") && parts.len() >= 3 {
+                    swap_total = parts[1].parse().unwrap_or(0);
+                    swap_used = parts[2].parse().unwrap_or(0);
+                }
+            }
+            "d" => {
+                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                if parts.len() >= 6 {
+                    disks.push(DiskInfo {
+                        filesystem: parts[0].to_string(),
+                        mount_point: parts[5].to_string(),
+                        total: parse_disk_size(parts[1]),
+                        used: parse_disk_size(parts[2]),
+                        available: parse_disk_size(parts[3]),
+                        usage_percent: parts[4].trim_end_matches('%').parse().unwrap_or(0.0),
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if per_core_usage.is_empty() {
+        for _ in 0..cores { per_core_usage.push(cpu_usage); }
+    }
+
+    Ok(MonitorData {
+        system: SystemInfo { hostname, os, kernel, uptime },
+        cpu: CpuInfo { usage: cpu_usage, cores, load_avg, per_core_usage },
+        memory: MemoryInfo {
+            total: mem_total,
+            used: mem_used,
+            free: mem_free,
+            usage_percent: if mem_total > 0 { (mem_used as f64 / mem_total as f64 * 100.0) as f32 } else { 0.0 },
+            swap_total,
+            swap_used,
+        },
+        disks,
+    })
 }

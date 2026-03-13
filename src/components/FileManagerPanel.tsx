@@ -350,22 +350,31 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       (event) => {
         useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
       }
-    ).then((unlisten) => {
-      invoke<{ success: boolean; cancelled: boolean }>('upload_file', { taskId, connectionId, localPath, remotePath })
-        .then((result) => {
+    ).then((unlistenProgress) => {
+      listen<{ success: boolean; cancelled: boolean; error?: string }>(
+        `transfer-complete-${taskId}`,
+        (event) => {
+          unlistenProgress()
+          const result = event.payload
           if (result.cancelled) {
             useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-          } else {
+          } else if (result.success) {
             useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
             message.success(`上传完成: ${fileName}`)
             refreshDirectoryRef.current?.(dir)
+          } else {
+            useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: result.error || 'Unknown error' })
+            message.error(`上传失败: ${result.error}`)
           }
-        })
-        .catch((err) => {
+        }
+      ).then((unlistenComplete) => {
+        invoke('upload_file', { taskId, connectionId, localPath, remotePath }).catch((err) => {
+          unlistenProgress()
+          unlistenComplete()
           useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
           message.error(`上传失败: ${err}`)
         })
-        .finally(() => unlisten())
+      })
     })
   }
   uploadFileRef.current = uploadFile
@@ -428,7 +437,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
       for (const localPath of paths) {
         try {
-          const isDir = await invoke<boolean>('is_directory', { path: localPath })
+          const isDir = await invoke<boolean>('is_local_directory', { path: localPath })
           const fileName = localPath.split('/').pop() || 'file'
           const remotePath = targetDir + '/' + fileName
 
@@ -549,21 +558,30 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           (event) => {
             useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
           }
-        ).then((unlisten) => {
-          invoke<{ success: boolean; cancelled: boolean }>('download_file', { taskId, connectionId, remotePath, localPath: savePath })
-            .then((result) => {
+        ).then((unlistenProgress) => {
+          listen<{ success: boolean; cancelled: boolean; error?: string }>(
+            `transfer-complete-${taskId}`,
+            (event) => {
+              unlistenProgress()
+              const result = event.payload
               if (result.cancelled) {
                 useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-              } else {
+              } else if (result.success) {
                 useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
                 message.success(`下载完成: ${fileName}`)
+              } else {
+                useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: result.error || 'Unknown error' })
+                message.error(`下载失败: ${result.error}`)
               }
-            })
-            .catch((err) => {
+            }
+          ).then((unlistenComplete) => {
+            invoke('download_file', { taskId, connectionId, remotePath, localPath: savePath }).catch((err) => {
+              unlistenProgress()
+              unlistenComplete()
               useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
               message.error(`下载失败: ${err}`)
             })
-            .finally(() => unlisten())
+          })
         })
       }
     } catch (err) {
@@ -645,7 +663,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const handleChmod = async () => {
     if (!selectedNode || !chmodValue.trim()) return
     try {
-      await invoke('chmod_file', { connectionId, path: selectedNode.path, mode: chmodValue.trim() })
+      await invoke('chmod_file', { connectionId, path: selectedNode.path, mode: parseInt(chmodValue.trim(), 8) })
       message.success('权限修改成功')
       setChmodVisible(false)
       refreshCurrent()

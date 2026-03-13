@@ -1,16 +1,10 @@
+use once_cell::sync::Lazy;
+use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
-use ssh2::Sftp;
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::process::Command;
-use std::sync::Mutex;
-use std::time::Instant;
-use tauri::{AppHandle, Emitter};
-
-lazy_static::lazy_static! {
-    static ref TRANSFER_CANCELLED: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
-}
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::RwLock;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -30,598 +24,645 @@ pub struct TransferResult {
     pub cancelled: bool,
 }
 
-fn is_cancelled(task_id: &str) -> bool {
-    TRANSFER_CANCELLED.lock().unwrap().get(task_id).copied().unwrap_or(false)
+pub struct SftpSessionState {
+    pub session: Arc<SftpSession>,
 }
 
-fn set_cancelled(task_id: &str, cancelled: bool) {
-    TRANSFER_CANCELLED.lock().unwrap().insert(task_id.to_string(), cancelled);
+static SFTP_SESSIONS: Lazy<RwLock<HashMap<String, SftpSessionState>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+static TRANSFER_CANCELLED: Lazy<RwLock<HashMap<String, bool>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+async fn create_sftp_connection(connection: &super::ssh::SSHConnection) -> Result<Arc<SftpSession>, String> {
+    use super::ssh::SshClientHandler;
+    use std::net::ToSocketAddrs;
+
+    let addr = format!("{}:{}", connection.host, connection.port);
+    let socket_addr = addr
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut a| a.next())
+        .ok_or("解析地址失败")?;
+
+    let config = Arc::new(russh::client::Config::default());
+    let addr_str = socket_addr.to_string();
+
+    let mut handle = russh::client::connect(config, &addr_str, SshClientHandler)
+        .await
+        .map_err(|e| format!("SFTP连接失败: {}", e))?;
+
+    if let Some(password) = &connection.password {
+        let auth = handle
+            .authenticate_password(&connection.username, password)
+            .await
+            .map_err(|e| format!("SFTP认证失败: {}", e))?;
+        if !auth.success() {
+            return Err("SFTP认证失败".to_string());
+        }
+    } else {
+        return Err("SFTP需要密码认证".to_string());
+    }
+
+    let channel = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open SFTP channel: {}", e))?;
+
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("Failed to request SFTP subsystem: {}", e))?;
+
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|e| format!("Failed to create SFTP session: {}", e))?;
+
+    Ok(Arc::new(sftp))
 }
 
-fn clear_cancelled(task_id: &str) {
-    TRANSFER_CANCELLED.lock().unwrap().remove(task_id);
-}
+async fn get_sftp_session(connection_id: &str) -> Result<Arc<SftpSession>, String> {
+    let sessions = SFTP_SESSIONS.read().await;
+    if let Some(state) = sessions.get(connection_id) {
+        return Ok(state.session.clone());
+    }
+    drop(sessions);
 
-fn with_session<F, T>(connection_id: &str, operation: F) -> Result<T, String>
-where
-    F: FnOnce(&ssh2::Session) -> Result<T, String>,
-{
-    let session = {
-        let sftp_sessions = crate::commands::ssh::SFTP_SESSIONS.lock().unwrap();
-        sftp_sessions
-            .get(connection_id)
-            .ok_or_else(|| "SFTP session not found".to_string())?
-            .clone()
-    };
+    let ssh_sessions = super::ssh::SESSIONS.read().await;
+    let ssh_session = ssh_sessions
+        .get(connection_id)
+        .ok_or("SSH session not found")?;
 
-    session.set_blocking(true);
-    let result = operation(&session);
-    session.set_blocking(false);
+    let sftp = create_sftp_connection(&ssh_session.connection).await?;
 
-    result
-}
-
-fn with_session_blocking<F, T>(connection_id: &str, operation: F) -> Result<T, String>
-where
-    F: FnOnce(&ssh2::Session) -> Result<T, String>,
-{
-    let session = {
-        let sftp_sessions = crate::commands::ssh::SFTP_SESSIONS.lock().unwrap();
-        sftp_sessions
-            .get(connection_id)
-            .ok_or_else(|| "SFTP session not found".to_string())?
-            .clone()
-    };
-
-    session.set_blocking(true);
-    let result = operation(&session);
-
-    result
-}
-
-#[tauri::command]
-pub fn list_directory(connection_id: String, path: String) -> Result<Vec<FileEntry>, String> {
-    with_session(&connection_id, |session| {
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
-
-        let entries = sftp.readdir(Path::new(&path)).map_err(|e| e.to_string())?;
-        let mut result: Vec<FileEntry> = entries
-            .into_iter()
-            .map(|(path_buf, stat)| {
-                let name = path_buf
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| path_buf.to_string_lossy().to_string());
-                let full_path = path_buf.to_string_lossy().to_string();
-                let is_dir = stat.is_dir();
-                let size = if is_dir { 0 } else { stat.size.unwrap_or(0) };
-                let modified = stat
-                    .mtime
-                    .map(|t| {
-                        chrono::DateTime::from_timestamp(t as i64, 0)
-                            .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
-                            .unwrap_or_else(|| "-".to_string())
-                    })
-                    .unwrap_or_else(|| "-".to_string());
-                let permissions = stat.perm.map(|p| format!("{:o}", p & 0o777));
-                FileEntry {
-                    name,
-                    path: full_path,
-                    is_directory: is_dir,
-                    size,
-                    modified,
-                    permissions,
-                }
-            })
-            .collect();
-
-        result.sort_by(|a, b| {
-            if a.is_directory && !b.is_directory {
-                std::cmp::Ordering::Less
-            } else if !a.is_directory && b.is_directory {
-                std::cmp::Ordering::Greater
-            } else {
-                a.name.to_lowercase().cmp(&b.name.to_lowercase())
-            }
+    SFTP_SESSIONS
+        .write()
+        .await
+        .insert(connection_id.to_string(), SftpSessionState {
+            session: sftp.clone(),
         });
 
-        Ok(result)
-    })
+    Ok(sftp)
 }
 
 #[tauri::command]
-pub fn create_file(connection_id: String, path: String) -> Result<bool, String> {
-    with_session(&connection_id, |session| {
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
-        let mut file = sftp.create(Path::new(&path)).map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())?;
-        Ok(true)
-    })
+pub async fn list_directory(connection_id: String, path: String) -> Result<Vec<FileEntry>, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    let entries = sftp
+        .read_dir(&path)
+        .await
+        .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    let mut result = Vec::new();
+    for entry in entries {
+        let metadata = entry.metadata();
+        let is_dir = metadata.is_dir();
+        let size = metadata.size.unwrap_or(0);
+        let modified = metadata
+            .mtime
+            .map(|t| {
+                let datetime = chrono::DateTime::from_timestamp(t as i64, 0)
+                    .unwrap_or_else(|| chrono::Utc::now());
+                datetime.format("%Y-%m-%d %H:%M:%S").to_string()
+            })
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let permissions = metadata
+            .permissions
+            .map(|p| format!("{:o}", p));
+
+        let file_name = entry.file_name();
+        let full_path = if path.ends_with('/') {
+            format!("{}{}", path, file_name)
+        } else {
+            format!("{}/{}", path, file_name)
+        };
+
+        result.push(FileEntry {
+            name: file_name,
+            path: full_path,
+            is_directory: is_dir,
+            size,
+            modified,
+            permissions,
+        });
+    }
+
+    Ok(result)
 }
 
 #[tauri::command]
-pub fn create_directory(connection_id: String, path: String) -> Result<bool, String> {
-    with_session(&connection_id, |session| {
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
-        sftp.mkdir(Path::new(&path), 0o755)
-            .map_err(|e| e.to_string())?;
-        Ok(true)
-    })
+pub async fn create_file(
+    connection_id: String,
+    path: String,
+    content: Option<String>,
+) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    use russh_sftp::protocol::OpenFlags;
+
+    let mut file = sftp
+        .open_with_flags(&path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("Failed to create file: {}", e))?;
+
+    if let Some(data) = content {
+        file.write_all(data.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write content: {}", e))?;
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to flush: {}", e))?;
+    }
+
+    file.shutdown()
+        .await
+        .map_err(|e| format!("Failed to close file: {}", e))?;
+
+    Ok(true)
 }
 
 #[tauri::command]
-pub fn rename_file(
+pub async fn create_directory(connection_id: String, path: String) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    sftp.create_dir(&path)
+        .await
+        .map_err(|e| format!("Failed to create directory: {}", e))?;
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn rename_file(
     connection_id: String,
     old_path: String,
     new_path: String,
 ) -> Result<bool, String> {
-    with_session(&connection_id, |session| {
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
-        sftp.rename(Path::new(&old_path), Path::new(&new_path), None)
-            .map_err(|e| e.to_string())?;
-        Ok(true)
-    })
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    sftp.rename(&old_path, &new_path)
+        .await
+        .map_err(|e| format!("Failed to rename: {}", e))?;
+
+    Ok(true)
 }
 
 #[tauri::command]
-pub fn chmod_file(connection_id: String, path: String, mode: String) -> Result<bool, String> {
-    with_session(&connection_id, |session| {
-        let mode_num =
-            u32::from_str_radix(&mode, 8).map_err(|_| "Invalid permission mode".to_string())?;
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
+pub async fn delete_file(connection_id: String, path: String) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
 
-        let stat = sftp
-            .stat(Path::new(&path))
-            .map_err(|e| format!("Failed to stat '{}': {}", path, e))?;
+    sftp.remove_file(&path)
+        .await
+        .map_err(|e| format!("Failed to delete file: {}", e))?;
 
-        let mut new_stat = stat.clone();
-        new_stat.perm = Some(mode_num);
-
-        sftp.setstat(Path::new(&path), new_stat)
-            .map_err(|e| format!("Failed to chmod '{}': {}", path, e))?;
-
-        Ok(true)
-    })
+    Ok(true)
 }
 
 #[tauri::command]
-pub fn delete_file(connection_id: String, path: String) -> Result<bool, String> {
-    with_session(&connection_id, |session| {
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
-        sftp.unlink(Path::new(&path)).map_err(|e| e.to_string())?;
-        Ok(true)
-    })
-}
+pub async fn delete_directory(connection_id: String, path: String) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
 
-fn remove_dir_recursive(sftp: &Sftp, path: &Path) -> Result<(), String> {
-    let entries = sftp.readdir(path).map_err(|e| e.to_string())?;
-    for (entry_path, stat) in entries {
-        let name = entry_path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-        // 跳过 . 和 .. 目录
-        if name == "." || name == ".." {
-            continue;
-        }
-        if stat.is_dir() {
-            remove_dir_recursive(sftp, &entry_path)?;
-        } else {
-            sftp.unlink(&entry_path).map_err(|e| e.to_string())?;
-        }
-    }
-    sftp.rmdir(path).map_err(|e| e.to_string())?;
-    Ok(())
+    sftp.remove_dir(&path)
+        .await
+        .map_err(|e| format!("Failed to delete directory: {}", e))?;
+
+    Ok(true)
 }
 
 #[tauri::command]
-pub fn delete_directory(connection_id: String, path: String) -> Result<bool, String> {
-    with_session(&connection_id, |session| {
-        let sftp = session.sftp().map_err(|e| e.to_string())?;
-        remove_dir_recursive(&sftp, Path::new(&path))?;
-        Ok(true)
-    })
+pub async fn chmod_file(connection_id: String, path: String, mode: i32) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    use russh_sftp::protocol::FileAttributes;
+
+    let metadata = FileAttributes {
+        permissions: Some(mode as u32),
+        ..Default::default()
+    };
+
+    sftp.set_metadata(&path, metadata)
+        .await
+        .map_err(|e| format!("Failed to change permissions: {}", e))?;
+
+    Ok(true)
 }
 
 #[tauri::command]
 pub async fn upload_file(
-    app: AppHandle,
-    task_id: String,
     connection_id: String,
     local_path: String,
     remote_path: String,
-) -> Result<TransferResult, String> {
-    clear_cancelled(&task_id);
-    
-    tokio::task::spawn_blocking(move || {
-        with_session_blocking(&connection_id, |session| {
-            let sftp = session.sftp().map_err(|e| e.to_string())?;
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+    let task_id_clone = task_id.clone();
 
-            let mut local_file = std::fs::File::open(&local_path)
-                .map_err(|e| format!("Failed to open local file: {}", e))?;
-            
-            let file_size = std::fs::metadata(&local_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
+    tokio::spawn(async move {
+        use russh_sftp::protocol::OpenFlags;
+        use tauri::Emitter;
 
-            let mut remote_file = sftp
-                .create(Path::new(&remote_path))
-                .map_err(|e| format!("Failed to create remote file: {}", e))?;
+        let mut local_file = match tokio::fs::File::open(&local_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to open local file: {}", e) }),
+                );
+                return;
+            }
+        };
 
-            let mut buffer = [0u8; 8192];
-            let mut total = 0u64;
-            let mut last_emit = Instant::now();
+        let total_size = match local_file.metadata().await {
+            Ok(m) => m.len(),
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to get metadata: {}", e) }),
+                );
+                return;
+            }
+        };
 
-            loop {
-                if is_cancelled(&task_id) {
-                    let _ = sftp.unlink(Path::new(&remote_path));
-                    clear_cancelled(&task_id);
-                    return Ok(TransferResult {
-                        success: false,
-                        bytes_transferred: total,
-                        error: Some("Cancelled".to_string()),
-                        cancelled: true,
-                    });
-                }
-                
-                let n = local_file
-                    .read(&mut buffer)
-                    .map_err(|e| format!("Failed to read: {}", e))?;
-                if n == 0 {
-                    break;
-                }
-                remote_file
-                    .write_all(&buffer[..n])
-                    .map_err(|e| format!("Failed to write: {}", e))?;
-                total += n as u64;
+        let mut remote_file = match sftp
+            .open_with_flags(&remote_path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to create remote file: {}", e) }),
+                );
+                return;
+            }
+        };
 
-                if last_emit.elapsed().as_millis() >= 100 {
-                    let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
-                        "transferred": total,
-                        "total": file_size
-                    }));
-                    last_emit = Instant::now();
-                }
+        let mut buffer = vec![0u8; 65536];
+        let mut transferred: u64 = 0;
+        let mut cancelled = false;
+        let mut last_progress_update = std::time::Instant::now();
+
+        loop {
+            if TRANSFER_CANCELLED
+                .read()
+                .await
+                .get(&task_id_clone)
+                .copied()
+                .unwrap_or(false)
+            {
+                cancelled = true;
+                break;
             }
 
-            let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
-                "transferred": total,
-                "total": file_size
-            }));
+            let n = match local_file.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = app.emit(
+                        &format!("transfer-complete-{}", task_id_clone),
+                        serde_json::json!({ "success": false, "error": format!("Failed to read: {}", e) }),
+                    );
+                    return;
+                }
+            };
 
-            remote_file
-                .flush()
-                .map_err(|e| format!("Failed to flush: {}", e))?;
+            if let Err(e) = remote_file.write_all(&buffer[..n]).await {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to write: {}", e) }),
+                );
+                return;
+            }
 
-            Ok(TransferResult {
-                success: true,
-                bytes_transferred: total,
-                error: None,
-                cancelled: false,
-            })
-        })
-    }).await.map_err(|e| e.to_string())?
+            transferred += n as u64;
+
+            if last_progress_update.elapsed().as_millis() > 200 {
+                let _ = app.emit(
+                    &format!("transfer-progress-{}", task_id_clone),
+                    serde_json::json!({
+                        "transferred": transferred,
+                        "total": total_size,
+                        "percentage": if total_size > 0 { (transferred * 100 / total_size) as u8 } else { 0 }
+                    }),
+                );
+                last_progress_update = std::time::Instant::now();
+            }
+        }
+
+        let _ = remote_file.flush().await;
+        let _ = remote_file.shutdown().await;
+
+        TRANSFER_CANCELLED.write().await.remove(&task_id_clone);
+
+        let _ = app.emit(
+            &format!("transfer-complete-{}", task_id_clone),
+            serde_json::json!({
+                "success": !cancelled,
+                "bytes_transferred": transferred,
+                "cancelled": cancelled
+            }),
+        );
+    });
+
+    Ok(task_id)
 }
 
 #[tauri::command]
 pub async fn download_file(
-    app: AppHandle,
-    task_id: String,
     connection_id: String,
     remote_path: String,
     local_path: String,
-) -> Result<TransferResult, String> {
-    clear_cancelled(&task_id);
-    
-    tokio::task::spawn_blocking(move || {
-        with_session_blocking(&connection_id, |session| {
-            let sftp = session.sftp().map_err(|e| e.to_string())?;
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+    let task_id_clone = task_id.clone();
 
-            let mut remote_file = sftp
-                .open(Path::new(&remote_path))
-                .map_err(|e| format!("Failed to open remote file: {}", e))?;
-            
-            let file_size = sftp
-                .stat(Path::new(&remote_path))
-                .map(|s| s.size.unwrap_or(0))
-                .unwrap_or(0);
+    tokio::spawn(async move {
+        use russh_sftp::protocol::OpenFlags;
+        use tauri::Emitter;
 
-            let mut local_file = std::fs::File::create(&local_path)
-                .map_err(|e| format!("Failed to create local file: {}", e))?;
+        let mut remote_file = match sftp
+            .open_with_flags(&remote_path, OpenFlags::READ)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to open remote file: {}", e) }),
+                );
+                return;
+            }
+        };
 
-            let mut buffer = [0u8; 8192];
-            let mut total = 0u64;
-            let mut last_emit = Instant::now();
+        let total_size = match remote_file.metadata().await {
+            Ok(m) => m.len(),
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to get metadata: {}", e) }),
+                );
+                return;
+            }
+        };
 
-            loop {
-                if is_cancelled(&task_id) {
-                    std::fs::remove_file(&local_path).ok();
-                    clear_cancelled(&task_id);
-                    return Ok(TransferResult {
-                        success: false,
-                        bytes_transferred: total,
-                        error: Some("Cancelled".to_string()),
-                        cancelled: true,
-                    });
-                }
-                
-                let n = remote_file
-                    .read(&mut buffer)
-                    .map_err(|e| format!("Failed to read: {}", e))?;
-                if n == 0 {
-                    break;
-                }
-                local_file
-                    .write_all(&buffer[..n])
-                    .map_err(|e| format!("Failed to write: {}", e))?;
-                total += n as u64;
+        let mut local_file = match tokio::fs::File::create(&local_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to create local file: {}", e) }),
+                );
+                return;
+            }
+        };
 
-                if last_emit.elapsed().as_millis() >= 100 {
-                    let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
-                        "transferred": total,
-                        "total": file_size
-                    }));
-                    last_emit = Instant::now();
-                }
+        let mut buffer = vec![0u8; 65536];
+        let mut transferred: u64 = 0;
+        let mut cancelled = false;
+        let mut last_progress_update = std::time::Instant::now();
+
+        loop {
+            if TRANSFER_CANCELLED
+                .read()
+                .await
+                .get(&task_id_clone)
+                .copied()
+                .unwrap_or(false)
+            {
+                cancelled = true;
+                break;
             }
 
-            let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
-                "transferred": total,
-                "total": file_size
-            }));
+            let n = match remote_file.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = app.emit(
+                        &format!("transfer-complete-{}", task_id_clone),
+                        serde_json::json!({ "success": false, "error": format!("Failed to read: {}", e) }),
+                    );
+                    return;
+                }
+            };
 
-            local_file
-                .flush()
-                .map_err(|e| format!("Failed to flush: {}", e))?;
+            if let Err(e) = local_file.write_all(&buffer[..n]).await {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to write: {}", e) }),
+                );
+                return;
+            }
 
-            Ok(TransferResult {
-                success: true,
-                bytes_transferred: total,
-                error: None,
-                cancelled: false,
-            })
-        })
-    }).await.map_err(|e| e.to_string())?
+            transferred += n as u64;
+
+            if last_progress_update.elapsed().as_millis() > 200 {
+                let _ = app.emit(
+                    &format!("transfer-progress-{}", task_id_clone),
+                    serde_json::json!({
+                        "transferred": transferred,
+                        "total": total_size,
+                        "percentage": if total_size > 0 { (transferred * 100 / total_size) as u8 } else { 0 }
+                    }),
+                );
+                last_progress_update = std::time::Instant::now();
+            }
+        }
+
+        let _ = local_file.flush().await;
+        let _ = remote_file.shutdown().await;
+
+        TRANSFER_CANCELLED.write().await.remove(&task_id_clone);
+
+        let _ = app.emit(
+            &format!("transfer-complete-{}", task_id_clone),
+            serde_json::json!({
+                "success": !cancelled,
+                "bytes_transferred": transferred,
+                "cancelled": cancelled
+            }),
+        );
+    });
+
+    Ok(task_id)
 }
 
 #[tauri::command]
 pub async fn upload_folder(
-    app: AppHandle,
-    task_id: String,
     connection_id: String,
     local_path: String,
     remote_path: String,
+    _task_id: String,
+    _app: tauri::AppHandle,
 ) -> Result<TransferResult, String> {
-    clear_cancelled(&task_id);
-    
-    fn get_dir_size(path: &Path) -> u64 {
-        let mut total = 0u64;
-        if let Ok(entries) = std::fs::read_dir(path) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    total += get_dir_size(&path);
-                } else if let Ok(metadata) = entry.metadata() {
-                    total += metadata.len();
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    fn copy_dir_recursive<'a>(
+        sftp: &'a Arc<SftpSession>,
+        local: &'a std::path::Path,
+        remote: &'a str,
+        transferred: &'a mut u64,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            sftp.create_dir(remote).await.ok();
+
+            let mut entries = tokio::fs::read_dir(local)
+                .await
+                .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+            while let Some(entry) = entries
+                .next_entry()
+                .await
+                .map_err(|e| format!("Failed to read entry: {}", e))?
+            {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let local_sub = entry.path();
+                let remote_sub = format!("{}/{}", remote, name);
+
+                if entry
+                    .file_type()
+                    .await
+                    .map_err(|e| format!("Failed to get file type: {}", e))?
+                    .is_dir()
+                {
+                    copy_dir_recursive(sftp, &local_sub, &remote_sub, transferred).await?;
+                } else {
+                    use russh_sftp::protocol::OpenFlags;
+                    let mut local_file = tokio::fs::File::open(&local_sub)
+                        .await
+                        .map_err(|e| format!("Failed to open local file: {}", e))?;
+
+                    let mut remote_file = sftp
+                        .open_with_flags(&remote_sub, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+                        .await
+                        .map_err(|e| format!("Failed to create remote file: {}", e))?;
+
+                    tokio::io::copy(&mut local_file, &mut remote_file)
+                        .await
+                        .map_err(|e| format!("Failed to copy file: {}", e))?;
+
+                    remote_file.shutdown().await.ok();
+
+                    let meta = local_file.metadata().await.ok();
+                    *transferred += meta.map(|m| m.len()).unwrap_or(0);
                 }
             }
-        }
-        total
-    }
 
-    fn upload_dir_recursive(
-        sftp: &ssh2::Sftp,
-        local_dir: &Path,
-        remote_dir: &str,
-        total: &mut u64,
-        total_size: u64,
-        app: &AppHandle,
-        task_id: &str,
-        last_emit: &mut Instant,
-    ) -> Result<bool, String> {
-        sftp.mkdir(Path::new(remote_dir), 0o755).ok();
-
-        let entries =
-            std::fs::read_dir(local_dir).map_err(|e| format!("Failed to read directory: {}", e))?;
-
-        for entry in entries {
-            if is_cancelled(task_id) {
-                return Ok(true);
-            }
-            
-            let entry = entry.map_err(|e| e.to_string())?;
-            let local_entry_path = entry.path();
-            let file_name = local_entry_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let remote_entry_path = format!("{}/{}", remote_dir, file_name);
-
-            if local_entry_path.is_dir() {
-                let cancelled = upload_dir_recursive(sftp, &local_entry_path, &remote_entry_path, total, total_size, app, task_id, last_emit)?;
-                if cancelled {
-                    return Ok(true);
-                }
-            } else {
-                let mut local_file = std::fs::File::open(&local_entry_path)
-                    .map_err(|e| format!("Failed to open {}: {}", local_entry_path.display(), e))?;
-                let mut remote_file = sftp
-                    .create(Path::new(&remote_entry_path))
-                    .map_err(|e| format!("Failed to create {}: {}", remote_entry_path, e))?;
-
-                let mut buffer = [0u8; 8192];
-                loop {
-                    if is_cancelled(task_id) {
-                        return Ok(true);
-                    }
-                    
-                    let n = local_file.read(&mut buffer).map_err(|e| e.to_string())?;
-                    if n == 0 {
-                        break;
-                    }
-                    remote_file
-                        .write_all(&buffer[..n])
-                        .map_err(|e| e.to_string())?;
-                    *total += n as u64;
-
-                    if last_emit.elapsed().as_millis() >= 100 {
-                        let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
-                            "transferred": *total,
-                            "total": total_size
-                        }));
-                        *last_emit = Instant::now();
-                    }
-                }
-                remote_file.flush().map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(false)
-    }
-
-    tokio::task::spawn_blocking(move || {
-        with_session_blocking(&connection_id, |session| {
-            let sftp = session.sftp().map_err(|e| e.to_string())?;
-            let mut total = 0u64;
-            let mut last_emit = Instant::now();
-            
-            let total_size = get_dir_size(Path::new(&local_path));
-            
-            let cancelled = upload_dir_recursive(&sftp, Path::new(&local_path), &remote_path, &mut total, total_size, &app, &task_id, &mut last_emit)?;
-            
-            if cancelled {
-                clear_cancelled(&task_id);
-                return Ok(TransferResult {
-                    success: false,
-                    bytes_transferred: total,
-                    error: Some("Cancelled".to_string()),
-                    cancelled: true,
-                });
-            }
-
-            let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
-                "transferred": total,
-                "total": total_size
-            }));
-
-            Ok(TransferResult {
-                success: true,
-                bytes_transferred: total,
-                error: None,
-                cancelled: false,
-            })
+            Ok(())
         })
-    }).await.map_err(|e| e.to_string())?
-}
-
-#[tauri::command]
-pub fn compress_file(
-    connection_id: String,
-    source_path: String,
-    output_path: String,
-) -> Result<bool, String> {
-    fn is_safe_path_char(c: char) -> bool {
-        c.is_alphanumeric() || c == '/' || c == '.' || c == '_' || c == '-' || c == '~'
     }
 
-    if source_path.starts_with('-') || !source_path.chars().all(is_safe_path_char) {
-        return Err(format!("Invalid source path: {}", source_path));
-    }
-    if output_path.starts_with('-') || !output_path.chars().all(is_safe_path_char) {
-        return Err(format!("Invalid output path: {}", output_path));
-    }
+    let mut transferred: u64 = 0;
+    copy_dir_recursive(
+        &sftp,
+        std::path::Path::new(&local_path),
+        &remote_path,
+        &mut transferred,
+    )
+    .await?;
 
-    with_session(&connection_id, |session| {
-        let mut channel = session
-            .channel_session()
-            .map_err(|e| format!("Failed to open channel: {}", e))?;
-
-        let cmd = format!("tar -czf -- '{}' '{}'", output_path, source_path);
-        channel.exec(&cmd).map_err(|e| e.to_string())?;
-
-        let mut output = String::new();
-        channel.read_to_string(&mut output).ok();
-        channel.close().ok();
-
-        let exit_status = channel.exit_status().map_err(|e| e.to_string())?;
-        if exit_status != 0 {
-            return Err(format!("Compression failed with exit code {}", exit_status));
-        }
-
-        Ok(true)
+    Ok(TransferResult {
+        success: true,
+        bytes_transferred: transferred,
+        error: None,
+        cancelled: false,
     })
 }
 
 #[tauri::command]
-pub fn open_folder(path: String) -> Result<bool, String> {
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
+pub async fn compress_file(
+    connection_id: String,
+    source_path: String,
+    output_path: String,
+) -> Result<bool, String> {
+    let sessions = super::ssh::SESSIONS.read().await;
+    let session = sessions.get(&connection_id).ok_or("SSH session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open channel: {}", e))?;
+    drop(sessions);
+
+    let command = format!("tar -czf \"{}\" \"{}\"", output_path, source_path);
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    let mut output = Vec::new();
+    let mut exit_status: u32 = 0;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+            russh::ChannelMsg::ExtendedData { data, ext } => {
+                if ext == 1 {
+                    output.extend_from_slice(&data);
+                }
+            }
+            russh::ChannelMsg::ExitStatus { exit_status: status } => {
+                exit_status = status;
+            }
+            russh::ChannelMsg::Eof => break,
+            _ => {}
+        }
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        Command::new("xdg-open")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open folder: {}", e))?;
-    }
-
-    Ok(true)
-}
-
-#[tauri::command]
-pub fn open_file_location(path: String) -> Result<bool, String> {
-    #[cfg(target_os = "macos")]
-    {
-        Command::new("open")
-            .arg("-R")
-            .arg(&path)
-            .spawn()
-            .map_err(|e| format!("Failed to open file location: {}", e))?;
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        Command::new("explorer")
-            .arg(format!("/select,{}", path))
-            .spawn()
-            .map_err(|e| format!("Failed to open file location: {}", e))?;
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let dir = std::path::Path::new(&path)
-            .parent()
-            .map(|p| p.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.clone());
-        Command::new("xdg-open")
-            .arg(&dir)
-            .spawn()
-            .map_err(|e| format!("Failed to open file location: {}", e))?;
+    if exit_status != 0 {
+        let error_msg = String::from_utf8_lossy(&output).to_string();
+        return Err(format!("压缩失败 (exit code {}): {}", exit_status, error_msg));
     }
 
     Ok(true)
 }
 
 #[tauri::command]
-pub fn cancel_transfer(task_id: String) -> Result<bool, String> {
-    set_cancelled(&task_id, true);
+pub async fn open_folder(path: String) -> Result<bool, String> {
+    let _ = std::process::Command::new("open").arg(&path).status();
     Ok(true)
 }
 
 #[tauri::command]
-pub fn is_directory(path: String) -> Result<bool, String> {
-    let path = std::path::Path::new(&path);
-    Ok(path.is_dir())
+pub async fn open_file_location(path: String) -> Result<bool, String> {
+    let parent = std::path::Path::new(&path)
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or(path);
+    let _ = std::process::Command::new("open").arg(&parent).status();
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn cancel_transfer(task_id: String) -> Result<bool, String> {
+    TRANSFER_CANCELLED.write().await.insert(task_id, true);
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn is_directory(connection_id: String, path: String) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    let metadata = sftp
+        .metadata(&path)
+        .await
+        .map_err(|e| format!("Failed to get metadata: {}", e))?;
+
+    Ok(metadata.is_dir())
+}
+
+#[tauri::command]
+pub async fn is_local_directory(path: String) -> Result<bool, String> {
+    let metadata = tokio::fs::metadata(&path)
+        .await
+        .map_err(|e| format!("Failed to get local metadata: {}", e))?;
+
+    Ok(metadata.is_dir())
+}
+
+pub async fn close_sftp_session(connection_id: &str) {
+    SFTP_SESSIONS.write().await.remove(connection_id);
 }

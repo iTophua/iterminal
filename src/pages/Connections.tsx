@@ -58,11 +58,14 @@ function Connections() {
   }, [connections])
 
   useEffect(() => {
-    const state = location.state as { selectedGroup?: string } | null
-    if (state?.selectedGroup) {
-      setSelectedGroup(state.selectedGroup)
+    const params = new URLSearchParams(location.search)
+    const group = params.get('group')
+    if (group) {
+      setSelectedGroup(group)
+    } else {
+      setSelectedGroup('全部')
     }
-  }, [location.state])
+  }, [location.search])
 
 
   // 端口探测 - 检测服务器在线状态（完全异步，不阻塞）

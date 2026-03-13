@@ -31,6 +31,7 @@ fn main() {
             iterminal::commands::sftp::open_file_location,
             iterminal::commands::sftp::cancel_transfer,
             iterminal::commands::sftp::is_directory,
+            iterminal::commands::sftp::is_local_directory,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
