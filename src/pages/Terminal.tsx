@@ -616,6 +616,14 @@ function Terminal() {
     }
   })
 
+  const getRightPanelWidth = () => {
+    let width = 0
+    if (monitorVisible) width += 320
+    if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
+    return width
+  }
+  const rightPanelWidth = getRightPanelWidth()
+
   return (
     <>
       <div style={{
@@ -623,7 +631,9 @@ function Terminal() {
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        transition: 'margin-right 0.3s ease'
+        marginRight: rightPanelWidth,
+        transition: 'margin-right 0.3s ease',
+        width: `calc(100% - ${rightPanelWidth}px)`
       }}>
         <Tabs
           activeKey={activeConnectionId || undefined}
