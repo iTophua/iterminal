@@ -118,3 +118,26 @@ body {
 .xterm-rows {
   width: 100% !important;
 }
+
+/* File Manager Tree - drop target highlight */
+.file-manager-panel .ant-tree-treenode.drop-target {
+  background: rgba(0, 185, 107, 0.3) !important;
+  border-radius: 4px;
+}
+
+.file-manager-panel .ant-tree-treenode.drop-target .ant-tree-node-content-wrapper {
+  background: transparent !important;
+}
+
+/* File manager tree node styles */
+.file-manager-panel .ant-tree-node-content-wrapper {
+  white-space: nowrap !important;
+}
+
+.file-manager-panel .ant-tree-treenode {
+  transition: background 0.15s;
+}
+
+.file-manager-panel .ant-tree-treenode .ant-tree-node-content-wrapper {
+  flex: 1;
+}

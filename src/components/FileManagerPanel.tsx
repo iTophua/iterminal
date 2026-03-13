@@ -16,6 +16,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import type { DataNode } from 'antd/es/tree'
 import { useTerminalStore } from '../stores/terminalStore'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useTransferStore } from '../stores/transferStore'
 
 interface FileManagerPanelProps {
@@ -55,7 +56,6 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 })
   const [pathInput, setPathInput] = useState(currentPath)
   const [showHidden, setShowHidden] = useState(false)
-  const treeRef = useRef<HTMLDivElement>(null)
 
   const [newFileVisible, setNewFileVisible] = useState(false)
   const [newFileName, setNewFileName] = useState('')
@@ -68,6 +68,20 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const [chmodValue, setChmodValue] = useState('644')
   const [compressVisible, setCompressVisible] = useState(false)
   const [compressName, setCompressName] = useState('')
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [dragTargetPath, setDragTargetPath] = useState<string | null>(null)
+  const treeContainerRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const dragTargetPathRef = useRef<string | null>(null)
+
+  useEffect(() => {
+    dragTargetPathRef.current = dragTargetPath
+  }, [dragTargetPath])
+
+  const uploadFileRef = useRef<typeof uploadFile | null>(null)
+  const uploadFolderRef = useRef<typeof uploadFolder | null>(null)
+  const refreshCurrentRef = useRef<typeof refreshCurrent | null>(null)
+  const refreshDirectoryRef = useRef<typeof refreshDirectory | null>(null)
 
   const mapFilesToNodes = useCallback((files: any[]): TreeNode[] => {
     const filteredFiles = showHidden ? files : files.filter(f => !f.name.startsWith('.'))
@@ -203,6 +217,18 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       message.error(`刷新失败: ${err}`)
     }
   }
+  refreshCurrentRef.current = refreshCurrent
+
+  const refreshDirectory = async (dirPath: string) => {
+    try {
+      const files: any[] = await invoke('list_directory', { connectionId, path: dirPath })
+      const nodes = mapFilesToNodes(files)
+      setTreeData(prev => updateTreeData(prev, dirPath, nodes))
+    } catch (err) {
+      message.error(`刷新失败: ${err}`)
+    }
+  }
+  refreshDirectoryRef.current = refreshDirectory
 
   const onTreeRightClick = (info: { event: React.MouseEvent; node: TreeNode }) => {
     const { event, node } = info
@@ -215,6 +241,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
   const renderTreeNode = (node: TreeNode) => (
     <span
+      data-dir-path={node.isDirectory ? node.path : undefined}
       style={{
         userSelect: 'none',
         WebkitUserSelect: 'none',
@@ -228,6 +255,25 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       )}
     </span>
   )
+
+  useEffect(() => {
+    const container = treeContainerRef.current
+    if (!container) return
+
+    container.querySelectorAll('.ant-tree-treenode').forEach((node) => {
+      node.classList.remove('drop-target')
+    })
+
+    if (isDragOver && dragTargetPath) {
+      const targetNode = container.querySelector(`[data-dir-path="${dragTargetPath}"]`)
+      if (targetNode) {
+        const treeNode = targetNode.closest('.ant-tree-treenode')
+        if (treeNode) {
+          treeNode.classList.add('drop-target')
+        }
+      }
+    }
+  }, [isDragOver, dragTargetPath])
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '-'
@@ -276,10 +322,11 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     }
   }
 
-  const uploadFile = async (localPath: string, remotePath: string, fileName: string) => {
+  const uploadFile = async (localPath: string, remotePath: string, fileName: string, targetDir?: string) => {
     const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
     const now = Date.now()
     const conn = connection
+    const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
 
     useTransferStore.getState().addRecord({
       id: taskId,
@@ -311,6 +358,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           } else {
             useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
             message.success(`上传完成: ${fileName}`)
+            refreshDirectoryRef.current?.(dir)
           }
         })
         .catch((err) => {
@@ -320,11 +368,13 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         .finally(() => unlisten())
     })
   }
+  uploadFileRef.current = uploadFile
 
-  const uploadFolder = async (localPath: string, remotePath: string, folderName: string) => {
+  const uploadFolder = async (localPath: string, remotePath: string, folderName: string, targetDir?: string) => {
     const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
     const now = Date.now()
     const conn = connection
+    const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
 
     useTransferStore.getState().addRecord({
       id: taskId,
@@ -356,6 +406,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           } else {
             useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
             message.success(`上传完成: ${folderName}`)
+            refreshDirectoryRef.current?.(dir)
           }
         })
         .catch((err) => {
@@ -365,6 +416,105 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         .finally(() => unlisten())
     })
   }
+  uploadFolderRef.current = uploadFolder
+
+  useEffect(() => {
+    if (!visible || !connectionId) return
+
+    let unlisten: (() => void) | null = null
+
+    const handleDrop = async (paths: string[]) => {
+      const targetDir = dragTargetPathRef.current || ((selectedNode?.isDirectory && selectedNode?.path) || currentPath)
+
+      for (const localPath of paths) {
+        try {
+          const isDir = await invoke<boolean>('is_directory', { path: localPath })
+          const fileName = localPath.split('/').pop() || 'file'
+          const remotePath = targetDir + '/' + fileName
+
+          if (isDir) {
+            uploadFolderRef.current?.(localPath, remotePath, fileName)
+          } else {
+            uploadFileRef.current?.(localPath, remotePath, fileName)
+          }
+        } catch (err) {
+          message.error(`上传失败: ${err}`)
+        }
+      }
+      setDragTargetPath(null)
+    }
+
+    const setupListeners = async () => {
+      unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        if (event.payload.type === 'enter') {
+          setIsDragOver(true)
+        } else if (event.payload.type === 'leave') {
+          setIsDragOver(false)
+          setDragTargetPath(null)
+        } else if (event.payload.type === 'over') {
+          const { position } = event.payload
+          const x = position.x
+          const y = position.y - 24
+
+          const panel = panelRef.current
+          const container = treeContainerRef.current
+          if (!panel || !container) {
+            setDragTargetPath(null)
+            return
+          }
+
+          const panelRect = panel.getBoundingClientRect()
+          const inPanel = x >= panelRect.left && x <= panelRect.right && y >= panelRect.top && y <= panelRect.bottom
+          if (!inPanel) {
+            setDragTargetPath(null)
+            return
+          }
+
+          const allNodes = container.querySelectorAll('.ant-tree-treenode')
+          let foundPath: string | null = null
+
+          allNodes.forEach((node) => {
+            const rect = node.getBoundingClientRect()
+            const inRow = y >= rect.top && y <= rect.bottom
+            if (inRow) {
+              const dirElement = node.querySelector('[data-dir-path]')
+              if (dirElement) {
+                foundPath = dirElement.getAttribute('data-dir-path')
+              }
+            }
+          })
+
+          setDragTargetPath(foundPath)
+        } else if (event.payload.type === 'drop') {
+          setIsDragOver(false)
+          const { paths, position } = event.payload
+
+          if (!paths || paths.length === 0) {
+            setDragTargetPath(null)
+            return
+          }
+
+          const panel = panelRef.current
+          if (panel) {
+            const panelRect = panel.getBoundingClientRect()
+            const inPanel = position.x >= panelRect.left && position.x <= panelRect.right && position.y >= panelRect.top && position.y <= panelRect.bottom
+            if (!inPanel) {
+              setDragTargetPath(null)
+              return
+            }
+          }
+
+          handleDrop(paths)
+        }
+      })
+    }
+
+    setupListeners()
+
+    return () => {
+      unlisten?.()
+    }
+  }, [visible, connectionId, currentPath, selectedNode])
 
   const handleDownload = async (remotePath: string, fileName: string) => {
     try {
@@ -477,6 +627,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
   const handleDelete = async () => {
     if (!selectedNode) return
+    const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/'
     try {
       if (selectedNode.isDirectory) {
         await invoke('delete_directory', { connectionId, path: selectedNode.path })
@@ -485,7 +636,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       }
       message.success('删除成功')
       setDeleteVisible(false)
-      refreshCurrent()
+      refreshDirectoryRef.current?.(parentPath)
     } catch (err) {
       message.error(`删除失败: ${err}`)
     }
@@ -564,20 +715,43 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
   return (
     <div
+      ref={panelRef}
+      className="file-manager-panel"
       style={{
         position: 'fixed',
         top: 0,
         right: 0,
         bottom: 32,
         width: 360,
-        background: '#252526',
-        borderLeft: '1px solid #3F3F46',
+        background: isDragOver ? 'rgba(0, 185, 107, 0.05)' : '#252526',
+        borderLeft: isDragOver ? '3px solid #00b96b' : '1px solid #3F3F46',
         zIndex: 100,
         display: 'flex',
         flexDirection: 'column',
         boxShadow: '-4px 0 12px rgba(0,0,0,0.3)',
+        transition: 'background 0.2s, border-color 0.2s',
       }}
     >
+      {isDragOver && (
+        <div style={{
+          position: 'absolute',
+          top: 8,
+          left: 8,
+          right: 8,
+          padding: '12px 16px',
+          background: 'rgba(0, 185, 107, 0.15)',
+          borderRadius: 6,
+          border: '2px dashed #00b96b',
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          backdropFilter: 'blur(4px)',
+        }}>
+          <CloudUploadOutlined style={{ color: '#00b96b', fontSize: 18, marginRight: 8 }} />
+          <span style={{ color: '#00b96b', fontSize: 14, fontWeight: 500 }}>释放以上传文件到当前目录</span>
+        </div>
+      )}
       <div style={{
         padding: '12px 16px',
         borderBottom: '1px solid #3F3F46',
@@ -695,7 +869,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       </div>
 
       <div
-        ref={treeRef}
+        ref={treeContainerRef}
         style={{
           flex: 1,
           overflow: 'auto',

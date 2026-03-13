@@ -456,7 +456,7 @@ function Terminal() {
               <Tooltip title="文件管理">
                 <span
                   style={{
-                    color: fileManagerVisible[conn.connectionId] ? '#00b96b' : '#999',
+                    color: '#999',
                     cursor: 'pointer',
                     padding: '4px 6px',
                     fontSize: 14

@@ -619,3 +619,9 @@ pub fn cancel_transfer(task_id: String) -> Result<bool, String> {
     set_cancelled(&task_id, true);
     Ok(true)
 }
+
+#[tauri::command]
+pub fn is_directory(path: String) -> Result<bool, String> {
+    let path = std::path::Path::new(&path);
+    Ok(path.is_dir())
+}
