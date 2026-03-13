@@ -9,7 +9,8 @@ import {
   UploadOutlined, DownloadOutlined, DeleteOutlined, EditOutlined,
   FolderAddOutlined, FileAddOutlined, ScissorOutlined,
   CopyOutlined, CompressOutlined, EyeOutlined, EyeInvisibleOutlined,
-  ArrowLeftOutlined, ArrowRightOutlined, CloudUploadOutlined
+  ArrowLeftOutlined, ArrowRightOutlined, CloudUploadOutlined,
+  ExclamationCircleOutlined, AppstoreOutlined, PartitionOutlined
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -34,6 +35,13 @@ interface TreeNode extends DataNode {
   modified?: string
   permissions?: string
   children?: TreeNode[]
+}
+
+interface ConflictFile {
+  localPath: string
+  remotePath: string
+  fileName: string
+  targetDir: string
 }
 
 export default function FileManagerPanel({ connectionId, visible, onClose }: FileManagerPanelProps) {
@@ -71,9 +79,17 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const [compressName, setCompressName] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
   const [dragTargetPath, setDragTargetPath] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<'tree' | 'list'>(() => {
+    const saved = localStorage.getItem('iterminal_file_view_mode')
+    return (saved === 'list' || saved === 'tree') ? saved : 'tree'
+  })
   const treeContainerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const dragTargetPathRef = useRef<string | null>(null)
+
+  const [conflictModalVisible, setConflictModalVisible] = useState(false)
+  const [conflictFile, setConflictFile] = useState<ConflictFile | null>(null)
+  const conflictResolvePromiseRef = useRef<{ resolve: (action: 'overwrite' | 'skip' | 'rename') => void } | null>(null)
 
   useEffect(() => {
     dragTargetPathRef.current = dragTargetPath
@@ -114,7 +130,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     if (!connectionId) return
     if (loadingPathsRef.current.has(path)) return
     loadingPathsRef.current.add(path)
-    
+
     if (isRoot) {
       setLoading(true)
     }
@@ -138,12 +154,13 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         setLoading(false)
       }
     }
-  }, [connectionId, mapFilesToNodes, store.setExpandedKeys, updateTreeData])
+  }, [connectionId, mapFilesToNodes, message, store.setExpandedKeys, updateTreeData])
 
   useEffect(() => {
     if (visible && connectionId) {
       loadDirectory(currentPath, true)
       setPathInput(currentPath)
+      setSelectedKeys([currentPath])
     }
   }, [visible, connectionId, currentPath, loadDirectory])
 
@@ -284,6 +301,46 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
+  const checkFileConflict = async (remotePath: string): Promise<boolean> => {
+    try {
+      return await invoke('file_exists', { connectionId, path: remotePath })
+    } catch (err) {
+      console.error('检查文件是否存在失败:', err)
+      return false
+    }
+  }
+
+  const generateUniqueFileName = async (baseName: string, extension: string, targetDir: string): Promise<string> => {
+    let counter = 1
+    const maxAttempts = 100
+    while (counter <= maxAttempts) {
+      const newName = `${baseName}_${counter}${extension}`
+      const remotePath = targetDir + '/' + newName
+      const exists = await checkFileConflict(remotePath)
+      if (!exists) {
+        return newName
+      }
+      counter++
+    }
+    return `${baseName}_${Date.now()}${extension}`
+  }
+
+  const showConflictDialog = async (fileInfo: ConflictFile): Promise<'overwrite' | 'skip' | 'rename'> => {
+    return new Promise((resolve) => {
+      setConflictFile(fileInfo)
+      conflictResolvePromiseRef.current = { resolve }
+      setConflictModalVisible(true)
+    })
+  }
+
+  const resolveConflictDialog = (action: 'overwrite' | 'skip' | 'rename') => {
+    setConflictModalVisible(false)
+    if (conflictResolvePromiseRef.current) {
+      conflictResolvePromiseRef.current.resolve(action)
+      conflictResolvePromiseRef.current = null
+    }
+  }
+
   const handleUploadFile = async () => {
     try {
       const selected = await open({
@@ -314,7 +371,28 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       if (selected) {
         const targetDir = (selectedNode?.isDirectory && selectedNode?.path) || currentPath
         const folderName = selected.split('/').pop() || 'folder'
-        const remotePath = targetDir + '/' + folderName
+        let remotePath = targetDir + '/' + folderName
+
+        const exists = await checkFileConflict(remotePath)
+        if (exists) {
+          const action = await showConflictDialog({
+            localPath: selected,
+            remotePath,
+            fileName: folderName,
+            targetDir
+          })
+
+          if (action === 'skip') {
+            return
+          } else if (action === 'rename') {
+            const newFolderName = await generateUniqueFileName(folderName, '', targetDir)
+            remotePath = targetDir + '/' + newFolderName
+            await uploadFolder(selected, remotePath, newFolderName)
+            refreshCurrent()
+            return
+          }
+        }
+
         await uploadFolder(selected, remotePath, folderName)
         refreshCurrent()
       }
@@ -324,10 +402,41 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   }
 
   const uploadFile = async (localPath: string, remotePath: string, fileName: string, targetDir?: string) => {
-    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
+
+    const exists = await checkFileConflict(remotePath)
+    if (exists) {
+      const action = await showConflictDialog({
+        localPath,
+        remotePath,
+        fileName,
+        targetDir: dir
+      })
+
+      if (action === 'skip') {
+        return
+      } else if (action === 'rename') {
+        const lastDotIndex = fileName.lastIndexOf('.')
+        let baseName = fileName
+        let extension = ''
+        if (lastDotIndex > 0) {
+          baseName = fileName.substring(0, lastDotIndex)
+          extension = fileName.substring(lastDotIndex)
+        }
+        const newFileName = await generateUniqueFileName(baseName, extension, dir)
+        const newRemotePath = dir + '/' + newFileName
+        performUpload(localPath, newRemotePath, newFileName, dir)
+        return
+      }
+    }
+
+    performUpload(localPath, remotePath, fileName, dir)
+  }
+
+  const performUpload = async (localPath: string, remotePath: string, fileName: string, targetDir: string) => {
+    const taskId = Date.now().toString() + Math.random().toString(36).substring(2, 11)
     const now = Date.now()
     const conn = connection
-    const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
 
     useTransferStore.getState().addRecord({
       id: taskId,
@@ -346,10 +455,10 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
     useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
 
-    listen<{ transferred: number; total: number }>(
+    listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
       `transfer-progress-${taskId}`,
       (event) => {
-        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total, event.payload.totalFiles, event.payload.completedFiles)
       }
     ).then((unlistenProgress) => {
       listen<{ success: boolean; cancelled: boolean; error?: string }>(
@@ -362,7 +471,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           } else if (result.success) {
             useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
             message.success(`上传完成: ${fileName}`)
-            refreshDirectoryRef.current?.(dir)
+            refreshDirectoryRef.current?.(targetDir)
           } else {
             useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: result.error || 'Unknown error' })
             message.error(`上传失败: ${result.error}`)
@@ -381,7 +490,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   uploadFileRef.current = uploadFile
 
   const uploadFolder = async (localPath: string, remotePath: string, folderName: string, targetDir?: string) => {
-    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const taskId = Date.now().toString() + Math.random().toString(36).substring(2, 11)
     const now = Date.now()
     const conn = connection
     const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
@@ -403,10 +512,10 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
     useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
 
-    listen<{ transferred: number; total: number }>(
+    listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
       `transfer-progress-${taskId}`,
       (event) => {
-        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total, event.payload.totalFiles, event.payload.completedFiles)
       }
     ).then((unlisten) => {
       invoke<{ success: boolean; cancelled: boolean }>('upload_folder', { taskId, connectionId, localPath, remotePath })
@@ -524,7 +633,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     return () => {
       unlisten?.()
     }
-  }, [visible, connectionId, currentPath, selectedNode])
+  }, [visible, connectionId, currentPath, selectedNode, message])
 
   const handleDownload = async (remotePath: string, fileName: string) => {
     try {
@@ -533,7 +642,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         title: '保存文件',
       })
       if (savePath) {
-        const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+        const taskId = Date.now().toString() + Math.random().toString(36).substring(2, 11)
         const now = Date.now()
         const conn = connection
 
@@ -853,6 +962,18 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
           />
         </Tooltip>
+        <Tooltip title={viewMode === 'tree' ? '切换到列表视图' : '切换到树形视图'}>
+          <Button
+            size="small"
+            icon={viewMode === 'tree' ? <AppstoreOutlined /> : <PartitionOutlined />}
+            onClick={() => {
+              const newMode = viewMode === 'tree' ? 'list' : 'tree'
+              setViewMode(newMode)
+              localStorage.setItem('iterminal_file_view_mode', newMode)
+            }}
+            style={{ background: viewMode === 'list' ? 'rgba(0, 185, 107, 0.2)' : 'transparent', border: '1px solid #3F3F46', color: viewMode === 'list' ? '#00b96b' : '#999' }}
+          />
+        </Tooltip>
         <Tooltip title="上传文件">
           <Button
             size="small"
@@ -893,6 +1014,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           flex: 1,
           overflow: 'auto',
           padding: 8,
+          background: '#252526',
         }}
       >
         {loading ? (
@@ -1060,6 +1182,58 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           placeholder="输出文件名"
           style={{ marginTop: 8 }}
         />
+      </Modal>
+
+      <Modal
+        title="文件冲突"
+        open={conflictModalVisible}
+        onCancel={() => resolveConflictDialog('skip')}
+        footer={null}
+        width={420}
+      >
+        <div style={{ padding: '8px 0' }}>
+          <div style={{
+            padding: '12px',
+            background: 'rgba(255, 77, 79, 0.1)',
+            borderRadius: 6,
+            border: '1px solid rgba(255, 77, 79, 0.3)',
+            marginBottom: 16
+          }}>
+            <p style={{ color: '#ff4d4f', margin: 0, fontSize: 13 }}>
+              <ExclamationCircleOutlined style={{ marginRight: 6 }} />
+              目标位置已存在同名文件
+            </p>
+          </div>
+          <p style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>文件名</p>
+          <p style={{ color: '#CCC', fontSize: 14, marginBottom: 16, wordBreak: 'break-all' }}>
+            {conflictFile?.fileName}
+          </p>
+          <p style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>目标路径</p>
+          <p style={{ color: '#CCC', fontSize: 14, marginBottom: 24, wordBreak: 'break-all' }}>
+            {conflictFile?.remotePath}
+          </p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button
+              onClick={() => resolveConflictDialog('skip')}
+              style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            >
+              跳过
+            </Button>
+            <Button
+              onClick={() => resolveConflictDialog('rename')}
+              style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            >
+              保留两者
+            </Button>
+            <Button
+              danger
+              onClick={() => resolveConflictDialog('overwrite')}
+              style={{ background: '#ff4d4f', borderColor: '#ff4d4f' }}
+            >
+              覆盖
+            </Button>
+          </div>
+        </div>
       </Modal>
     </div>
   )

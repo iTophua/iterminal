@@ -15,6 +15,8 @@ interface TransferProgress {
   speed: number // 字节/秒
   lastTransferred: number
   lastTime: number
+  totalFiles?: number
+  completedFiles?: number
 }
 
 interface TransferState {
@@ -26,7 +28,7 @@ interface TransferState {
 
   addRecord: (record: TransferRecord) => void
   updateRecord: (id: string, updates: Partial<TransferRecord>) => void
-  updateProgress: (id: string, transferred: number, fileSize: number) => void
+  updateProgress: (id: string, transferred: number, fileSize: number, totalFiles?: number, completedFiles?: number) => void
   removeRecord: (id: string) => void
   clearRecords: () => void
   setRetentionPeriod: (period: RetentionPeriod) => void
@@ -145,7 +147,7 @@ return {
       }
     },
 
-    updateProgress: (id: string, transferred: number, fileSize: number) => {
+    updateProgress: (id: string, transferred: number, fileSize: number, totalFiles?: number, completedFiles?: number) => {
       set((state) => {
         const now = Date.now()
         const prevProgress = state.progress[id]
@@ -167,7 +169,9 @@ return {
               fileSize,
               speed,
               lastTransferred: transferred,
-              lastTime: now
+              lastTime: now,
+              totalFiles,
+              completedFiles
             }
           }
         }

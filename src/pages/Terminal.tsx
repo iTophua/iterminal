@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, Tooltip, Input, Button, App } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, FolderOpenOutlined, EnvironmentOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -32,7 +32,13 @@ function Terminal() {
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
   
   // 工具栏显示状态：'full' = 完整工具栏, 'ball' = 小球形态
-  const [toolbarState, setToolbarState] = useState<'full' | 'ball'>('full')
+  const [toolbarState, setToolbarState] = useState<'full' | 'ball'>('ball')
+  // 工具栏自动隐藏设置
+  const [autoHideToolbar, setAutoHideToolbar] = useState(() => {
+    const saved = localStorage.getItem('iterminal_auto_hide_toolbar')
+    return saved ? saved === 'true' : true
+  })
+  const [mouseOverBall, setMouseOverBall] = useState(false)
   
   // 搜索状态
   const [searchVisible, setSearchVisible] = useState(false)
@@ -271,6 +277,11 @@ function Terminal() {
     window.addEventListener('click', handleClick)
     return () => window.removeEventListener('click', handleClick)
   }, [])
+
+  // 自动隐藏设置持久化
+  useEffect(() => {
+    localStorage.setItem('iterminal_auto_hide_toolbar', String(autoHideToolbar))
+  }, [autoHideToolbar])
   
   // 处理全屏切换
   const handleToggleFullscreen = useCallback(async (sessionKey: string) => {
@@ -375,6 +386,27 @@ function Terminal() {
     }
     setContextMenu(prev => ({ ...prev, visible: false }))
   }, [contextMenu.sessionKey])
+
+  // 在文件管理器中打开当前目录
+  const handleOpenInFileManager = useCallback(() => {
+    const parts = contextMenu.sessionKey.split('_')
+    const connId = parts[0]
+    const currentPath = useTerminalStore.getState().currentPaths[connId] || '/home'
+    setFileManagerVisible(connId, true)
+    setMonitorVisible(false)
+    useTerminalStore.getState().setCurrentPath(connId, currentPath)
+    setContextMenu(prev => ({ ...prev, visible: false }))
+  }, [contextMenu.sessionKey, setFileManagerVisible])
+
+  // 复制当前路径
+  const handleCopyCurrentPath = useCallback(() => {
+    const parts = contextMenu.sessionKey.split('_')
+    const connId = parts[0]
+    const currentPath = useTerminalStore.getState().currentPaths[connId] || '/home'
+    navigator.clipboard.writeText(currentPath)
+    message.success(`路径已复制: ${currentPath}`)
+    setContextMenu(prev => ({ ...prev, visible: false }))
+  }, [contextMenu.sessionKey, message])
   if (connectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: '#1E1E1E' }}>
@@ -396,7 +428,7 @@ function Terminal() {
       children: (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {/* 悬浮工具栏 */}
-          {toolbarState === 'full' ? (
+          {toolbarState === 'full' && (!autoHideToolbar || mouseOverBall) ? (
             <div style={{
               position: 'absolute',
               top: 8,
@@ -409,7 +441,9 @@ function Terminal() {
               borderRadius: 6,
               padding: '4px 8px',
               boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
-            }}>
+            }}
+            onMouseLeave={() => { if (autoHideToolbar) { setToolbarState('ball'); setMouseOverBall(false) } }}
+            >
               <Tooltip title="复制选中内容">
                 <span
                   style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
@@ -455,7 +489,6 @@ function Terminal() {
                   style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     setMonitorVisible(true)
-                    // 打开系统监控时关闭文件管理
                     if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
                       setFileManagerVisible(activeConnectionId, false)
                     }
@@ -485,19 +518,30 @@ function Terminal() {
               </Tooltip>
               
               <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
-              <Tooltip title="收起工具栏">
+              <Tooltip title={autoHideToolbar ? "固定工具栏" : "自动隐藏"}>
+                <span
+                  style={{ color: autoHideToolbar ? '#666' : '#00b96b', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
+                  onClick={() => setAutoHideToolbar(!autoHideToolbar)}
+                >
+                  <PushpinOutlined />
+                </span>
+              </Tooltip>
+              <Tooltip title="收起">
                 <span
                   style={{ color: '#666', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
-                  onClick={() => setToolbarState('ball')}
+                  onClick={() => { setToolbarState('ball'); setMouseOverBall(false) }}
                 >
                   <CloseOutlined />
                 </span>
               </Tooltip>
             </div>
           ) : (
-            <Tooltip title="展开工具栏">
+            <Tooltip title={autoHideToolbar ? "悬停展开工具栏" : "展开工具栏"}>
               <div
-                onClick={() => setToolbarState('full')}
+                onMouseEnter={() => {
+                  setMouseOverBall(true)
+                  setToolbarState('full')
+                }}
                 style={{
                   position: 'absolute',
                   top: 8,
@@ -510,8 +554,11 @@ function Terminal() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: 'pointer',
+                  cursor: autoHideToolbar ? 'default' : 'pointer',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                }}
+                onClick={() => {
+                  if (!autoHideToolbar) setToolbarState('full')
                 }}
               >
                 <ToolOutlined style={{ color: '#999', fontSize: 14 }} />
@@ -566,7 +613,7 @@ function Terminal() {
                 borderRadius: 6,
                 boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
                 overflow: 'hidden',
-                minWidth: 120,
+                minWidth: 160,
               }}
               onClick={(e) => e.stopPropagation()}
             >
@@ -593,6 +640,23 @@ function Terminal() {
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
               >
                 <CheckCircleOutlined /> 全选
+              </div>
+              <div style={{ height: 1, background: '#3F3F46', margin: '4px 0' }} />
+              <div
+                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleOpenInFileManager}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <FolderOpenOutlined /> 在文件管理器中打开
+              </div>
+              <div
+                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleCopyCurrentPath}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <EnvironmentOutlined /> 复制当前路径
               </div>
             </div>
           )}

@@ -3,6 +3,7 @@ use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
@@ -247,6 +248,16 @@ pub async fn chmod_file(connection_id: String, path: String, mode: i32) -> Resul
         .map_err(|e| format!("Failed to change permissions: {}", e))?;
 
     Ok(true)
+}
+
+#[tauri::command]
+pub async fn file_exists(connection_id: String, path: String) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    match sftp.metadata(&path).await {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
 }
 
 #[tauri::command]
@@ -496,78 +507,188 @@ pub async fn upload_folder(
     connection_id: String,
     local_path: String,
     remote_path: String,
-    _task_id: String,
-    _app: tauri::AppHandle,
+    task_id: String,
+    app: tauri::AppHandle,
 ) -> Result<TransferResult, String> {
     let sftp = get_sftp_session(&connection_id).await?;
+    let task_id_clone = task_id.clone();
+    let app_clone = app.clone();
 
-    fn copy_dir_recursive<'a>(
-        sftp: &'a Arc<SftpSession>,
-        local: &'a std::path::Path,
-        remote: &'a str,
-        transferred: &'a mut u64,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
-        Box::pin(async move {
-            sftp.create_dir(remote).await.ok();
-
-            let mut entries = tokio::fs::read_dir(local)
-                .await
-                .map_err(|e| format!("Failed to read directory: {}", e))?;
-
-            while let Some(entry) = entries
-                .next_entry()
-                .await
-                .map_err(|e| format!("Failed to read entry: {}", e))?
-            {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let local_sub = entry.path();
-                let remote_sub = format!("{}/{}", remote, name);
-
-                if entry
-                    .file_type()
-                    .await
-                    .map_err(|e| format!("Failed to get file type: {}", e))?
-                    .is_dir()
-                {
-                    copy_dir_recursive(sftp, &local_sub, &remote_sub, transferred).await?;
-                } else {
-                    use russh_sftp::protocol::OpenFlags;
-                    let mut local_file = tokio::fs::File::open(&local_sub)
-                        .await
-                        .map_err(|e| format!("Failed to open local file: {}", e))?;
-
-                    let mut remote_file = sftp
-                        .open_with_flags(&remote_sub, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-                        .await
-                        .map_err(|e| format!("Failed to create remote file: {}", e))?;
-
-                    tokio::io::copy(&mut local_file, &mut remote_file)
-                        .await
-                        .map_err(|e| format!("Failed to copy file: {}", e))?;
-
-                    remote_file.shutdown().await.ok();
-
-                    let meta = local_file.metadata().await.ok();
-                    *transferred += meta.map(|m| m.len()).unwrap_or(0);
+    fn count_files_and_size(local: &std::path::Path) -> (u64, u64) {
+        let mut count = 0u64;
+        let mut size = 0u64;
+        if let Ok(entries) = std::fs::read_dir(local) {
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        let (sub_count, sub_size) = count_files_and_size(&entry.path());
+                        count += sub_count;
+                        size += sub_size;
+                    } else {
+                        count += 1;
+                        if let Ok(metadata) = entry.metadata() {
+                            size += metadata.len();
+                        }
+                    }
                 }
             }
-
-            Ok(())
-        })
+        }
+        (count, size)
     }
 
-    let mut transferred: u64 = 0;
-    copy_dir_recursive(
-        &sftp,
-        std::path::Path::new(&local_path),
-        &remote_path,
-        &mut transferred,
-    )
-    .await?;
+    let local = std::path::Path::new(&local_path);
+    let (total_files, total_size) = count_files_and_size(local);
+
+    let _ = app.emit(
+        &format!("transfer-progress-{}", task_id_clone),
+        serde_json::json!({
+            "transferred": 0,
+            "total": total_size,
+            "totalFiles": total_files,
+            "completedFiles": 0,
+            "percentage": 0
+        }),
+    );
+
+    tokio::spawn(async move {
+        use tauri::Emitter;
+
+        let mut completed_files = 0u64;
+        let mut transferred = 0u64;
+        let mut cancelled = false;
+        let mut last_progress_update = std::time::Instant::now();
+
+        fn copy_dir_recursive<'a>(
+            sftp: &'a Arc<SftpSession>,
+            local: &'a std::path::Path,
+            remote: &'a str,
+            transferred: &'a mut u64,
+            completed_files: &'a mut u64,
+            total_files: u64,
+            total_size: u64,
+            task_id: &'a str,
+            app: &'a tauri::AppHandle,
+            last_progress_update: &'a mut std::time::Instant,
+            cancelled: &'a mut bool,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+            Box::pin(async move {
+                if TRANSFER_CANCELLED.read().await.get(task_id).copied().unwrap_or(false) {
+                    *cancelled = true;
+                    return Ok(());
+                }
+
+                sftp.create_dir(remote).await.ok();
+
+                let mut entries = tokio::fs::read_dir(local)
+                    .await
+                    .map_err(|e| format!("Failed to read directory: {}", e))?;
+
+                while let Some(entry) = entries
+                    .next_entry()
+                    .await
+                    .map_err(|e| format!("Failed to read entry: {}", e))?
+                {
+                    if *cancelled {
+                        break;
+                    }
+
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let local_sub = entry.path();
+                    let remote_sub = format!("{}/{}", remote, name);
+
+                    if entry
+                        .file_type()
+                        .await
+                        .map_err(|e| format!("Failed to get file type: {}", e))?
+                        .is_dir()
+                    {
+                        copy_dir_recursive(
+                            sftp,
+                            &local_sub,
+                            &remote_sub,
+                            transferred,
+                            completed_files,
+                            total_files,
+                            total_size,
+                            task_id,
+                            app,
+                            last_progress_update,
+                            cancelled,
+                        )
+                        .await?;
+                    } else {
+                        use russh_sftp::protocol::OpenFlags;
+                        let mut local_file = tokio::fs::File::open(&local_sub)
+                            .await
+                            .map_err(|e| format!("Failed to open local file: {}", e))?;
+
+                        let file_size = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
+
+                        let mut remote_file = sftp
+                            .open_with_flags(&remote_sub, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+                            .await
+                            .map_err(|e| format!("Failed to create remote file: {}", e))?;
+
+                        tokio::io::copy(&mut local_file, &mut remote_file)
+                            .await
+                            .map_err(|e| format!("Failed to copy file: {}", e))?;
+
+                        remote_file.shutdown().await.ok();
+
+                        *transferred += file_size;
+                        *completed_files += 1;
+
+                        if last_progress_update.elapsed().as_millis() > 200 {
+                            let _ = app.emit(
+                                &format!("transfer-progress-{}", task_id),
+                                serde_json::json!({
+                                    "transferred": *transferred,
+                                    "total": total_size,
+                                    "totalFiles": total_files,
+                                    "completedFiles": *completed_files,
+                                    "percentage": if total_size > 0 { (*transferred * 100 / total_size) as u8 } else { 0 }
+                                }),
+                            );
+                            *last_progress_update = std::time::Instant::now();
+                        }
+                    }
+                }
+
+                Ok(())
+            })
+        }
+
+        let result = copy_dir_recursive(
+            &sftp,
+            std::path::Path::new(&local_path),
+            &remote_path,
+            &mut transferred,
+            &mut completed_files,
+            total_files,
+            total_size,
+            &task_id_clone,
+            &app_clone,
+            &mut last_progress_update,
+            &mut cancelled,
+        )
+        .await;
+
+        TRANSFER_CANCELLED.write().await.remove(&task_id_clone);
+
+        let _ = app_clone.emit(
+            &format!("transfer-complete-{}", task_id_clone),
+            serde_json::json!({
+                "success": result.is_ok() && !cancelled,
+                "bytes_transferred": transferred,
+                "cancelled": cancelled,
+                "error": result.err().map(|e| e.to_string())
+            }),
+        );
+    });
 
     Ok(TransferResult {
         success: true,
-        bytes_transferred: transferred,
+        bytes_transferred: 0,
         error: None,
         cancelled: false,
     })

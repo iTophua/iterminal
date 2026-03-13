@@ -23,6 +23,7 @@ fn main() {
             iterminal::commands::sftp::delete_file,
             iterminal::commands::sftp::delete_directory,
             iterminal::commands::sftp::chmod_file,
+            iterminal::commands::sftp::file_exists,
             iterminal::commands::sftp::upload_file,
             iterminal::commands::sftp::download_file,
             iterminal::commands::sftp::upload_folder,

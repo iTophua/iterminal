@@ -182,3 +182,33 @@ body {
   animation: connecting-progress 1.5s ease-in-out infinite;
   box-shadow: 0 0 8px rgba(0, 122, 204, 0.6);
 }
+
+.file-manager-panel .ant-table {
+  background: transparent;
+  font-size: 13px;
+}
+
+.file-manager-panel .ant-table-thead > tr > th {
+  background: #2d2d30;
+  color: #999;
+  border-bottom: 1px solid #3F3F46;
+  font-weight: 500;
+}
+
+.file-manager-panel .ant-table-tbody > tr > td {
+  background: transparent;
+  border-bottom: 1px solid #2a2a2d;
+  color: #ccc;
+}
+
+.file-manager-panel .ant-table-tbody > tr:hover > td {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.file-manager-panel .selected-file-row td {
+  background: rgba(0, 185, 107, 0.15) !important;
+}
+
+.file-manager-panel .ant-table-tbody > tr > td:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

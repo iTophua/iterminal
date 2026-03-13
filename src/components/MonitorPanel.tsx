@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Progress, Spin, Empty } from 'antd'
-import { CloseOutlined, ReloadOutlined, DashboardOutlined } from '@ant-design/icons'
+import { Progress, Spin, Empty, Select, Button, Tooltip } from 'antd'
+import { CloseOutlined, ReloadOutlined, DashboardOutlined, PauseCircleOutlined, PlayCircleOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 
 // 监控数据类型定义
@@ -86,16 +86,20 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
   const [error, setError] = useState<string | null>(null)
   const [data, setData] = useState<MonitorData | null>(null)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [refreshInterval, setRefreshInterval] = useState(3000)
+  const [paused, setPaused] = useState(false)
+  const [lastUpdateTime, setLastUpdateTime] = useState<Date | null>(null)
 
   // 获取监控数据
   const fetchMonitorData = useCallback(async () => {
     if (!connectionId) return
-    
+
     try {
       setLoading(true)
       setError(null)
       const result = await invoke<MonitorData>('get_system_monitor', { id: connectionId })
       setData(result)
+      setLastUpdateTime(new Date())
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -103,24 +107,22 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
     }
   }, [connectionId])
 
-  // 打开面板时获取数据，并设置定时刷新
   useEffect(() => {
-    if (visible && connectionId) {
+    if (visible && connectionId && !paused) {
       fetchMonitorData()
-      
-      // 每3秒刷新一次
+
       intervalRef.current = setInterval(() => {
         fetchMonitorData()
-      }, 3000)
+      }, refreshInterval)
     }
-    
+
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
         intervalRef.current = null
       }
     }
-  }, [visible, connectionId, fetchMonitorData])
+  }, [visible, connectionId, fetchMonitorData, refreshInterval, paused])
 
   // 获取进度条颜色
   const getProgressColor = (percent: number): string => {
@@ -161,10 +163,34 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
           <span>系统监控</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <ReloadOutlined
-            onClick={fetchMonitorData}
-            style={{ color: '#888', cursor: 'pointer', fontSize: 14 }}
+          <Select
+            size="small"
+            value={refreshInterval}
+            onChange={(value) => setRefreshInterval(value)}
+            options={[
+              { value: 1000, label: '1秒' },
+              { value: 3000, label: '3秒' },
+              { value: 5000, label: '5秒' },
+              { value: 10000, label: '10秒' },
+            ]}
+            style={{ width: 70 }}
+            disabled={paused}
           />
+          <Tooltip title={paused ? '恢复刷新' : '暂停刷新'}>
+            <Button
+              size="small"
+              type="text"
+              icon={paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+              onClick={() => setPaused(!paused)}
+              style={{ color: paused ? '#00b96b' : '#888', padding: '0 4px' }}
+            />
+          </Tooltip>
+          <Tooltip title="立即刷新">
+            <ReloadOutlined
+              onClick={fetchMonitorData}
+              style={{ color: '#888', cursor: 'pointer', fontSize: 14 }}
+            />
+          </Tooltip>
           <CloseOutlined
             onClick={onClose}
             style={{ color: '#888', cursor: 'pointer', fontSize: 14 }}
@@ -288,11 +314,15 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
         padding: '8px 16px',
         borderTop: '1px solid #3F3F46',
         textAlign: 'center',
-        color: '#666',
+        color: paused ? '#faad14' : '#666',
         fontSize: 11,
         background: '#252526',
       }}>
-        每 3 秒自动刷新
+        {paused ? (
+          <span>已暂停 · {lastUpdateTime ? `最后更新: ${lastUpdateTime.toLocaleTimeString()}` : ''}</span>
+        ) : (
+          <span>每 {refreshInterval / 1000} 秒自动刷新</span>
+        )}
       </div>
     </div>
   )

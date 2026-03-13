@@ -72,26 +72,26 @@ function Connections() {
   // 端口探测 - 检测服务器在线状态（完全异步，不阻塞）
   useEffect(() => {
     let cancelled = false
-    
+
     const checkAllConnections = async () => {
       // 防止并发检测
       if (checkingRef.current) return
       checkingRef.current = true
-      
+
       const conns = connectionsRef.current
       const connected = connectedRef.current
-      
+
       // 过滤出需要检测的连接（跳过已连接的和正在连接中的）
       const toCheck = conns.filter(
         conn => !connected.some(c => c.connectionId === conn.id)
           && conn.status !== 'connecting'
       )
-      
+
       if (toCheck.length === 0) {
         checkingRef.current = false
         return
       }
-      
+
       // 并行检测所有连接
       const results = await Promise.all(
         toCheck.map(async conn => {
@@ -107,7 +107,7 @@ function Connections() {
           }
         })
       )
-      
+
       // 批量更新状态（仅当状态真正变化时）
       if (!cancelled && results.length > 0) {
         setConnections(prev => {
@@ -123,23 +123,19 @@ function Connections() {
           return hasChange ? next : prev
         })
       }
-      
+
       checkingRef.current = false
     }
-    
-    // 启动时延迟 3 秒再检测，让应用先完成初始化
-    const initialTimeout = setTimeout(() => {
-      checkAllConnections()
-    }, 3000)
-    
+
+    checkAllConnections()
+
     // 每 10 分钟检测一次
     const interval = setInterval(() => {
       checkAllConnections()
     }, 600000)
-    
+
     return () => {
       cancelled = true
-      clearTimeout(initialTimeout)
       clearInterval(interval)
     }
   }, []) // 空依赖数组，只在挂载时运行一次
@@ -332,42 +328,82 @@ function Connections() {
 
   // 解析快速导入文本
   const parseQuickImportText = (text: string): Partial<Connection> | null => {
-    const lines = text.trim().split('\n')
+    const trimmed = text.trim()
     const result: Partial<Connection> = {}
-    
+
+    // 尝试解析 SSH URL 格式: ssh://user@host:port 或 user@host
+    const sshUrlMatch = trimmed.match(/^ssh:\/\/([^@]+)@([^:]+)(?::(\d+))?$/)
+    if (sshUrlMatch) {
+      result.username = sshUrlMatch[1]
+      result.host = sshUrlMatch[2]
+      result.port = sshUrlMatch[3] ? parseInt(sshUrlMatch[3], 10) : 22
+      result.name = result.host
+      return result
+    }
+
+    // 尝试解析 user@host 格式
+    const userHostMatch = trimmed.match(/^([^@]+)@([^:\s]+)(?::(\d+))?$/)
+    if (userHostMatch && !trimmed.includes('\n')) {
+      result.username = userHostMatch[1]
+      result.host = userHostMatch[2]
+      result.port = userHostMatch[3] ? parseInt(userHostMatch[3], 10) : 22
+      result.name = result.host
+      return result
+    }
+
+    // 尝试解析一行格式: name|host|port|user|password
+    const pipeMatch = trimmed.match(/^([^|]+)\|([^|]+)\|(\d+)\|([^|]+)(?:\|(.+))?$/)
+    if (pipeMatch) {
+      result.name = pipeMatch[1].trim()
+      result.host = pipeMatch[2].trim()
+      result.port = parseInt(pipeMatch[3], 10) || 22
+      result.username = pipeMatch[4].trim()
+      if (pipeMatch[5]) result.password = pipeMatch[5].trim()
+      return result
+    }
+
+    // 原有的键值对格式解析
+    const lines = trimmed.split('\n')
+
     for (const line of lines) {
       const colonIndex = line.indexOf(':')
       if (colonIndex === -1) continue
-      
+
       const key = line.substring(0, colonIndex).trim()
       const value = line.substring(colonIndex + 1).trim()
-      
+
       switch (key) {
         case '名称':
+        case 'Name':
           result.name = value
           break
         case '地址':
         case '主机':
+        case 'Host':
           result.host = value
           break
         case '端口':
+        case 'Port':
           result.port = parseInt(value, 10) || 22
           break
         case '用户':
         case '用户名':
+        case 'User':
+        case 'Username':
           result.username = value
           break
         case '密码':
+        case 'Password':
           result.password = value
           break
       }
     }
-    
+
     // 验证必填字段
     if (!result.name || !result.host || !result.username) {
       return null
     }
-    
+
     return result
   }
 
@@ -627,23 +663,22 @@ function Connections() {
       >
         <div style={{ marginBottom: 12 }}>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            请按以下格式粘贴连接信息：
+            支持格式：
           </Typography.Text>
-          <pre style={{ 
-            background: '#2D2D30', 
-            padding: 12, 
-            borderRadius: 4, 
-            marginTop: 8, 
-            fontSize: 12, 
-            color: '#CCCCCC',
-            border: '1px solid #3F3F46'
+          <div style={{
+            background: '#2D2D30',
+            padding: 10,
+            borderRadius: 4,
+            marginTop: 8,
+            fontSize: 11,
+            color: '#888',
+            border: '1px solid #3F3F46',
+            lineHeight: 1.8
           }}>
-{`名称: test
-地址: 127.0.0.1
-端口: 22
-用户: test
-密码: test`}
-          </pre>
+            <div><span style={{ color: '#00b96b' }}>键值对:</span> 名称: xxx / 地址: xxx / 端口: 22 / 用户: xxx / 密码: xxx</div>
+            <div><span style={{ color: '#1890ff' }}>SSH URL:</span> ssh://user@host:port 或 user@host</div>
+            <div><span style={{ color: '#faad14' }}>一行式:</span> 名称|地址|端口|用户|密码</div>
+          </div>
         </div>
 
         <Input.TextArea

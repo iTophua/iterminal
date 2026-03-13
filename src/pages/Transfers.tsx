@@ -408,9 +408,12 @@ function Transfers() {
                             format={() => {
                               const p = progress[record.id]
                               const speed = p?.speed ? ` ${formatSpeed(p.speed)}` : ''
+                              const fileCount = p?.totalFiles && p.totalFiles > 1 
+                                ? ` (${p.completedFiles || 0}/${p.totalFiles} 文件)` 
+                                : ''
                               return (
                                 <span style={{ fontSize: 11, color: '#888' }}>
-                                  {formatSize(p?.transferred || 0)} / {formatSize(p?.fileSize || 0)}{speed}
+                                  {formatSize(p?.transferred || 0)} / {formatSize(p?.fileSize || 0)}{speed}{fileCount}
                                 </span>
                               )
                             }}
