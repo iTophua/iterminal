@@ -1,10 +1,16 @@
 use serde::{Deserialize, Serialize};
 use ssh2::Sftp;
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter};
+
+lazy_static::lazy_static! {
+    static ref TRANSFER_CANCELLED: Mutex<HashMap<String, bool>> = Mutex::new(HashMap::new());
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {
@@ -21,6 +27,19 @@ pub struct TransferResult {
     pub success: bool,
     pub bytes_transferred: u64,
     pub error: Option<String>,
+    pub cancelled: bool,
+}
+
+fn is_cancelled(task_id: &str) -> bool {
+    TRANSFER_CANCELLED.lock().unwrap().get(task_id).copied().unwrap_or(false)
+}
+
+fn set_cancelled(task_id: &str, cancelled: bool) {
+    TRANSFER_CANCELLED.lock().unwrap().insert(task_id.to_string(), cancelled);
+}
+
+fn clear_cancelled(task_id: &str) {
+    TRANSFER_CANCELLED.lock().unwrap().remove(task_id);
 }
 
 fn with_session<F, T>(connection_id: &str, operation: F) -> Result<T, String>
@@ -212,6 +231,8 @@ pub async fn upload_file(
     local_path: String,
     remote_path: String,
 ) -> Result<TransferResult, String> {
+    clear_cancelled(&task_id);
+    
     tokio::task::spawn_blocking(move || {
         with_session_blocking(&connection_id, |session| {
             let sftp = session.sftp().map_err(|e| e.to_string())?;
@@ -232,6 +253,17 @@ pub async fn upload_file(
             let mut last_emit = Instant::now();
 
             loop {
+                if is_cancelled(&task_id) {
+                    let _ = sftp.unlink(Path::new(&remote_path));
+                    clear_cancelled(&task_id);
+                    return Ok(TransferResult {
+                        success: false,
+                        bytes_transferred: total,
+                        error: Some("Cancelled".to_string()),
+                        cancelled: true,
+                    });
+                }
+                
                 let n = local_file
                     .read(&mut buffer)
                     .map_err(|e| format!("Failed to read: {}", e))?;
@@ -265,6 +297,7 @@ pub async fn upload_file(
                 success: true,
                 bytes_transferred: total,
                 error: None,
+                cancelled: false,
             })
         })
     }).await.map_err(|e| e.to_string())?
@@ -278,6 +311,8 @@ pub async fn download_file(
     remote_path: String,
     local_path: String,
 ) -> Result<TransferResult, String> {
+    clear_cancelled(&task_id);
+    
     tokio::task::spawn_blocking(move || {
         with_session_blocking(&connection_id, |session| {
             let sftp = session.sftp().map_err(|e| e.to_string())?;
@@ -299,6 +334,17 @@ pub async fn download_file(
             let mut last_emit = Instant::now();
 
             loop {
+                if is_cancelled(&task_id) {
+                    std::fs::remove_file(&local_path).ok();
+                    clear_cancelled(&task_id);
+                    return Ok(TransferResult {
+                        success: false,
+                        bytes_transferred: total,
+                        error: Some("Cancelled".to_string()),
+                        cancelled: true,
+                    });
+                }
+                
                 let n = remote_file
                     .read(&mut buffer)
                     .map_err(|e| format!("Failed to read: {}", e))?;
@@ -332,6 +378,7 @@ pub async fn download_file(
                 success: true,
                 bytes_transferred: total,
                 error: None,
+                cancelled: false,
             })
         })
     }).await.map_err(|e| e.to_string())?
@@ -345,6 +392,8 @@ pub async fn upload_folder(
     local_path: String,
     remote_path: String,
 ) -> Result<TransferResult, String> {
+    clear_cancelled(&task_id);
+    
     fn get_dir_size(path: &Path) -> u64 {
         let mut total = 0u64;
         if let Ok(entries) = std::fs::read_dir(path) {
@@ -369,13 +418,17 @@ pub async fn upload_folder(
         app: &AppHandle,
         task_id: &str,
         last_emit: &mut Instant,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         sftp.mkdir(Path::new(remote_dir), 0o755).ok();
 
         let entries =
             std::fs::read_dir(local_dir).map_err(|e| format!("Failed to read directory: {}", e))?;
 
         for entry in entries {
+            if is_cancelled(task_id) {
+                return Ok(true);
+            }
+            
             let entry = entry.map_err(|e| e.to_string())?;
             let local_entry_path = entry.path();
             let file_name = local_entry_path
@@ -385,7 +438,10 @@ pub async fn upload_folder(
             let remote_entry_path = format!("{}/{}", remote_dir, file_name);
 
             if local_entry_path.is_dir() {
-                upload_dir_recursive(sftp, &local_entry_path, &remote_entry_path, total, total_size, app, task_id, last_emit)?;
+                let cancelled = upload_dir_recursive(sftp, &local_entry_path, &remote_entry_path, total, total_size, app, task_id, last_emit)?;
+                if cancelled {
+                    return Ok(true);
+                }
             } else {
                 let mut local_file = std::fs::File::open(&local_entry_path)
                     .map_err(|e| format!("Failed to open {}: {}", local_entry_path.display(), e))?;
@@ -395,6 +451,10 @@ pub async fn upload_folder(
 
                 let mut buffer = [0u8; 8192];
                 loop {
+                    if is_cancelled(task_id) {
+                        return Ok(true);
+                    }
+                    
                     let n = local_file.read(&mut buffer).map_err(|e| e.to_string())?;
                     if n == 0 {
                         break;
@@ -415,7 +475,7 @@ pub async fn upload_folder(
                 remote_file.flush().map_err(|e| e.to_string())?;
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     tokio::task::spawn_blocking(move || {
@@ -426,7 +486,17 @@ pub async fn upload_folder(
             
             let total_size = get_dir_size(Path::new(&local_path));
             
-            upload_dir_recursive(&sftp, Path::new(&local_path), &remote_path, &mut total, total_size, &app, &task_id, &mut last_emit)?;
+            let cancelled = upload_dir_recursive(&sftp, Path::new(&local_path), &remote_path, &mut total, total_size, &app, &task_id, &mut last_emit)?;
+            
+            if cancelled {
+                clear_cancelled(&task_id);
+                return Ok(TransferResult {
+                    success: false,
+                    bytes_transferred: total,
+                    error: Some("Cancelled".to_string()),
+                    cancelled: true,
+                });
+            }
 
             let _ = app.emit(&format!("transfer-progress-{}", task_id), serde_json::json!({
                 "transferred": total,
@@ -437,6 +507,7 @@ pub async fn upload_folder(
                 success: true,
                 bytes_transferred: total,
                 error: None,
+                cancelled: false,
             })
         })
     }).await.map_err(|e| e.to_string())?
@@ -506,5 +577,45 @@ pub fn open_folder(path: String) -> Result<bool, String> {
             .map_err(|e| format!("Failed to open folder: {}", e))?;
     }
 
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn open_file_location(path: String) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(format!("/select,{}", path))
+            .spawn()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let dir = std::path::Path::new(&path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+    }
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn cancel_transfer(task_id: String) -> Result<bool, String> {
+    set_cancelled(&task_id, true);
     Ok(true)
 }

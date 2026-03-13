@@ -12,6 +12,9 @@ export type RetentionPeriod = '1month' | '3months' | '5months' | 'forever'
 interface TransferProgress {
   transferred: number
   fileSize: number
+  speed: number // 字节/秒
+  lastTransferred: number
+  lastTime: number
 }
 
 interface TransferState {
@@ -30,10 +33,44 @@ interface TransferState {
   cleanupExpiredRecords: () => void
   loadFromStorage: () => void
   saveToStorage: () => void
+  cancelRecord: (id: string) => void
 }
 
 const RECORDS_STORAGE_KEY = 'iterminal_transfer_records'
 const RETENTION_STORAGE_KEY = 'iterminal_transfer_retention'
+
+function loadInitialData(): { records: TransferRecord[]; retentionPeriod: RetentionPeriod } {
+  try {
+    const recordsStr = localStorage.getItem(RECORDS_STORAGE_KEY)
+    const records: TransferRecord[] = recordsStr ? JSON.parse(recordsStr) : []
+    const retentionStr = localStorage.getItem(RETENTION_STORAGE_KEY)
+    const retentionPeriod: RetentionPeriod = retentionStr ? 
+      (JSON.parse(retentionStr) as RetentionPeriod) : '1month'
+    return { records, retentionPeriod }
+  } catch (error) {
+    console.error('Failed to load transfer records from storage:', error)
+    return { records: [], retentionPeriod: '1month' }
+  }
+}
+
+function filterExpiredRecords(records: TransferRecord[], period: RetentionPeriod): TransferRecord[] {
+  if (period === 'forever') return records
+  
+  const retentionMs = {
+    '1month': 30 * 24 * 60 * 60 * 1000,
+    '3months': 90 * 24 * 60 * 60 * 1000,
+    '5months': 150 * 24 * 60 * 60 * 1000,
+  }[period] || 30 * 24 * 60 * 60 * 1000
+  
+  const cutoffTime = Date.now() - retentionMs
+  return records.filter(record => record.startTime >= cutoffTime)
+}
+
+const initialData = loadInitialData()
+const cleanedRecords = filterExpiredRecords(initialData.records, initialData.retentionPeriod)
+if (cleanedRecords.length !== initialData.records.length) {
+  localStorage.setItem(RECORDS_STORAGE_KEY, JSON.stringify(cleanedRecords))
+}
 
 export const useTransferStore = create<TransferState>((set, get) => {
   const getRetentionMs = (period: RetentionPeriod): number => {
@@ -51,24 +88,6 @@ export const useTransferStore = create<TransferState>((set, get) => {
     }
   }
 
-  const loadFromStorage = (): void => {
-    try {
-      const recordsStr = localStorage.getItem(RECORDS_STORAGE_KEY)
-      const records: TransferRecord[] = recordsStr ? JSON.parse(recordsStr) : []
-
-      const retentionStr = localStorage.getItem(RETENTION_STORAGE_KEY)
-      const retentionPeriod: RetentionPeriod = retentionStr ? 
-        (JSON.parse(retentionStr) as RetentionPeriod) : '1month'
-
-      const lastCleanupTime = records.length > 0 ? Date.now() : 0
-
-      set({ records, retentionPeriod, lastCleanupTime })
-    } catch (error) {
-      console.error('Failed to load transfer records from storage:', error)
-      set({ records: [], retentionPeriod: '1month', lastCleanupTime: 0 })
-    }
-  }
-
   const saveToStorage = (): void => {
     try {
       const { records, retentionPeriod } = get()
@@ -79,18 +98,21 @@ export const useTransferStore = create<TransferState>((set, get) => {
     }
   }
 
-  loadFromStorage()
+  const loadFromStorage = (): void => {
+    const data = loadInitialData()
+    set({ records: data.records, retentionPeriod: data.retentionPeriod, lastCleanupTime: Date.now() })
+  }
 
 return {
-    records: [],
+    records: cleanedRecords,
     progress: {},
     transferringCount: 0,
-    retentionPeriod: '1month',
-    lastCleanupTime: 0,
+    retentionPeriod: initialData.retentionPeriod,
+    lastCleanupTime: cleanedRecords.length > 0 ? Date.now() : 0,
 
     addRecord: (record: TransferRecord) => {
       set((state) => {
-        const newRecords = [...state.records, record]
+        const newRecords = [record, ...state.records]
         const newTransferringCount = record.status === 'transferring' 
           ? state.transferringCount + 1 
           : state.transferringCount
@@ -124,9 +146,32 @@ return {
     },
 
     updateProgress: (id: string, transferred: number, fileSize: number) => {
-      set((state) => ({
-        progress: { ...state.progress, [id]: { transferred, fileSize } }
-      }))
+      set((state) => {
+        const now = Date.now()
+        const prevProgress = state.progress[id]
+        
+        let speed = 0
+        if (prevProgress && prevProgress.lastTime > 0) {
+          const timeDiff = (now - prevProgress.lastTime) / 1000
+          const bytesDiff = transferred - prevProgress.lastTransferred
+          if (timeDiff > 0) {
+            speed = Math.round(bytesDiff / timeDiff)
+          }
+        }
+        
+        return {
+          progress: {
+            ...state.progress,
+            [id]: {
+              transferred,
+              fileSize,
+              speed,
+              lastTransferred: transferred,
+              lastTime: now
+            }
+          }
+        }
+      })
     },
 
     removeRecord: (id: string) => {
@@ -178,6 +223,30 @@ return {
     },
 
     loadFromStorage,
-    saveToStorage
+    saveToStorage,
+
+    cancelRecord: (id: string) => {
+      set((state) => {
+        const record = state.records.find(r => r.id === id)
+        if (!record || record.status !== 'transferring') return state
+        
+        const newRecords = state.records.map(r =>
+          r.id === id ? { ...r, status: 'cancelled' as const, endTime: Date.now() } : r
+        )
+        const newProgress = { ...state.progress }
+        delete newProgress[id]
+        
+        return {
+          records: newRecords,
+          progress: newProgress,
+          transferringCount: Math.max(0, state.transferringCount - 1)
+        }
+      })
+      saveToStorage()
+    }
   }
 })
+
+setInterval(() => {
+  useTransferStore.getState().cleanupExpiredRecords()
+}, 60 * 60 * 1000)

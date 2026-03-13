@@ -28,6 +28,8 @@ fn main() {
             iterminal::commands::sftp::upload_folder,
             iterminal::commands::sftp::compress_file,
             iterminal::commands::sftp::open_folder,
+            iterminal::commands::sftp::open_file_location,
+            iterminal::commands::sftp::cancel_transfer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

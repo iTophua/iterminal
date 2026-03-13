@@ -1,9 +1,11 @@
 import { useState } from 'react'
-import { List, Button, Tag, Empty, Select, Tabs, Dropdown, message, Space, Progress } from 'antd'
+import { List, Button, Tag, Empty, Select, Tabs, Dropdown, message, Space, Progress, Tooltip } from 'antd'
 import {
-  DownloadOutlined, UploadOutlined, SwapOutlined, FilterOutlined
+  DownloadOutlined, UploadOutlined, SwapOutlined, FilterOutlined,
+  CloseCircleOutlined, ReloadOutlined
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useTransferStore, RetentionPeriod } from '../stores/transferStore'
 
 type FilterType = 'all' | 'upload' | 'download'
@@ -59,6 +61,10 @@ function Transfers() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
+  const formatSpeed = (bytesPerSecond: number) => {
+    return formatSize(bytesPerSecond) + '/s'
+  }
+
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp)
     const now = new Date()
@@ -79,10 +85,9 @@ function Transfers() {
 
   const openFileLocation = async (localPath: string) => {
     try {
-      const dir = localPath.substring(0, localPath.lastIndexOf('/')) || localPath
-      await invoke('open_folder', { path: dir })
+      await invoke('open_file_location', { path: localPath })
     } catch (err) {
-      message.error(`打开文件夹失败: ${err}`)
+      message.error(`打开文件位置失败: ${err}`)
     }
   }
 
@@ -119,6 +124,73 @@ function Transfers() {
   const handleRetentionChange = (value: RetentionPeriod) => {
     useTransferStore.getState().setRetentionPeriod(value)
     message.success(`保留时间已设置为：${RETENTION_OPTIONS.find(o => o.value === value)?.label}`)
+  }
+
+  const cancelTask = async (id: string) => {
+    try {
+      await invoke('cancel_transfer', { taskId: id })
+      useTransferStore.getState().cancelRecord(id)
+      message.success('任务已取消')
+    } catch (err) {
+      message.error(`取消失败: ${err}`)
+    }
+  }
+
+  const retryTask = async (record: typeof records[0]) => {
+    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const now = Date.now()
+
+    useTransferStore.getState().removeRecord(record.id)
+
+    useTransferStore.getState().addRecord({
+      ...record,
+      id: taskId,
+      status: 'pending',
+      startTime: now,
+      transferred: 0,
+      error: undefined,
+      endTime: undefined,
+    })
+
+    useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
+
+    const unlisten = await listen<{ transferred: number; total: number }>(
+      `transfer-progress-${taskId}`,
+      (event) => {
+        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+      }
+    )
+
+    try {
+      let result: { success: boolean; cancelled: boolean }
+      if (record.type === 'upload') {
+        result = await invoke<{ success: boolean; cancelled: boolean }>('upload_file', {
+          taskId,
+          connectionId: record.connectionId,
+          localPath: record.localPath,
+          remotePath: record.remotePath
+        })
+      } else {
+        result = await invoke<{ success: boolean; cancelled: boolean }>('download_file', {
+          taskId,
+          connectionId: record.connectionId,
+          remotePath: record.remotePath,
+          localPath: record.localPath
+        })
+      }
+      
+      if (result.cancelled) {
+        useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+      } else {
+        useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+        message.success(`${record.type === 'upload' ? '上传' : '下载'}完成: ${record.fileName}`)
+      }
+    } catch (err) {
+      useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
+      message.error(`${record.type === 'upload' ? '上传' : '下载'}失败: ${err}`)
+    } finally {
+      unlisten()
+    }
   }
 
   return (
@@ -238,6 +310,32 @@ function Transfers() {
                   cursor: 'pointer',
                 }}
                 actions={[
+                  record.status === 'transferring' ? (
+                    <Tooltip key={`cancel-${record.id}`} title="取消任务">
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<CloseCircleOutlined />}
+                        style={{ color: '#ff4d4f', padding: 0 }}
+                        onClick={() => cancelTask(record.id)}
+                      >
+                        取消
+                      </Button>
+                    </Tooltip>
+                  ) : null,
+                  (record.status === 'failed' || record.status === 'cancelled') ? (
+                    <Tooltip key={`retry-${record.id}`} title="重试任务">
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<ReloadOutlined />}
+                        style={{ color: '#1890ff', padding: 0 }}
+                        onClick={() => retryTask(record)}
+                      >
+                        重试
+                      </Button>
+                    </Tooltip>
+                  ) : null,
                   record.status === 'completed' && record.type === 'download' ? (
                     <Button
                       key={`open-${record.id}`}
@@ -277,8 +375,18 @@ function Transfers() {
                         <span>{record.connectionHost}</span>
                       </div>
                       <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
-                        {record.type === 'upload' ? '➜ ' : '➜ '}
-                        {record.remotePath}
+                        {record.type === 'upload' ? (
+                          <>本地: {record.localPath}</>
+                        ) : (
+                          <>远程: {record.remotePath}</>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                        {record.type === 'upload' ? (
+                          <>远程: {record.remotePath}</>
+                        ) : (
+                          <>本地: {record.localPath}</>
+                        )}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: '#888', marginTop: 4 }}>
                         <span>{formatTime(record.startTime)}</span>
@@ -298,9 +406,10 @@ function Transfers() {
                             strokeColor={record.type === 'upload' ? '#00b96b' : '#1890ff'}
                             format={() => {
                               const p = progress[record.id]
+                              const speed = p?.speed ? ` ${formatSpeed(p.speed)}` : ''
                               return (
                                 <span style={{ fontSize: 11, color: '#888' }}>
-                                  {formatSize(p?.transferred || 0)} / {formatSize(p?.fileSize || 0)}
+                                  {formatSize(p?.transferred || 0)} / {formatSize(p?.fileSize || 0)}{speed}
                                 </span>
                               )
                             }}

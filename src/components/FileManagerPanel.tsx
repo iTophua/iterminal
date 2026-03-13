@@ -244,9 +244,10 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         title: '选择要上传的文件',
       })
       if (selected && Array.isArray(selected) && selected.length > 0) {
+        const targetDir = (selectedNode?.isDirectory && selectedNode?.path) || currentPath
         for (const filePath of selected) {
           const fileName = filePath.split('/').pop() || 'file'
-          const remotePath = currentPath + '/' + fileName
+          const remotePath = targetDir + '/' + fileName
           await uploadFile(filePath, remotePath, fileName)
         }
         refreshCurrent()
@@ -264,8 +265,9 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         title: '选择要上传的文件夹',
       })
       if (selected) {
+        const targetDir = (selectedNode?.isDirectory && selectedNode?.path) || currentPath
         const folderName = selected.split('/').pop() || 'folder'
-        const remotePath = currentPath + '/' + folderName
+        const remotePath = targetDir + '/' + folderName
         await uploadFolder(selected, remotePath, folderName)
         refreshCurrent()
       }
@@ -302,10 +304,14 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
       }
     ).then((unlisten) => {
-      invoke('upload_file', { taskId, connectionId, localPath, remotePath })
-        .then(() => {
-          useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-          message.success(`上传完成: ${fileName}`)
+      invoke<{ success: boolean; cancelled: boolean }>('upload_file', { taskId, connectionId, localPath, remotePath })
+        .then((result) => {
+          if (result.cancelled) {
+            useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+          } else {
+            useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+            message.success(`上传完成: ${fileName}`)
+          }
         })
         .catch((err) => {
           useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
@@ -343,10 +349,14 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
       }
     ).then((unlisten) => {
-      invoke('upload_folder', { taskId, connectionId, localPath, remotePath })
-        .then(() => {
-          useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-          message.success(`上传完成: ${folderName}`)
+      invoke<{ success: boolean; cancelled: boolean }>('upload_folder', { taskId, connectionId, localPath, remotePath })
+        .then((result) => {
+          if (result.cancelled) {
+            useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+          } else {
+            useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+            message.success(`上传完成: ${folderName}`)
+          }
         })
         .catch((err) => {
           useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
@@ -390,10 +400,14 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
           }
         ).then((unlisten) => {
-          invoke('download_file', { taskId, connectionId, remotePath, localPath: savePath })
-            .then(() => {
-              useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-              message.success(`下载完成: ${fileName}`)
+          invoke<{ success: boolean; cancelled: boolean }>('download_file', { taskId, connectionId, remotePath, localPath: savePath })
+            .then((result) => {
+              if (result.cancelled) {
+                useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+              } else {
+                useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+                message.success(`下载完成: ${fileName}`)
+              }
             })
             .catch((err) => {
               useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
