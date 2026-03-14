@@ -62,6 +62,10 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   }, [treeData])
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
   const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null)
+  const selectedNodeRef = useRef<TreeNode | null>(null)
+  useEffect(() => {
+    selectedNodeRef.current = selectedNode
+  }, [selectedNode])
   const [contextMenuVisible, setContextMenuVisible] = useState(false)
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 })
   const [pathInput, setPathInput] = useState(currentPath)
@@ -89,6 +93,11 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const treeContainerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const dragTargetPathRef = useRef<string | null>(null)
+  const viewModeRef = useRef(viewMode)
+
+  useEffect(() => {
+    viewModeRef.current = viewMode
+  }, [viewMode])
 
   const [conflictModalVisible, setConflictModalVisible] = useState(false)
   const [conflictFile, setConflictFile] = useState<ConflictFile | null>(null)
@@ -101,7 +110,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const uploadFileRef = useRef<typeof uploadFile | null>(null)
   const uploadFolderRef = useRef<typeof uploadFolder | null>(null)
   const refreshCurrentRef = useRef<typeof refreshCurrent | null>(null)
-  const refreshDirectoryRef = useRef<typeof refreshDirectory | null>(null)
+  const refreshDirectoryRef = useRef<((dirPath: string) => void) | null>(null)
 
   const mapFilesToNodes = useCallback((files: any[]): TreeNode[] => {
     const filteredFiles = showHidden ? files : files.filter(f => !f.name.startsWith('.'))
@@ -134,38 +143,64 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     if (loadingPathsRef.current.has(path)) return
     loadingPathsRef.current.add(path)
 
-    if (isRoot) {
+    if (isRoot && viewMode === 'list') {
       setLoading(true)
     }
     try {
       const files: any[] = await invoke('list_directory', { connectionId, path })
       const nodes = mapFilesToNodes(files)
-      if (isRoot) {
+      if (viewMode === 'list') {
         setTreeData(nodes)
-        if (path !== '/') {
-          store.setExpandedKeys(connectionId, [path])
-        }
       } else {
-        setTreeData(prev => updateTreeData(prev, path, nodes))
+        if (isRoot) {
+          // 树视图下根路径导航：创建新的根节点
+          const rootNode: TreeNode = {
+            key: path,
+            title: path === '/' ? '/' : path.split('/').pop() || path,
+            isDirectory: true,
+            path: path,
+            isLeaf: false,
+            children: nodes,
+          }
+          setTreeData([rootNode])
+          store.setExpandedKeys(connectionId, [path])
+          setSelectedKeys([path])
+        } else {
+          setTreeData(prev => updateTreeData(prev, path, nodes))
+        }
       }
       loadingPathsRef.current.delete(path)
     } catch (err) {
       message.error(`加载目录失败: ${err}`)
       loadingPathsRef.current.delete(path)
     } finally {
-      if (isRoot) {
+      if (isRoot && viewMode === 'list') {
         setLoading(false)
       }
     }
-  }, [connectionId, mapFilesToNodes, message, store.setExpandedKeys, updateTreeData])
+  }, [connectionId, mapFilesToNodes, message, store, updateTreeData, viewMode])
+
+  const loadDirectoryRef = useRef(loadDirectory)
+  const currentPathRef = useRef(currentPath)
+  useEffect(() => {
+    loadDirectoryRef.current = loadDirectory
+    currentPathRef.current = currentPath
+  }, [loadDirectory, currentPath])
 
   useEffect(() => {
     if (visible && connectionId) {
-      loadDirectory(currentPath, true)
-      setPathInput(currentPath)
-      setSelectedKeys([currentPath])
+      const path = currentPathRef.current
+      loadDirectoryRef.current(path, true)
+      setPathInput(path)
+      setSelectedKeys([path])
     }
-  }, [visible, connectionId, currentPath, loadDirectory])
+  }, [visible, connectionId])
+
+  useEffect(() => {
+    if (visible && connectionId) {
+      setPathInput(store.currentPaths[connectionId] || '/')
+    }
+  }, [visible, connectionId, store.currentPaths])
 
   useEffect(() => {
     const handleClickOutside = () => {
@@ -202,12 +237,15 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     }
   }
 
-  const onLoadData = async (_treeNode: any): Promise<void> => {
-  }
-
-  const onSelect = (keys: React.Key[], info: any) => {
+  const onSelect = (keys: React.Key[]) => {
     setSelectedKeys(keys as string[])
-    setSelectedNode(info.node as TreeNode)
+    if (keys.length > 0) {
+      const nodePath = keys[0] as string
+      const node = findNodeByPath(treeDataRef.current, nodePath)
+      if (node) {
+        setSelectedNode(node)
+      }
+    }
   }
 
   const onPathInputPressEnter = () => {
@@ -226,7 +264,11 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const refreshCurrent = async () => {
     const targetPath = viewMode === 'list' 
       ? currentPath 
-      : (selectedNode?.isDirectory ? selectedNode.path : currentPath)
+      : (selectedNode 
+          ? (selectedNode.isDirectory 
+              ? selectedNode.path 
+              : selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/')
+          : currentPath)
     try {
       const files: any[] = await invoke('list_directory', { connectionId, path: targetPath })
       const nodes = mapFilesToNodes(files)
@@ -235,7 +277,9 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       } else {
         const isRootPath = targetPath === currentPath && !treeData.some(n => n.path === targetPath)
         if (isRootPath) {
-          setTreeData(nodes)
+          setTreeData(prev => prev.map(node => 
+            node.path === targetPath ? { ...node, children: nodes } : node
+          ))
         } else {
           setTreeData(prev => updateTreeData(prev, targetPath, nodes))
         }
@@ -246,11 +290,11 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   }
   refreshCurrentRef.current = refreshCurrent
 
-  const refreshDirectory = async (dirPath: string) => {
+  const refreshDirectory = async (dirPath: string, isTreeView: boolean) => {
     try {
       const files: any[] = await invoke('list_directory', { connectionId, path: dirPath })
       const nodes = mapFilesToNodes(files)
-      if (viewMode === 'list') {
+      if (!isTreeView) {
         if (dirPath === currentPath) {
           setTreeData(nodes)
         }
@@ -261,13 +305,27 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       message.error(`刷新失败: ${err}`)
     }
   }
-  refreshDirectoryRef.current = refreshDirectory
+  refreshDirectoryRef.current = (dirPath: string) => refreshDirectory(dirPath, viewModeRef.current === 'tree')
 
-  const onTreeRightClick = (info: { event: React.MouseEvent; node: TreeNode }) => {
+  const onTreeRightClick = (info: { event: React.MouseEvent; node: any }) => {
     const { event, node } = info
     event.preventDefault()
-    setSelectedNode(node)
-    setSelectedKeys([node.key])
+    event.stopPropagation()
+    const nodePath = node.key as string
+    const fileName = nodePath.split('/').pop() || nodePath
+    const fullNode = findNodeByPath(treeDataRef.current, nodePath)
+    const nodeData: TreeNode = fullNode ? {
+      ...fullNode,
+      title: fullNode.title || fileName,
+    } : {
+      key: nodePath,
+      title: fileName,
+      path: nodePath,
+      isDirectory: !node.isLeaf,
+      isLeaf: node.isLeaf,
+    }
+    setSelectedNode(nodeData)
+    setSelectedKeys([nodePath])
     setContextMenuPos({ x: event.clientX, y: event.clientY })
     setContextMenuVisible(true)
   }
@@ -289,38 +347,6 @@ const renderTreeNode = (node: TreeNode) => (
       )}
     </span>
   )
-
-  useEffect(() => {
-    if (viewMode !== 'tree') return
-
-    const container = treeContainerRef.current
-    if (!container) return
-
-    const removeTitles = () => {
-      const wrappers = container.querySelectorAll('.ant-tree-node-content-wrapper')
-      wrappers.forEach((wrapper) => {
-        wrapper.setAttribute('title', '')
-      })
-    }
-
-    removeTitles()
-
-    const interval = setInterval(removeTitles, 100)
-
-    const observer = new MutationObserver(removeTitles)
-
-    observer.observe(container, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['title'],
-    })
-
-    return () => {
-      clearInterval(interval)
-      observer.disconnect()
-    }
-  }, [viewMode])
 
   useEffect(() => {
     const container = treeContainerRef.current
@@ -808,19 +834,23 @@ const renderTreeNode = (node: TreeNode) => (
   }
 
   const handleDelete = async () => {
-    if (!selectedNode) return
+    const node = selectedNodeRef.current
+    if (!node || !node.path) {
+      message.error('未选择文件')
+      return
+    }
     try {
-      if (selectedNode.isDirectory) {
-        await invoke('delete_directory', { connectionId, path: selectedNode.path })
+      if (node.isDirectory) {
+        await invoke('delete_directory', { connectionId, path: node.path })
       } else {
-        await invoke('delete_file', { connectionId, path: selectedNode.path })
+        await invoke('delete_file', { connectionId, path: node.path })
       }
       message.success('删除成功')
       setDeleteVisible(false)
       if (viewMode === 'list') {
         loadDirectory(currentPath, true)
       } else {
-        const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/'
+        const parentPath = node.path.substring(0, node.path.lastIndexOf('/')) || '/'
         refreshDirectoryRef.current?.(parentPath)
       }
     } catch (err) {
@@ -903,6 +933,21 @@ const renderTreeNode = (node: TreeNode) => (
     <div
       ref={panelRef}
       className="file-manager-panel"
+      onClick={(e) => {
+        const target = e.target as HTMLElement
+        if (target.closest('button, input, .ant-tree, .file-list-item, .ant-tooltip, .ant-modal')) return
+        setSelectedKeys([])
+        setSelectedNode(null)
+      }}
+      onContextMenu={(e) => {
+        const target = e.target as HTMLElement
+        if (target.closest('button, input, .ant-tree, .file-list-item, .ant-tooltip, .ant-modal')) return
+        e.preventDefault()
+        setSelectedNode(null)
+        setSelectedKeys([])
+        setContextMenuPos({ x: e.clientX, y: e.clientY })
+        setContextMenuVisible(true)
+      }}
       style={{
         position: 'fixed',
         top: 0,
@@ -1075,6 +1120,8 @@ const renderTreeNode = (node: TreeNode) => (
           overflow: 'auto',
           padding: 8,
           background: '#252526',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
         }}
       >
         {loading ? (
@@ -1093,17 +1140,9 @@ const renderTreeNode = (node: TreeNode) => (
             selectedKeys={selectedKeys}
             onSelect={onSelect}
             onExpand={onExpand}
-            loadData={onLoadData}
             expandAction="doubleClick"
             titleRender={renderTreeNode}
             onRightClick={onTreeRightClick}
-            onMouseEnter={({ event }) => {
-              const target = event.target as HTMLElement
-              const wrapper = target.closest('.ant-tree-node-content-wrapper')
-              if (wrapper) {
-                wrapper.removeAttribute('title')
-              }
-            }}
           />
         ) : (
           <>
@@ -1292,7 +1331,10 @@ const renderTreeNode = (node: TreeNode) => (
             maxHeight: `calc(100vh - ${Math.min(contextMenuPos.y, window.innerHeight - 400) + 20}px)`,
             overflowY: 'auto',
           }}
-          onClick={() => setContextMenuVisible(false)}
+          onClick={(e) => {
+            e.stopPropagation()
+            setContextMenuVisible(false)
+          }}
         >
           {contextMenuItems.map((item, index) => (
             item.type === 'divider' ? (
@@ -1382,7 +1424,7 @@ const renderTreeNode = (node: TreeNode) => (
         cancelText="取消"
         okButtonProps={{ danger: true }}
       >
-        <p>确定要删除 {selectedNode?.title} 吗？</p>
+        <p>确定要删除 {selectedNodeRef.current?.title || selectedNodeRef.current?.path?.split('/').pop()} 吗？</p>
         <p style={{ color: '#ff4d4f' }}>此操作不可撤销</p>
       </Modal>
 

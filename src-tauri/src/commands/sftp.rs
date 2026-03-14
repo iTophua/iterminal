@@ -1,5 +1,4 @@
 use once_cell::sync::Lazy;
-use russh::ChannelMsg;
 use russh_sftp::client::SftpSession;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -116,60 +115,13 @@ pub async fn list_directory(connection_id: String, path: String) -> Result<Vec<F
         .await
         .map_err(|e| format!("Failed to read directory: {}", e))?;
 
-    // 获取 SSH session 执行 du 命令
-    let ssh_sessions = super::ssh::SESSIONS.read().await;
-    let ssh_session = ssh_sessions.get(&connection_id);
-    
-    // 执行 du -sb 获取所有子目录大小
-    let dir_sizes: HashMap<String, u64> = if let Some(session) = ssh_session {
-        let mut channel = session
-            .handle
-            .channel_open_session()
-            .await
-            .map_err(|e| e.to_string())?;
-        drop(ssh_sessions);
-        
-        let du_cmd = format!("cd {} 2>/dev/null && du -sb * 2>/dev/null || true", path);
-        channel
-            .exec(true, du_cmd.as_str())
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let mut output = Vec::new();
-        while let Some(msg) = channel.wait().await {
-            if let ChannelMsg::Data { data } = msg {
-                output.extend_from_slice(&data);
-            }
-        }
-        
-        let output_str = String::from_utf8_lossy(&output);
-        output_str
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    let size: u64 = parts[0].parse().ok()?;
-                    let name = parts[1..].join(" ");
-                    Some((name, size))
-                } else {
-                    None
-                }
-            })
-            .collect()
-    } else {
-        drop(ssh_sessions);
-        HashMap::new()
-    };
-
     let mut result = Vec::new();
     for entry in entries {
         let metadata = entry.metadata();
         let is_dir = metadata.is_dir();
-        let file_name = entry.file_name();
         
-        // 文件夹从 du 结果获取大小，文件用 metadata
         let size = if is_dir {
-            *dir_sizes.get(&file_name).unwrap_or(&0)
+            0
         } else {
             metadata.size.unwrap_or(0)
         };
