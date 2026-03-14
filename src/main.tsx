@@ -32,6 +32,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           colorPrimary: '#00b96b',
           borderRadius: 6,
         },
+        components: {
+          Tree: {
+            nodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
+            nodeSelectedColor: '#fff',
+            directoryNodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
+            directoryNodeSelectedColor: '#fff',
+          },
+        },
       }}
     >
       <AntdApp>

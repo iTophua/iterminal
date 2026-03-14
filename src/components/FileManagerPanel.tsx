@@ -10,7 +10,8 @@ import {
   FolderAddOutlined, FileAddOutlined, ScissorOutlined,
   CopyOutlined, CompressOutlined, EyeOutlined, EyeInvisibleOutlined,
   ArrowLeftOutlined, ArrowRightOutlined, CloudUploadOutlined,
-  ExclamationCircleOutlined, AppstoreOutlined, PartitionOutlined
+  ExclamationCircleOutlined, UnorderedListOutlined, PartitionOutlined,
+  ArrowUpOutlined, ArrowDownOutlined, FolderOutlined, FileOutlined
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -83,6 +84,8 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     const saved = localStorage.getItem('iterminal_file_view_mode')
     return (saved === 'list' || saved === 'tree') ? saved : 'tree'
   })
+  const [sortField, setSortField] = useState<'name' | 'size' | 'modified' | null>(null)
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
   const treeContainerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const dragTargetPathRef = useRef<string | null>(null)
@@ -221,15 +224,21 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   }
 
   const refreshCurrent = async () => {
-    const targetPath = selectedNode?.path || currentPath
+    const targetPath = viewMode === 'list' 
+      ? currentPath 
+      : (selectedNode?.isDirectory ? selectedNode.path : currentPath)
     try {
       const files: any[] = await invoke('list_directory', { connectionId, path: targetPath })
       const nodes = mapFilesToNodes(files)
-      const isRootPath = targetPath === currentPath && !treeData.some(n => n.path === targetPath)
-      if (isRootPath) {
+      if (viewMode === 'list') {
         setTreeData(nodes)
       } else {
-        setTreeData(prev => updateTreeData(prev, targetPath, nodes))
+        const isRootPath = targetPath === currentPath && !treeData.some(n => n.path === targetPath)
+        if (isRootPath) {
+          setTreeData(nodes)
+        } else {
+          setTreeData(prev => updateTreeData(prev, targetPath, nodes))
+        }
       }
     } catch (err) {
       message.error(`刷新失败: ${err}`)
@@ -241,7 +250,13 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     try {
       const files: any[] = await invoke('list_directory', { connectionId, path: dirPath })
       const nodes = mapFilesToNodes(files)
-      setTreeData(prev => updateTreeData(prev, dirPath, nodes))
+      if (viewMode === 'list') {
+        if (dirPath === currentPath) {
+          setTreeData(nodes)
+        }
+      } else {
+        setTreeData(prev => updateTreeData(prev, dirPath, nodes))
+      }
     } catch (err) {
       message.error(`刷新失败: ${err}`)
     }
@@ -257,12 +272,13 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     setContextMenuVisible(true)
   }
 
-  const renderTreeNode = (node: TreeNode) => (
+const renderTreeNode = (node: TreeNode) => (
     <span
       data-dir-path={node.isDirectory ? node.path : undefined}
       style={{
         userSelect: 'none',
         WebkitUserSelect: 'none',
+        color: node.isDirectory ? '#00b96b' : '#CCC',
       }}
     >
       {node.title}
@@ -273,6 +289,38 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       )}
     </span>
   )
+
+  useEffect(() => {
+    if (viewMode !== 'tree') return
+
+    const container = treeContainerRef.current
+    if (!container) return
+
+    const removeTitles = () => {
+      const wrappers = container.querySelectorAll('.ant-tree-node-content-wrapper')
+      wrappers.forEach((wrapper) => {
+        wrapper.setAttribute('title', '')
+      })
+    }
+
+    removeTitles()
+
+    const interval = setInterval(removeTitles, 100)
+
+    const observer = new MutationObserver(removeTitles)
+
+    observer.observe(container, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['title'],
+    })
+
+    return () => {
+      clearInterval(interval)
+      observer.disconnect()
+    }
+  }, [viewMode])
 
   useEffect(() => {
     const container = treeContainerRef.current
@@ -565,8 +613,18 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
     const setupListeners = async () => {
       unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        const panel = panelRef.current
+        const checkInPanel = (x: number, y: number) => {
+          if (!panel) return false
+          const panelRect = panel.getBoundingClientRect()
+          return x >= panelRect.left && x <= panelRect.right && y >= panelRect.top && y <= panelRect.bottom
+        }
+
         if (event.payload.type === 'enter') {
-          setIsDragOver(true)
+          const { position } = event.payload
+          if (checkInPanel(position.x, position.y - 24)) {
+            setIsDragOver(true)
+          }
         } else if (event.payload.type === 'leave') {
           setIsDragOver(false)
           setDragTargetPath(null)
@@ -575,30 +633,31 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           const x = position.x
           const y = position.y - 24
 
-          const panel = panelRef.current
           const container = treeContainerRef.current
-          if (!panel || !container) {
+          if (!panel || !container || !checkInPanel(x, y)) {
             setDragTargetPath(null)
+            setIsDragOver(false)
             return
           }
 
-          const panelRect = panel.getBoundingClientRect()
-          const inPanel = x >= panelRect.left && x <= panelRect.right && y >= panelRect.top && y <= panelRect.bottom
-          if (!inPanel) {
-            setDragTargetPath(null)
-            return
-          }
+          setIsDragOver(true)
 
-          const allNodes = container.querySelectorAll('.ant-tree-treenode')
+          const allNodes = viewMode === 'list'
+            ? container.querySelectorAll('.file-list-item')
+            : container.querySelectorAll('.ant-tree-treenode')
           let foundPath: string | null = null
 
           allNodes.forEach((node) => {
             const rect = node.getBoundingClientRect()
             const inRow = y >= rect.top && y <= rect.bottom
             if (inRow) {
-              const dirElement = node.querySelector('[data-dir-path]')
-              if (dirElement) {
-                foundPath = dirElement.getAttribute('data-dir-path')
+              if (viewMode === 'list') {
+                foundPath = node.getAttribute('data-dir-path')
+              } else {
+                const dirElement = node.querySelector('[data-dir-path]')
+                if (dirElement) {
+                  foundPath = dirElement.getAttribute('data-dir-path')
+                }
               }
             }
           })
@@ -613,14 +672,9 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             return
           }
 
-          const panel = panelRef.current
-          if (panel) {
-            const panelRect = panel.getBoundingClientRect()
-            const inPanel = position.x >= panelRect.left && position.x <= panelRect.right && position.y >= panelRect.top && position.y <= panelRect.bottom
-            if (!inPanel) {
-              setDragTargetPath(null)
-              return
-            }
+          if (!checkInPanel(position.x, position.y - 24)) {
+            setDragTargetPath(null)
+            return
           }
 
           handleDrop(paths)
@@ -633,7 +687,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     return () => {
       unlisten?.()
     }
-  }, [visible, connectionId, currentPath, selectedNode, message])
+  }, [visible, connectionId, currentPath, selectedNode, message, viewMode])
 
   const handleDownload = async (remotePath: string, fileName: string) => {
     try {
@@ -755,7 +809,6 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
   const handleDelete = async () => {
     if (!selectedNode) return
-    const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/'
     try {
       if (selectedNode.isDirectory) {
         await invoke('delete_directory', { connectionId, path: selectedNode.path })
@@ -764,7 +817,12 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       }
       message.success('删除成功')
       setDeleteVisible(false)
-      refreshDirectoryRef.current?.(parentPath)
+      if (viewMode === 'list') {
+        loadDirectory(currentPath, true)
+      } else {
+        const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/'
+        refreshDirectoryRef.current?.(parentPath)
+      }
     } catch (err) {
       message.error(`删除失败: ${err}`)
     }
@@ -887,7 +945,21 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <span style={{ color: '#CCC', fontSize: 14, fontWeight: 500 }}>文件管理</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: '#CCC', fontSize: 14, fontWeight: 500 }}>文件管理</span>
+          <Tooltip title={viewMode === 'tree' ? '切换到列表视图' : '切换到树形视图'}>
+            <Button
+              size="small"
+              icon={viewMode === 'tree' ? <UnorderedListOutlined /> : <PartitionOutlined />}
+              onClick={() => {
+                const newMode = viewMode === 'tree' ? 'list' : 'tree'
+                setViewMode(newMode)
+                localStorage.setItem('iterminal_file_view_mode', newMode)
+              }}
+              style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            />
+          </Tooltip>
+        </div>
         <Button
           size="small"
           icon={<ArrowRightOutlined />}
@@ -962,18 +1034,6 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
           />
         </Tooltip>
-        <Tooltip title={viewMode === 'tree' ? '切换到列表视图' : '切换到树形视图'}>
-          <Button
-            size="small"
-            icon={viewMode === 'tree' ? <AppstoreOutlined /> : <PartitionOutlined />}
-            onClick={() => {
-              const newMode = viewMode === 'tree' ? 'list' : 'tree'
-              setViewMode(newMode)
-              localStorage.setItem('iterminal_file_view_mode', newMode)
-            }}
-            style={{ background: viewMode === 'list' ? 'rgba(0, 185, 107, 0.2)' : 'transparent', border: '1px solid #3F3F46', color: viewMode === 'list' ? '#00b96b' : '#999' }}
-          />
-        </Tooltip>
         <Tooltip title="上传文件">
           <Button
             size="small"
@@ -1026,7 +1086,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             description={<span style={{ color: '#666' }}>空目录</span>}
           />
-        ) : (
+        ) : viewMode === 'tree' ? (
           <DirectoryTree
             treeData={treeData}
             expandedKeys={expandedKeys}
@@ -1037,7 +1097,184 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             expandAction="doubleClick"
             titleRender={renderTreeNode}
             onRightClick={onTreeRightClick}
+            onMouseEnter={({ event }) => {
+              const target = event.target as HTMLElement
+              const wrapper = target.closest('.ant-tree-node-content-wrapper')
+              if (wrapper) {
+                wrapper.removeAttribute('title')
+              }
+            }}
           />
+        ) : (
+          <>
+            <div style={{ 
+              display: 'flex', 
+              gap: 8, 
+              padding: '4px 8px', 
+              borderBottom: '1px solid #3F3F46',
+              marginBottom: 4,
+            }}>
+              <span
+                onClick={() => {
+                  if (sortField !== 'name') {
+                    setSortField('name')
+                    setSortOrder('asc')
+                  } else if (sortOrder === 'asc') {
+                    setSortOrder('desc')
+                  } else {
+                    setSortField(null)
+                  }
+                }}
+                style={{ 
+                  color: sortField === 'name' ? '#00b96b' : '#666', 
+                  fontSize: 11, 
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                }}
+              >
+                名称 {sortField === 'name' && (sortOrder === 'asc' ? <ArrowUpOutlined style={{ fontSize: 10 }} /> : <ArrowDownOutlined style={{ fontSize: 10 }} />)}
+              </span>
+              <span
+                onClick={() => {
+                  if (sortField !== 'size') {
+                    setSortField('size')
+                    setSortOrder('asc')
+                  } else if (sortOrder === 'asc') {
+                    setSortOrder('desc')
+                  } else {
+                    setSortField(null)
+                  }
+                }}
+                style={{ 
+                  color: sortField === 'size' ? '#00b96b' : '#666', 
+                  fontSize: 11, 
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                }}
+              >
+                大小 {sortField === 'size' && (sortOrder === 'asc' ? <ArrowUpOutlined style={{ fontSize: 10 }} /> : <ArrowDownOutlined style={{ fontSize: 10 }} />)}
+              </span>
+              <span
+                onClick={() => {
+                  if (sortField !== 'modified') {
+                    setSortField('modified')
+                    setSortOrder('asc')
+                  } else if (sortOrder === 'asc') {
+                    setSortOrder('desc')
+                  } else {
+                    setSortField(null)
+                  }
+                }}
+                style={{ 
+                  color: sortField === 'modified' ? '#00b96b' : '#666', 
+                  fontSize: 11, 
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                }}
+              >
+                修改时间 {sortField === 'modified' && (sortOrder === 'asc' ? <ArrowUpOutlined style={{ fontSize: 10 }} /> : <ArrowDownOutlined style={{ fontSize: 10 }} />)}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              {(sortField ? [...treeData].sort((a, b) => {
+                if (a.isDirectory !== b.isDirectory) {
+                  return a.isDirectory ? -1 : 1
+                }
+                let cmp = 0
+                if (sortField === 'name') {
+                  cmp = (a.title || '').localeCompare(b.title || '')
+                } else if (sortField === 'size') {
+                  cmp = (a.size || 0) - (b.size || 0)
+                } else if (sortField === 'modified') {
+                  cmp = (a.modified || '').localeCompare(b.modified || '')
+                }
+                return sortOrder === 'asc' ? cmp : -cmp
+              }) : treeData).map((item) => (
+                <div
+                  key={item.key}
+                  data-dir-path={item.isDirectory ? item.path : undefined}
+                  className="file-list-item"
+                  onClick={() => {
+                    setSelectedKeys([item.key])
+                    setSelectedNode(item)
+                  }}
+                  onDoubleClick={() => {
+                    if (item.isDirectory) {
+                      store.setCurrentPath(connectionId, item.path)
+                      loadDirectory(item.path, true)
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault()
+                    setSelectedNode(item)
+                    setSelectedKeys([item.key])
+                    setContextMenuPos({ x: e.clientX, y: e.clientY })
+                    setContextMenuVisible(true)
+                  }}
+                  style={{
+                    padding: '8px 12px',
+                    background: selectedKeys.includes(item.key) ? 'rgba(0, 185, 107, 0.15)' : (dragTargetPath === item.path ? 'rgba(0, 185, 107, 0.25)' : 'transparent'),
+                    borderRadius: 4,
+                    cursor: 'pointer',
+                    transition: 'background 0.15s',
+                    userSelect: 'none',
+                    WebkitUserSelect: 'none',
+                    border: dragTargetPath === item.path ? '2px dashed #00b96b' : '2px solid transparent',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!selectedKeys.includes(item.key) && dragTargetPath !== item.path) {
+                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!selectedKeys.includes(item.key) && dragTargetPath !== item.path) {
+                      e.currentTarget.style.background = 'transparent'
+                    }
+                  }}
+                >
+                  <div style={{ 
+                    fontSize: 13,
+                    marginBottom: 2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}>
+                    {item.isDirectory ? <FolderOutlined /> : <FileOutlined />}
+                    <span style={{ 
+                      color: item.isDirectory ? '#00b96b' : '#CCC',
+                      overflow: 'hidden', 
+                      textOverflow: 'ellipsis', 
+                      whiteSpace: 'nowrap' 
+                    }}>{item.title}</span>
+                  </div>
+                  <div style={{ 
+                    color: '#666', 
+                    fontSize: 11,
+                    display: 'flex',
+                    gap: 12,
+                  }}>
+                    <span>{formatSize(item.size || 0)}</span>
+                    <span>{item.modified || '-'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

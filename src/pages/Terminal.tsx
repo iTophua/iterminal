@@ -526,14 +526,6 @@ function Terminal() {
                   <PushpinOutlined />
                 </span>
               </Tooltip>
-              <Tooltip title="收起">
-                <span
-                  style={{ color: '#666', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
-                  onClick={() => { setToolbarState('ball'); setMouseOverBall(false) }}
-                >
-                  <CloseOutlined />
-                </span>
-              </Tooltip>
             </div>
           ) : (
             <Tooltip title={autoHideToolbar ? "悬停展开工具栏" : "展开工具栏"}>
