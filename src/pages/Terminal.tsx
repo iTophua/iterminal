@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, Tooltip, Input, Button, App } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, FolderOpenOutlined, EnvironmentOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -387,26 +387,7 @@ function Terminal() {
     setContextMenu(prev => ({ ...prev, visible: false }))
   }, [contextMenu.sessionKey])
 
-  // 在文件管理器中打开当前目录
-  const handleOpenInFileManager = useCallback(() => {
-    const parts = contextMenu.sessionKey.split('_')
-    const connId = parts[0]
-    const currentPath = useTerminalStore.getState().currentPaths[connId] || '/home'
-    setFileManagerVisible(connId, true)
-    setMonitorVisible(false)
-    useTerminalStore.getState().setCurrentPath(connId, currentPath)
-    setContextMenu(prev => ({ ...prev, visible: false }))
-  }, [contextMenu.sessionKey, setFileManagerVisible])
-
-  // 复制当前路径
-  const handleCopyCurrentPath = useCallback(() => {
-    const parts = contextMenu.sessionKey.split('_')
-    const connId = parts[0]
-    const currentPath = useTerminalStore.getState().currentPaths[connId] || '/home'
-    navigator.clipboard.writeText(currentPath)
-    message.success(`路径已复制: ${currentPath}`)
-    setContextMenu(prev => ({ ...prev, visible: false }))
-  }, [contextMenu.sessionKey, message])
+  
   if (connectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: '#1E1E1E' }}>
@@ -633,23 +614,7 @@ function Terminal() {
               >
                 <CheckCircleOutlined /> 全选
               </div>
-              <div style={{ height: 1, background: '#3F3F46', margin: '4px 0' }} />
-              <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleOpenInFileManager}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <FolderOpenOutlined /> 在文件管理器中打开
-              </div>
-              <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleCopyCurrentPath}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <EnvironmentOutlined /> 复制当前路径
-              </div>
+              
             </div>
           )}
           
