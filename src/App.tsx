@@ -4,9 +4,33 @@ import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
 import Transfers from './pages/Transfers'
+import { useTerminalStore } from './stores/terminalStore'
+import { invoke } from '@tauri-apps/api/core'
+import { useEffect } from 'react'
 import './styles/global.css'
 
 const { Content } = Layout
+
+function FontPreloader() {
+  const setAvailableFonts = useTerminalStore(s => s.setAvailableFonts)
+  const setFontsLoading = useTerminalStore(s => s.setFontsLoading)
+  const availableFonts = useTerminalStore(s => s.availableFonts)
+
+  useEffect(() => {
+    if (availableFonts.length === 0) {
+      setFontsLoading(true)
+      invoke<string[]>('get_monospace_fonts')
+        .then(fonts => setAvailableFonts(fonts))
+        .catch(err => {
+          console.error('Failed to load fonts:', err)
+          setAvailableFonts(['Menlo', 'Monaco', 'Courier New'])
+        })
+        .finally(() => setFontsLoading(false))
+    }
+  }, [availableFonts.length, setAvailableFonts, setFontsLoading])
+
+  return null
+}
 
 // 主内容组件 - 处理终端的持久化
 function MainContent() {
@@ -80,6 +104,7 @@ function MainContent() {
 function App() {
   return (
     <BrowserRouter>
+      <FontPreloader />
       <Layout style={{ minHeight: '100vh', background: '#1E1E1E' }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>

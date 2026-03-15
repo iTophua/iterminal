@@ -33,6 +33,8 @@ fn main() {
             iterminal::commands::sftp::cancel_transfer,
             iterminal::commands::sftp::is_directory,
             iterminal::commands::sftp::is_local_directory,
+            iterminal::commands::system::get_system_fonts,
+            iterminal::commands::system::get_monospace_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

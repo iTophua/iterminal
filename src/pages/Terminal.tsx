@@ -23,6 +23,7 @@ function Terminal() {
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
+  const terminalSettings = useTerminalStore(state => state.terminalSettings)
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -98,11 +99,10 @@ function Terminal() {
       // 2. 创建终端
       const terminal = new XTerm({
         cursorBlink: true,
-        fontSize: 14,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontSize: terminalSettings.fontSize,
+        fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
         theme: { background: '#000000', foreground: '#FFFFFF', cursor: '#FFFFFF' },
         convertEol: true,
-        // 禁用本地回显，由 SSH 服务器控制回显
         disableStdin: false,
       })
 
@@ -282,6 +282,19 @@ function Terminal() {
   useEffect(() => {
     localStorage.setItem('iterminal_auto_hide_toolbar', String(autoHideToolbar))
   }, [autoHideToolbar])
+  
+  // 终端设置变更时应用到所有已打开终端
+  useEffect(() => {
+    Object.values(terminalInstances.current).forEach(term => {
+      if (term) {
+        term.options.fontFamily = `"${terminalSettings.fontFamily}", Menlo, Monaco, monospace`
+        term.options.fontSize = terminalSettings.fontSize
+      }
+    })
+    Object.values(fitAddons.current).forEach(addon => {
+      try { addon?.fit() } catch {}
+    })
+  }, [terminalSettings])
   
   // 处理全屏切换
   const handleToggleFullscreen = useCallback(async (sessionKey: string) => {

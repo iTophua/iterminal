@@ -61,6 +61,18 @@ export interface FileItem {
   permissions?: string
 }
 
+// 终端设置
+export interface TerminalSettings {
+  fontFamily: string
+  fontSize: number  // 10-24
+}
+
+// 默认终端设置
+export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
+  fontFamily: 'Menlo',
+  fontSize: 14,
+}
+
 interface TerminalState {
   // 已连接的连接列表
   connectedConnections: ConnectedConnection[]
@@ -78,6 +90,14 @@ interface TerminalState {
   currentPaths: { [connectionId: string]: string }
   // 展开的文件树节点（按连接ID）
   expandedKeys: { [connectionId: string]: string[] }
+  // 终端设置
+  terminalSettings: TerminalSettings
+  // 设置面板显示状态
+  settingsVisible: boolean
+  // 可用字体列表（应用启动时预加载）
+  availableFonts: string[]
+  // 字体加载状态
+  fontsLoading: boolean
 
   // 添加连接
   addConnection: (connection: Connection, shellId: string) => string
@@ -112,6 +132,14 @@ interface TerminalState {
   setCurrentPath: (connectionId: string, path: string) => void
   // 设置展开的文件树节点
   setExpandedKeys: (connectionId: string, keys: string[]) => void
+  // 更新终端设置
+  updateTerminalSettings: (settings: Partial<TerminalSettings>) => void
+  // 设置面板显示/隐藏
+  setSettingsVisible: (visible: boolean) => void
+  // 设置可用字体列表
+  setAvailableFonts: (fonts: string[]) => void
+  // 设置字体加载状态
+  setFontsLoading: (loading: boolean) => void
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -123,6 +151,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   transferTasks: {},
   currentPaths: {},
   expandedKeys: {},
+  terminalSettings: (() => {
+    const saved = localStorage.getItem('iterminal_terminal_settings')
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved)
+        const settings = { ...DEFAULT_TERMINAL_SETTINGS, ...parsed }
+        if (typeof settings.fontSize === 'number') {
+          settings.fontSize = Math.max(10, Math.min(24, settings.fontSize))
+        }
+        return settings
+      } catch {
+        return DEFAULT_TERMINAL_SETTINGS
+      }
+    }
+    return DEFAULT_TERMINAL_SETTINGS
+  })(),
+  settingsVisible: false,
+  availableFonts: [],
+  fontsLoading: false,
 
   addConnection: (connection, shellId) => {
     const sessionId = Date.now().toString()
@@ -366,5 +413,28 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         [connectionId]: keys
       }
     }))
+  },
+
+  updateTerminalSettings: (settings: Partial<TerminalSettings>) => {
+    set((state) => {
+      const newSettings = { ...state.terminalSettings, ...settings }
+      if (typeof newSettings.fontSize === 'number') {
+        newSettings.fontSize = Math.max(10, Math.min(24, newSettings.fontSize))
+      }
+      localStorage.setItem('iterminal_terminal_settings', JSON.stringify(newSettings))
+      return { terminalSettings: newSettings }
+    })
+  },
+
+  setSettingsVisible: (visible: boolean) => {
+    set({ settingsVisible: visible })
+  },
+
+  setAvailableFonts: (fonts: string[]) => {
+    set({ availableFonts: fonts })
+  },
+
+  setFontsLoading: (loading: boolean) => {
+    set({ fontsLoading: loading })
   },
 }))

@@ -21,6 +21,7 @@ russh-sftp = "2.0"
 anyhow = "1"
 once_cell = "1"
 chrono = "0.4"
+font-kit = "0.14"
 
 [features]
 default = ["custom-protocol"]

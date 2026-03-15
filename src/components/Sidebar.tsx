@@ -1,9 +1,10 @@
-import { Layout, Menu, Badge } from 'antd'
+import { Layout, Menu, Badge, Tooltip } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined } from '@ant-design/icons'
+import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined, SettingOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo } from 'react'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
+import SettingsPanel from './SettingsPanel'
 
 const { Sider } = Layout
 
@@ -29,6 +30,8 @@ function Sidebar() {
   const transferringCount = useTransferStore(state => state.transferringCount)
   const storeSidebarCollapsed = useTerminalStore(state => state.sidebarCollapsed)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
+  
+  const [settingsOpen, setSettingsOpen] = useState(false)
   
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -148,7 +151,8 @@ function Sidebar() {
       onCollapse={(collapsed) => setCollapsed(collapsed)}
       style={{
         background: '#252526',
-        borderRight: '1px solid #3F3F46'
+        borderRight: '1px solid #3F3F46',
+        position: 'relative',
       }}
       trigger={null}
     >
@@ -187,6 +191,39 @@ function Sidebar() {
         }}
         items={menuItems}
         onClick={(e) => handleMenuClick(e.key)}
+      />
+      
+      {/* 底部设置按钮 */}
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          borderTop: '1px solid #3F3F46',
+          padding: collapsed ? '12px 0' : '12px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'flex-start',
+          cursor: 'pointer',
+          background: '#252526',
+        }}
+        onClick={() => setSettingsOpen(true)}
+        onMouseEnter={(e) => e.currentTarget.style.background = '#2D2D30'}
+        onMouseLeave={(e) => e.currentTarget.style.background = '#252526'}
+      >
+        <Tooltip title={collapsed ? '设置' : ''} placement="right">
+          <SettingOutlined style={{ color: '#999', fontSize: 16 }} />
+        </Tooltip>
+        {!collapsed && (
+          <span style={{ color: '#999', marginLeft: 10 }}>设置</span>
+        )}
+      </div>
+      
+      {/* 设置弹窗 */}
+      <SettingsPanel
+        visible={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
       />
     </Sider>
   )
