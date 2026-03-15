@@ -96,7 +96,7 @@ function Sidebar() {
         <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
           <span>{group}</span>
           {groupCounts[group] !== undefined && (
-            <span style={{ color: '#666', fontSize: 12 }}>{groupCounts[group]}</span>
+            <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>{groupCounts[group]}</span>
           )}
         </span>
       ),
@@ -150,8 +150,8 @@ function Sidebar() {
       collapsed={collapsed}
       onCollapse={(collapsed) => setCollapsed(collapsed)}
       style={{
-        background: '#252526',
-        borderRight: '1px solid #3F3F46',
+        background: 'var(--color-bg-elevated)',
+        borderRight: '1px solid var(--color-border)',
         position: 'relative',
       }}
       trigger={null}
@@ -164,7 +164,7 @@ function Sidebar() {
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'space-between',
           padding: collapsed ? 0 : '0 16px',
-          borderBottom: '1px solid #3F3F46',
+          borderBottom: '1px solid var(--color-border)',
           cursor: 'pointer'
         }}
         onClick={() => {
@@ -173,22 +173,22 @@ function Sidebar() {
           setSidebarCollapsed(newState)
         }}
       >
-        <span style={{ color: '#00b96b', fontSize: 16, fontWeight: 'bold' }}>
+        <span style={{ color: 'var(--color-primary)', fontSize: 16, fontWeight: 'bold' }}>
           {collapsed ? 'i' : 'iTerminal'}
         </span>
         {!collapsed && (
-          <span style={{ color: '#CCCCCC', fontSize: 16 }}>←</span>
+          <span style={{ color: 'var(--color-text)', fontSize: 16 }}>←</span>
         )}
       </div>
       
       <Menu
         mode="inline"
         selectedKeys={[selectedKey]}
-        style={{
-          background: '#252526',
-          borderRight: 'none',
-          color: '#CCCCCC'
-        }}
+style={{
+           background: 'var(--color-bg-elevated)',
+           borderRight: 'none',
+           color: 'var(--color-text)'
+         }}
         items={menuItems}
         onClick={(e) => handleMenuClick(e.key)}
       />
@@ -200,23 +200,23 @@ function Sidebar() {
           bottom: 0,
           left: 0,
           right: 0,
-          borderTop: '1px solid #3F3F46',
+          borderTop: '1px solid var(--color-border)',
           padding: collapsed ? '12px 0' : '12px 16px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: collapsed ? 'center' : 'flex-start',
           cursor: 'pointer',
-          background: '#252526',
+          background: 'var(--color-bg-elevated)',
         }}
         onClick={() => setSettingsOpen(true)}
-        onMouseEnter={(e) => e.currentTarget.style.background = '#2D2D30'}
-        onMouseLeave={(e) => e.currentTarget.style.background = '#252526'}
+        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-spotlight)'}
+        onMouseLeave={(e) => e.currentTarget.style.background = 'var(--color-bg-elevated)'}
       >
         <Tooltip title={collapsed ? '设置' : ''} placement="right">
-          <SettingOutlined style={{ color: '#999', fontSize: 16 }} />
+          <SettingOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }} />
         </Tooltip>
         {!collapsed && (
-          <span style={{ color: '#999', marginLeft: 10 }}>设置</span>
+          <span style={{ color: 'var(--color-text-tertiary)', marginLeft: 10 }}>设置</span>
         )}
       </div>
       

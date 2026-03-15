@@ -7,27 +7,22 @@
     <title>iTerminal - SSH Manager</title>
     <script>
       (function() {
-        var saved, parsed, mode, theme;
         try {
-          saved = localStorage.getItem('iterminal_theme');
-          mode = 'system';
+          var saved = localStorage.getItem('iterminal_theme');
+          var theme = 'dark';
           if (saved) {
-            parsed = JSON.parse(saved);
-            if (parsed.version >= 2 && parsed.mode) {
-              mode = parsed.mode;
+            var parsed = JSON.parse(saved);
+            var mode = parsed.appThemeMode || parsed.appTheme;
+            if (mode === 'system') {
+              theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            } else if (mode) {
+              theme = mode;
             }
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            theme = 'light';
           }
-          
-          if (mode === 'system') {
-            theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-          } else {
-            theme = mode;
-          }
-          
           document.documentElement.setAttribute('data-theme', theme);
-        } catch (e) {
-          document.documentElement.setAttribute('data-theme', 'dark');
-        }
+        } catch (e) {}
       })();
     </script>
   </head>

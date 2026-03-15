@@ -1,110 +1,117 @@
 import { create } from 'zustand'
+import type { AppTheme, AppThemeMode, TerminalThemeName, ThemePersistData } from '../types/theme'
 
-// 应用主题模式：用户选择的偏好
-export type AppThemeMode = 'light' | 'dark' | 'system'
+const STORAGE_KEY = 'iterminal_theme'
+const CURRENT_VERSION = 2
 
-// 实际应用的主题（system 会被解析为 light 或 dark）
-export type AppTheme = 'light' | 'dark'
-
-// 终端主题类型
-export type TerminalThemeKey = 'classic' | 'solarized-dark' | 'solarized-light' | 'dracula' | 'one-dark'
-
-// 主题状态接口
-export interface IThemeState {
-  appThemeMode: AppThemeMode
-  appTheme: AppTheme
-  terminalTheme: TerminalThemeKey
-  setThemeMode: (mode: AppThemeMode) => void
-  setSystemTheme: (theme: AppTheme) => void
-  setTerminalTheme: (theme: TerminalThemeKey) => void
-}
-
-// localStorage 键名
-const THEME_STORAGE_KEY = 'iterminal_theme'
-const THEME_VERSION = 3
-
-interface StoredTheme {
-  version: number
-  mode: AppThemeMode
-  terminalTheme: TerminalThemeKey
-}
-
-// 获取浏览器首选颜色方案
-function getSystemTheme(): AppTheme {
+const getSystemTheme = (): AppTheme => {
   if (typeof window !== 'undefined' && window.matchMedia) {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   }
   return 'dark'
 }
 
-// 从 localStorage 加载主题设置
-function loadThemeFromStorage(): { mode: AppThemeMode; terminalTheme: TerminalThemeKey } {
-  const defaults = { mode: 'system' as AppThemeMode, terminalTheme: 'classic' as TerminalThemeKey }
+const loadPersistedTheme = (): ThemePersistData | null => {
   try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY)
+    const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
-      const parsed = JSON.parse(saved) as StoredTheme
-      if (parsed.version === THEME_VERSION) {
-        return {
-          mode: ['light', 'dark', 'system'].includes(parsed.mode) ? parsed.mode : defaults.mode,
-          terminalTheme: parsed.terminalTheme || defaults.terminalTheme
+      const parsed = JSON.parse(saved)
+      if (parsed.version === CURRENT_VERSION || parsed.version === 1) {
+        if (parsed.version === 1 && parsed.appTheme) {
+          return {
+            appThemeMode: parsed.appTheme,
+            appTheme: parsed.appTheme,
+            terminalTheme: parsed.terminalTheme,
+            version: CURRENT_VERSION,
+          }
         }
+        return parsed
       }
     }
-  } catch (error) {
-    console.warn('[ThemeStore] 加载主题设置失败:', error)
+  } catch {
   }
-  return defaults
+  return null
 }
 
-// 保存主题设置到 localStorage
-function saveThemeToStorage(mode: AppThemeMode, terminalTheme: TerminalThemeKey): void {
+const persistTheme = (data: ThemePersistData) => {
   try {
-    const data: StoredTheme = { version: THEME_VERSION, mode, terminalTheme }
-    localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(data))
-  } catch (error) {
-    console.warn('[ThemeStore] 保存主题设置失败:', error)
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  } catch {
   }
 }
 
-// 根据模式解析实际主题
-function resolveTheme(mode: AppThemeMode): AppTheme {
-  if (mode === 'system') {
-    return getSystemTheme()
-  }
-  return mode
-}
-
-export const useThemeStore = create<IThemeState>((set, get) => {
-  const loaded = loadThemeFromStorage()
-  console.log('[ThemeStore] Initialized with:', loaded)
+interface ThemeState {
+  appThemeMode: AppThemeMode
+  appTheme: AppTheme
+  terminalTheme: TerminalThemeName | null
+  hydrated: boolean
   
-  return {
-    appThemeMode: loaded.mode,
-    appTheme: resolveTheme(loaded.mode),
-    terminalTheme: loaded.terminalTheme,
+  setAppThemeMode: (mode: AppThemeMode) => void
+  setTerminalTheme: (theme: TerminalThemeName | null) => void
+  resetTerminalTheme: () => void
+  hydrate: () => void
+}
 
-    setThemeMode: (mode: AppThemeMode) => {
-      console.log('[ThemeStore] setThemeMode called:', mode)
-      saveThemeToStorage(mode, get().terminalTheme)
-      set({ 
-        appThemeMode: mode,
-        appTheme: resolveTheme(mode)
+export const useThemeStore = create<ThemeState>((set, get) => ({
+  appThemeMode: 'system',
+  appTheme: getSystemTheme(),
+  terminalTheme: null,
+  hydrated: false,
+  
+  setAppThemeMode: (mode) => {
+    const resolvedTheme = mode === 'system' ? getSystemTheme() : mode
+    set({ appThemeMode: mode, appTheme: resolvedTheme })
+    persistTheme({
+      appThemeMode: mode,
+      appTheme: resolvedTheme,
+      terminalTheme: get().terminalTheme,
+      version: CURRENT_VERSION,
+    })
+  },
+  
+  setTerminalTheme: (theme) => {
+    set({ terminalTheme: theme })
+    const state = get()
+    persistTheme({
+      appThemeMode: state.appThemeMode,
+      appTheme: state.appTheme,
+      terminalTheme: theme,
+      version: CURRENT_VERSION,
+    })
+  },
+  
+  resetTerminalTheme: () => {
+    set({ terminalTheme: null })
+    const state = get()
+    persistTheme({
+      appThemeMode: state.appThemeMode,
+      appTheme: state.appTheme,
+      terminalTheme: null,
+      version: CURRENT_VERSION,
+    })
+  },
+  
+  hydrate: () => {
+    if (get().hydrated) return
+    
+    const persisted = loadPersistedTheme()
+    if (persisted) {
+      const resolvedTheme = persisted.appThemeMode === 'system' 
+        ? getSystemTheme() 
+        : (persisted.appThemeMode || persisted.appTheme)
+      set({
+        appThemeMode: persisted.appThemeMode || persisted.appTheme,
+        appTheme: resolvedTheme,
+        terminalTheme: persisted.terminalTheme,
+        hydrated: true,
       })
-    },
-
-    setSystemTheme: (theme: AppTheme) => {
-      const currentMode = get().appThemeMode
-      console.log('[ThemeStore] setSystemTheme called:', theme, 'currentMode:', currentMode)
-      if (currentMode === 'system') {
-        set({ appTheme: theme })
-      }
-    },
-
-    setTerminalTheme: (theme: TerminalThemeKey) => {
-      console.log('[ThemeStore] setTerminalTheme called:', theme)
-      saveThemeToStorage(get().appThemeMode, theme)
-      set({ terminalTheme: theme })
-    },
-  }
-})
+    } else {
+      set({
+        appThemeMode: 'system',
+        appTheme: getSystemTheme(),
+        terminalTheme: null,
+        hydrated: true,
+      })
+    }
+  },
+}))

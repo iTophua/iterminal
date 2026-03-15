@@ -1,215 +1,199 @@
-/**
- * Terminal Theme Definitions
- * 
- * xterm.js ITheme 规范:
- * - background: 背景色
- * - foreground: 前景色（文字颜色）
- * - cursor: 光标颜色
- * - cursorAccent: 光标前景色（文字在光标上的颜色）
- * - selectionBackground: 选中文本背景色
- * - selectionForeground: 选中文本前景色
- * - black ~ white: ANSI 16 颜色
- * - brightBlack ~ brightWhite: ANSI 亮色
- * - extendedAnsi: 扩展 ANSI 颜色
- */
+import type { TerminalTheme, TerminalThemeName, TerminalThemeColors } from '../../types/theme'
 
-export interface TerminalTheme {
-  name: string;
-  theme: {
-    background: string;
-    foreground: string;
-    cursor?: string;
-    cursorAccent?: string;
-    selectionBackground?: string;
-    selectionForeground?: string;
-    black: string;
-    red: string;
-    green: string;
-    yellow: string;
-    blue: string;
-    magenta: string;
-    cyan: string;
-    white: string;
-    brightBlack: string;
-    brightRed: string;
-    brightGreen: string;
-    brightYellow: string;
-    brightBlue: string;
-    brightMagenta: string;
-    brightCyan: string;
-    brightWhite: string;
-  };
+const classicDarkColors: TerminalThemeColors = {
+  foreground: '#F8F8F2',
+  background: '#1E1E1E',
+  cursor: '#F8F8F2',
+  cursorAccent: '#1E1E1E',
+  selectionForeground: '#F8F8F2',
+  selectionBackground: 'rgba(0, 185, 107, 0.3)',
+  black: '#1E1E1E',
+  red: '#FF5555',
+  green: '#50FA7B',
+  yellow: '#F1FA8C',
+  blue: '#BD93F9',
+  magenta: '#FF79C6',
+  cyan: '#8BE9FD',
+  white: '#F8F8F2',
+  brightBlack: '#6272A4',
+  brightRed: '#FF6E6E',
+  brightGreen: '#69FF94',
+  brightYellow: '#FFFFA5',
+  brightBlue: '#D6ACFF',
+  brightMagenta: '#FF92DF',
+  brightCyan: '#A4FFFF',
+  brightWhite: '#FFFFFF',
 }
 
-/**
- * Classic - 传统终端配色 (黑底绿字)
- */
-export const ClassicTheme: TerminalTheme = {
-  name: 'Classic',
-  theme: {
-    background: '#000000',
-    foreground: '#00ff00',
-    cursor: '#00ff00',
-    cursorAccent: '#000000',
-    selectionBackground: '#00ff00',
-    selectionForeground: '#000000',
-    black: '#000000',
-    red: '#ff0000',
-    green: '#00ff00',
-    yellow: '#ffff00',
-    blue: '#0000ff',
-    magenta: '#ff00ff',
-    cyan: '#00ffff',
-    white: '#ffffff',
-    brightBlack: '#808080',
-    brightRed: '#ff0000',
-    brightGreen: '#00ff00',
-    brightYellow: '#ffff00',
-    brightBlue: '#0000ff',
-    brightMagenta: '#ff00ff',
-    brightCyan: '#00ffff',
-    brightWhite: '#ffffff',
+const classicLightColors: TerminalThemeColors = {
+  foreground: '#1E1E1E',
+  background: '#FFFFFF',
+  cursor: '#1E1E1E',
+  cursorAccent: '#FFFFFF',
+  selectionForeground: '#1E1E1E',
+  selectionBackground: 'rgba(0, 185, 107, 0.3)',
+  black: '#1E1E1E',
+  red: '#CD3131',
+  green: '#00BC00',
+  yellow: '#949800',
+  blue: '#0451A5',
+  magenta: '#BC05BC',
+  cyan: '#0598BC',
+  white: '#555555',
+  brightBlack: '#666666',
+  brightRed: '#CD3131',
+  brightGreen: '#14CE14',
+  brightYellow: '#B5BA00',
+  brightBlue: '#0451A5',
+  brightMagenta: '#BC05BC',
+  brightCyan: '#0598BC',
+  brightWhite: '#A5A5A5',
+}
+
+const solarizedDarkColors: TerminalThemeColors = {
+  foreground: '#839496',
+  background: '#002B36',
+  cursor: '#839496',
+  cursorAccent: '#002B36',
+  selectionForeground: '#839496',
+  selectionBackground: 'rgba(0, 185, 107, 0.3)',
+  black: '#073642',
+  red: '#DC322F',
+  green: '#859900',
+  yellow: '#B58900',
+  blue: '#268BD2',
+  magenta: '#D33682',
+  cyan: '#2AA198',
+  white: '#EEE8D5',
+  brightBlack: '#002B36',
+  brightRed: '#CB4B16',
+  brightGreen: '#586E75',
+  brightYellow: '#657B83',
+  brightBlue: '#839496',
+  brightMagenta: '#6C71C4',
+  brightCyan: '#93A1A1',
+  brightWhite: '#FDF6E3',
+}
+
+const solarizedLightColors: TerminalThemeColors = {
+  foreground: '#657B83',
+  background: '#FDF6E3',
+  cursor: '#657B83',
+  cursorAccent: '#FDF6E3',
+  selectionForeground: '#657B83',
+  selectionBackground: 'rgba(0, 185, 107, 0.3)',
+  black: '#073642',
+  red: '#DC322F',
+  green: '#859900',
+  yellow: '#B58900',
+  blue: '#268BD2',
+  magenta: '#D33682',
+  cyan: '#2AA198',
+  white: '#EEE8D5',
+  brightBlack: '#002B36',
+  brightRed: '#CB4B16',
+  brightGreen: '#586E75',
+  brightYellow: '#657B83',
+  brightBlue: '#839496',
+  brightMagenta: '#6C71C4',
+  brightCyan: '#93A1A1',
+  brightWhite: '#FDF6E3',
+}
+
+const draculaColors: TerminalThemeColors = {
+  foreground: '#F8F8F2',
+  background: '#282A36',
+  cursor: '#F8F8F2',
+  cursorAccent: '#282A36',
+  selectionForeground: '#F8F8F2',
+  selectionBackground: 'rgba(68, 71, 90, 0.8)',
+  black: '#21222C',
+  red: '#FF5555',
+  green: '#50FA7B',
+  yellow: '#F1FA8C',
+  blue: '#BD93F9',
+  magenta: '#FF79C6',
+  cyan: '#8BE9FD',
+  white: '#F8F8F2',
+  brightBlack: '#6272A4',
+  brightRed: '#FF6E6E',
+  brightGreen: '#69FF94',
+  brightYellow: '#FFFFA5',
+  brightBlue: '#D6ACFF',
+  brightMagenta: '#FF92DF',
+  brightCyan: '#A4FFFF',
+  brightWhite: '#FFFFFF',
+}
+
+const oneDarkColors: TerminalThemeColors = {
+  foreground: '#ABB2BF',
+  background: '#282C34',
+  cursor: '#528BFF',
+  cursorAccent: '#282C34',
+  selectionForeground: '#ABB2BF',
+  selectionBackground: 'rgba(0, 185, 107, 0.3)',
+  black: '#282C34',
+  red: '#E06C75',
+  green: '#98C379',
+  yellow: '#E5C07B',
+  blue: '#61AFEF',
+  magenta: '#C678DD',
+  cyan: '#56B6C2',
+  white: '#ABB2BF',
+  brightBlack: '#5C6370',
+  brightRed: '#E06C75',
+  brightGreen: '#98C379',
+  brightYellow: '#E5C07B',
+  brightBlue: '#61AFEF',
+  brightMagenta: '#C678DD',
+  brightCyan: '#56B6C2',
+  brightWhite: '#FFFFFF',
+}
+
+export const terminalThemes: Record<TerminalThemeName, TerminalTheme> = {
+  'classic': {
+    id: 'classic',
+    name: 'Classic',
+    colors: classicDarkColors,
   },
-};
-
-/**
- * Solarized Dark - Solarized 深色主题
- */
-export const SolarizedDarkTheme: TerminalTheme = {
-  name: 'Solarized Dark',
-  theme: {
-    background: '#002b36',
-    foreground: '#839496',
-    cursor: '#93a1a1',
-    cursorAccent: '#002b36',
-    selectionBackground: '#073642',
-    selectionForeground: '#839496',
-    black: '#073642',
-    red: '#dc322f',
-    green: '#859900',
-    yellow: '#b58900',
-    blue: '#268bd2',
-    magenta: '#d33682',
-    cyan: '#2aa198',
-    white: '#eee8d5',
-    brightBlack: '#002b36',
-    brightRed: '#cb4b16',
-    brightGreen: '#586e75',
-    brightYellow: '#657b83',
-    brightBlue: '#839496',
-    brightMagenta: '#6c71c4',
-    brightCyan: '#93a1a1',
-    brightWhite: '#fdf6e3',
+  'solarized-dark': {
+    id: 'solarized-dark',
+    name: 'Solarized Dark',
+    colors: solarizedDarkColors,
   },
-};
-
-/**
- * Solarized Light - Solarized 浅色主题
- */
-export const SolarizedLightTheme: TerminalTheme = {
-  name: 'Solarized Light',
-  theme: {
-    background: '#fdf6e3',
-    foreground: '#657b83',
-    cursor: '#586e75',
-    cursorAccent: '#fdf6e3',
-    selectionBackground: '#eee8d5',
-    selectionForeground: '#657b83',
-    black: '#073642',
-    red: '#dc322f',
-    green: '#859900',
-    yellow: '#b58900',
-    blue: '#268bd2',
-    magenta: '#d33682',
-    cyan: '#2aa198',
-    white: '#eee8d5',
-    brightBlack: '#002b36',
-    brightRed: '#cb4b16',
-    brightGreen: '#586e75',
-    brightYellow: '#657b83',
-    brightBlue: '#839496',
-    brightMagenta: '#6c71c4',
-    brightCyan: '#93a1a1',
-    brightWhite: '#fdf6e3',
+  'solarized-light': {
+    id: 'solarized-light',
+    name: 'Solarized Light',
+    colors: solarizedLightColors,
   },
-};
-
-/**
- * Dracula - Dracula 主题配色
- */
-export const DraculaTheme: TerminalTheme = {
-  name: 'Dracula',
-  theme: {
-    background: '#282a36',
-    foreground: '#f8f8f2',
-    cursor: '#f8f8f2',
-    cursorAccent: '#282a36',
-    selectionBackground: '#44475a',
-    selectionForeground: '#f8f8f2',
-    black: '#21222c',
-    red: '#ff5555',
-    green: '#50fa7b',
-    yellow: '#f1fa8c',
-    blue: '#bd93f9',
-    magenta: '#ff79c6',
-    cyan: '#8be9fd',
-    white: '#f8f8f2',
-    brightBlack: '#6272a4',
-    brightRed: '#ff6e6e',
-    brightGreen: '#5af78e',
-    brightYellow: '#f4dbbf',
-    brightBlue: '#caa9fa',
-    brightMagenta: '#ff92df',
-    brightCyan: '#a4ffff',
-    brightWhite: '#ffffff',
+  'dracula': {
+    id: 'dracula',
+    name: 'Dracula',
+    colors: draculaColors,
   },
-};
-
-/**
- * One Dark - Atom One Dark 主题
- */
-export const OneDarkTheme: TerminalTheme = {
-  name: 'One Dark',
-  theme: {
-    background: '#282c34',
-    foreground: '#abb2bf',
-    cursor: '#528bff',
-    cursorAccent: '#282c34',
-    selectionBackground: '#3e4451',
-    selectionForeground: '#abb2bf',
-    black: '#282c34',
-    red: '#e06c75',
-    green: '#98c379',
-    yellow: '#e5c07b',
-    blue: '#61afef',
-    magenta: '#c678dd',
-    cyan: '#56b6c2',
-    white: '#abb2bf',
-    brightBlack: '#5c6370',
-    brightRed: '#e06c75',
-    brightGreen: '#98c379',
-    brightYellow: '#e5c07b',
-    brightBlue: '#61afef',
-    brightMagenta: '#c678dd',
-    brightCyan: '#56b6c2',
-    brightWhite: '#ffffff',
+  'one-dark': {
+    id: 'one-dark',
+    name: 'One Dark',
+    colors: oneDarkColors,
   },
-};
+}
 
-/**
- * 所有预设主题列表
- */
-export const terminalThemes: TerminalTheme[] = [
-  ClassicTheme,
-  SolarizedDarkTheme,
-  SolarizedLightTheme,
-  DraculaTheme,
-  OneDarkTheme,
-];
+export const terminalThemesList = Object.values(terminalThemes)
 
-/**
- * 根据名称获取主题
- */
-export function getThemeByName(name: string): TerminalTheme | undefined {
-  return terminalThemes.find(theme => theme.name === name);
+export function getTerminalTheme(name: TerminalThemeName): TerminalTheme {
+  return terminalThemes[name]
+}
+
+export function getThemeForAppTheme(appTheme: 'light' | 'dark'): TerminalThemeColors {
+  return appTheme === 'dark' ? classicDarkColors : classicLightColors
+}
+
+export function resolveTerminalTheme(
+  appTheme: 'light' | 'dark',
+  terminalThemeOverride: TerminalThemeName | null
+): TerminalThemeColors {
+  if (terminalThemeOverride) {
+    return terminalThemes[terminalThemeOverride].colors
+  }
+  return getThemeForAppTheme(appTheme)
 }

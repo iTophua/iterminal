@@ -60,12 +60,12 @@ const formatMemory = (mb: number): string => {
 // 监控卡片组件
 const MonitorCard = ({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) => (
   <div style={{
-    background: 'rgba(45, 45, 48, 0.6)',
+    background: 'var(--color-bg-spotlight)',
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
   }}>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, color: '#AAA', fontSize: 13 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, color: 'var(--color-text-secondary)', fontSize: 13 }}>
       {icon}
       <span style={{ fontWeight: 500 }}>{title}</span>
     </div>
@@ -76,8 +76,8 @@ const MonitorCard = ({ title, icon, children }: { title: string; icon: React.Rea
 // 信息行组件
 const InfoRow = ({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) => (
   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 12 }}>
-    <span style={{ color: '#888' }}>{label}</span>
-    <span style={{ color: valueColor || '#CCC' }}>{value}</span>
+    <span style={{ color: 'var(--color-text-tertiary)' }}>{label}</span>
+    <span style={{ color: valueColor || 'var(--color-text)' }}>{value}</span>
   </div>
 )
 
@@ -139,8 +139,8 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
         right: 0,
         bottom: 0,
         width: 320,
-        background: '#1E1E1E',
-        borderLeft: '1px solid #3F3F46',
+        background: 'var(--color-bg-container)',
+        borderLeft: '1px solid var(--color-border)',
         zIndex: 999,
         transform: visible ? 'translateX(0)' : 'translateX(100%)',
         transition: 'transform 0.3s ease',
@@ -155,10 +155,10 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '12px 16px',
-        borderBottom: '1px solid #3F3F46',
-        background: '#252526',
+        borderBottom: '1px solid var(--color-border)',
+        background: 'var(--color-bg-elevated)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#CCC', fontWeight: 500 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-text)', fontWeight: 500 }}>
           <DashboardOutlined />
           <span>系统监控</span>
         </div>
@@ -182,18 +182,18 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
               type="text"
               icon={paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
               onClick={() => setPaused(!paused)}
-              style={{ color: paused ? '#00b96b' : '#888', padding: '0 4px' }}
+              style={{ color: paused ? 'var(--color-primary)' : 'var(--color-text-tertiary)', padding: '0 4px' }}
             />
           </Tooltip>
           <Tooltip title="立即刷新">
             <ReloadOutlined
               onClick={fetchMonitorData}
-              style={{ color: '#888', cursor: 'pointer', fontSize: 14 }}
+              style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 14 }}
             />
           </Tooltip>
           <CloseOutlined
             onClick={onClose}
-            style={{ color: '#888', cursor: 'pointer', fontSize: 14 }}
+            style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 14 }}
           />
         </div>
       </div>
@@ -220,13 +220,13 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
             <MonitorCard title="CPU" icon={<span style={{ fontSize: 14 }}>⚡</span>}>
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ color: '#888', fontSize: 12 }}>总体使用率</span>
-                  <span style={{ color: '#CCC', fontSize: 12 }}>{data.cpu.usage.toFixed(1)}%</span>
+                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>总体使用率</span>
+                  <span style={{ color: 'var(--color-text)', fontSize: 12 }}>{data.cpu.usage.toFixed(1)}%</span>
                 </div>
                 <Progress
                   percent={data.cpu.usage}
                   strokeColor={getProgressColor(data.cpu.usage)}
-                  trailColor="#3F3F46"
+                  trailColor="var(--color-border)"
                   showInfo={false}
                   size="small"
                 />
@@ -235,15 +235,15 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
               {/* 每个核心使用率 */}
               {data.cpu.per_core_usage.length > 0 && (
                 <div style={{ marginBottom: 10 }}>
-                  <div style={{ color: '#888', fontSize: 12, marginBottom: 6 }}>各核心使用率</div>
+                  <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginBottom: 6 }}>各核心使用率</div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 4 }}>
                     {data.cpu.per_core_usage.map((usage, idx) => (
                       <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <span style={{ color: '#666', fontSize: 10, width: 24 }}>C{idx}</span>
-                        <div style={{ flex: 1, height: 4, background: '#3F3F46', borderRadius: 2, overflow: 'hidden' }}>
+                        <span style={{ color: 'var(--color-text-quaternary)', fontSize: 10, width: 24 }}>C{idx}</span>
+                        <div style={{ flex: 1, height: 4, background: 'var(--color-border)', borderRadius: 2, overflow: 'hidden' }}>
                           <div style={{ width: `${usage}%`, height: '100%', background: getProgressColor(usage), borderRadius: 2 }} />
                         </div>
-                        <span style={{ color: '#888', fontSize: 10, width: 32, textAlign: 'right' }}>{usage.toFixed(0)}%</span>
+                        <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10, width: 32, textAlign: 'right' }}>{usage.toFixed(0)}%</span>
                       </div>
                     ))}
                   </div>
@@ -258,15 +258,15 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
             <MonitorCard title="内存" icon={<span style={{ fontSize: 14 }}>🧠</span>}>
               <div style={{ marginBottom: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ color: '#888', fontSize: 12 }}>内存使用</span>
-                  <span style={{ color: '#CCC', fontSize: 12 }}>
+                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>内存使用</span>
+                  <span style={{ color: 'var(--color-text)', fontSize: 12 }}>
                     {formatMemory(data.memory.used)} / {formatMemory(data.memory.total)}
                   </span>
                 </div>
                 <Progress
                   percent={data.memory.usage_percent}
                   strokeColor={getProgressColor(data.memory.usage_percent)}
-                  trailColor="#3F3F46"
+                  trailColor="var(--color-border)"
                   showInfo={false}
                   size="small"
                 />
@@ -285,18 +285,18 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
             <MonitorCard title="磁盘" icon={<span style={{ fontSize: 14 }}>💾</span>}>
               {data.disks.map((disk, idx) => (
                 <div key={idx} style={{ marginBottom: idx < data.disks.length - 1 ? 16 : 0 }}>
-                  <div style={{ color: '#00b96b', fontSize: 12, marginBottom: 6 }}>{disk.mount_point}</div>
+                  <div style={{ color: 'var(--color-primary)', fontSize: 12, marginBottom: 6 }}>{disk.mount_point}</div>
                   <div style={{ marginBottom: 6 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span style={{ color: '#888', fontSize: 12 }}>使用率</span>
-                      <span style={{ color: '#CCC', fontSize: 12 }}>
+                      <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>使用率</span>
+                      <span style={{ color: 'var(--color-text)', fontSize: 12 }}>
                         {disk.used} GB / {disk.total} GB
                       </span>
                     </div>
                     <Progress
                       percent={disk.usage_percent}
                       strokeColor={getProgressColor(disk.usage_percent)}
-                      trailColor="#3F3F46"
+                      trailColor="var(--color-border)"
                       showInfo={false}
                       size="small"
                     />
@@ -312,11 +312,11 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
       {/* 底部刷新提示 */}
       <div style={{
         padding: '8px 16px',
-        borderTop: '1px solid #3F3F46',
+        borderTop: '1px solid var(--color-border)',
         textAlign: 'center',
-        color: paused ? '#faad14' : '#666',
+        color: paused ? 'var(--color-warning)' : 'var(--color-text-quaternary)',
         fontSize: 11,
-        background: '#252526',
+        background: 'var(--color-bg-elevated)',
       }}>
         {paused ? (
           <span>已暂停 · {lastUpdateTime ? `最后更新: ${lastUpdateTime.toLocaleTimeString()}` : ''}</span>

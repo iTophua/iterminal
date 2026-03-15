@@ -1,8 +1,9 @@
-import { Modal, Select, Slider, Typography, Menu, Spin, Radio } from 'antd'
+import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider } from 'antd'
 import { useTerminalStore, type TerminalSettings } from '../stores/terminalStore'
-import { useThemeStore, type AppThemeMode, type TerminalThemeKey } from '../stores/themeStore'
+import { useThemeStore } from '../stores/themeStore'
 import { useState, useEffect } from 'react'
-import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined } from '@ant-design/icons'
+import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined } from '@ant-design/icons'
+import { terminalThemesList } from '../styles/themes/terminal-themes'
 
 const { Text } = Typography
 
@@ -19,7 +20,7 @@ drwxr-xr-x  12 user  staff   384 Mar 14 10:00 .
 user@server:~$ echo "Hello, Terminal!"
 Hello, Terminal!`
 
-type SettingCategory = 'terminal' | 'appearance' | 'shortcuts' | 'about'
+type SettingCategory = 'appearance' | 'terminal' | 'shortcuts' | 'about'
 
 const SETTING_CATEGORIES = [
   { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
@@ -35,85 +36,49 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const fontsLoading = useTerminalStore(state => state.fontsLoading)
   
   const appThemeMode = useThemeStore(state => state.appThemeMode)
-  const setThemeMode = useThemeStore(state => state.setThemeMode)
   const terminalTheme = useThemeStore(state => state.terminalTheme)
+  const setAppThemeMode = useThemeStore(state => state.setAppThemeMode)
   const setTerminalTheme = useThemeStore(state => state.setTerminalTheme)
   
   const [activeCategory, setActiveCategory] = useState<SettingCategory>('appearance')
   const [tempSettings, setTempSettings] = useState<TerminalSettings>(terminalSettings)
+  const [hasTerminalChanges, setHasTerminalChanges] = useState(false)
 
   useEffect(() => {
     if (visible) {
       setTempSettings(terminalSettings)
+      setHasTerminalChanges(false)
       setActiveCategory('appearance')
     }
   }, [visible, terminalSettings])
 
   const handleFontChange = (value: TerminalSettings['fontFamily']) => {
     setTempSettings(prev => ({ ...prev, fontFamily: value }))
+    setHasTerminalChanges(true)
   }
 
   const handleFontSizeChange = (value: number) => {
     setTempSettings(prev => ({ ...prev, fontSize: value }))
+    setHasTerminalChanges(true)
   }
 
-  useEffect(() => {
-    if (tempSettings.fontFamily !== terminalSettings.fontFamily || 
-        tempSettings.fontSize !== terminalSettings.fontSize) {
-      updateTerminalSettings(tempSettings)
-    }
-  }, [tempSettings, terminalSettings, updateTerminalSettings])
+  const handleSave = () => {
+    updateTerminalSettings(tempSettings)
+    onClose()
+  }
 
-  const renderAppearanceSettings = () => (
-    <div style={{ padding: '0 16px' }}>
-      <Text strong style={{ color: '#CCC', display: 'block', marginBottom: 16 }}>
-        外观设置
-      </Text>
-
-      <div style={{ marginBottom: 24 }}>
-        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
-          应用主题
-        </Text>
-        <Radio.Group
-          value={appThemeMode}
-          onChange={(e) => setThemeMode(e.target.value as AppThemeMode)}
-          buttonStyle="solid"
-          style={{ display: 'flex', gap: 8 }}
-        >
-          <Radio.Button value="light">浅色</Radio.Button>
-          <Radio.Button value="dark">深色</Radio.Button>
-          <Radio.Button value="system">跟随系统</Radio.Button>
-        </Radio.Group>
-      </div>
-
-      <div>
-        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
-          终端主题
-        </Text>
-        <Select
-          value={terminalTheme}
-          onChange={(value) => setTerminalTheme(value as TerminalThemeKey)}
-          style={{ width: '100%' }}
-          options={[
-            { value: 'classic', label: 'Classic' },
-            { value: 'solarized-dark', label: 'Solarized Dark' },
-            { value: 'solarized-light', label: 'Solarized Light' },
-            { value: 'dracula', label: 'Dracula' },
-            { value: 'one-dark', label: 'One Dark' },
-          ]}
-        />
-      </div>
-    </div>
-  )
+  const handleClose = () => {
+    onClose()
+  }
 
   const renderTerminalSettings = () => (
     <div style={{ padding: '0 16px' }}>
-      <Text strong style={{ color: '#CCC', display: 'block', marginBottom: 16 }}>
+      <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 16 }}>
         终端设置
       </Text>
 
       <div style={{ marginBottom: 20 }}>
-        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
           字体 {fontsLoading && <Spin size="small" />}
         </Text>
         <Select
@@ -134,7 +99,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       </div>
 
       <div style={{ marginBottom: 20 }}>
-        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
           字体大小: {tempSettings.fontSize}px
         </Text>
         <Slider
@@ -147,18 +112,18 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       </div>
 
       <div>
-        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
           预览
         </Text>
         <div
           style={{
-            background: '#1E1E1E',
-            border: '1px solid #3F3F46',
+            background: 'var(--color-bg-container)',
+            border: '1px solid var(--color-border)',
             borderRadius: 6,
             padding: 12,
             fontFamily: `"${tempSettings.fontFamily}", Menlo, Monaco, monospace`,
             fontSize: tempSettings.fontSize,
-            color: '#CCC',
+            color: 'var(--color-text)',
             whiteSpace: 'pre-wrap',
             lineHeight: 1.5,
             overflow: 'auto',
@@ -171,6 +136,60 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     </div>
   )
 
+  const renderAppearanceSettings = () => (
+    <div style={{ padding: '0 16px' }}>
+      <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 16 }}>
+        外观设置
+      </Text>
+
+      <div style={{ marginBottom: 24 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
+          应用主题
+        </Text>
+        <Radio.Group
+          value={appThemeMode}
+          onChange={(e) => setAppThemeMode(e.target.value)}
+          optionType="button"
+          buttonStyle="solid"
+        >
+          <Radio.Button value="system">
+            <DesktopOutlined /> 跟随系统
+          </Radio.Button>
+          <Radio.Button value="light">
+            <SunOutlined /> 浅色
+          </Radio.Button>
+          <Radio.Button value="dark">
+            <MoonOutlined /> 深色
+          </Radio.Button>
+        </Radio.Group>
+      </div>
+
+      <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+      <div>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
+          终端主题
+        </Text>
+        <Select
+          value={terminalTheme}
+          onChange={(value) => setTerminalTheme(value)}
+          options={[
+            { value: null, label: '跟随应用主题' },
+            ...terminalThemesList.map(theme => ({
+              value: theme.id,
+              label: theme.name,
+            })),
+          ]}
+          style={{ width: '100%' }}
+          allowClear={false}
+        />
+        <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
+          可选择 5 个预设终端主题，或跟随应用主题自动切换
+        </Text>
+      </div>
+    </div>
+  )
+
   const renderContent = () => {
     switch (activeCategory) {
       case 'appearance':
@@ -179,31 +198,40 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         return renderTerminalSettings()
       default:
         return (
-          <div style={{ padding: '0 16px', textAlign: 'center', color: '#666', marginTop: 40 }}>
+          <div style={{ padding: '0 16px', textAlign: 'center', color: 'var(--color-text-tertiary)', marginTop: 40 }}>
             该功能正在开发中...
           </div>
         )
     }
   }
 
+  const showFooter = activeCategory === 'terminal'
+
   return (
     <Modal
       title="系统设置"
       open={visible}
-      onCancel={onClose}
-      footer={null}
+      onCancel={handleClose}
+      footer={showFooter ? (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <Button onClick={handleClose}>取消</Button>
+          <Button type="primary" onClick={handleSave} disabled={!hasTerminalChanges} style={{ background: 'var(--color-primary)' }}>
+            保存
+          </Button>
+        </div>
+      ) : null}
       width={600}
       styles={{
         body: { padding: 0 },
-        header: { borderBottom: '1px solid #3F3F46' },
+        header: { borderBottom: '1px solid var(--color-border)' },
       }}
     >
       <div style={{ display: 'flex', minHeight: 400 }}>
         <div style={{
           width: 140,
-          borderRight: '1px solid #3F3F46',
+          borderRight: '1px solid var(--color-border)',
           padding: '12px 0',
-          background: '#1E1E1E',
+          background: 'var(--color-bg-container)',
         }}>
           <Menu
             mode="vertical"
@@ -212,7 +240,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
             style={{
               background: 'transparent',
               border: 'none',
-              color: '#CCC',
+              color: 'var(--color-text)',
             }}
             items={SETTING_CATEGORIES.map(item => ({
               key: item.key,
@@ -222,7 +250,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
             }))}
           />
         </div>
-        <div style={{ flex: 1, padding: '16px 0', background: '#252526' }}>
+        <div style={{ flex: 1, padding: '16px 0', background: 'var(--color-bg-elevated)' }}>
           {renderContent()}
         </div>
       </div>

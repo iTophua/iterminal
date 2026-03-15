@@ -459,9 +459,9 @@ function Terminal() {
   
   if (connectedConnections.length === 0) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: '#1E1E1E' }}>
-        <p style={{ color: '#999', fontSize: 16 }}>没有活动的会话</p>
-        <p style={{ color: '#666', fontSize: 14 }}>请先在连接管理中连接服务器</p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
+        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }}>没有活动的会话</p>
+        <p style={{ color: 'var(--color-text-quaternary)', fontSize: 14 }}>请先在连接管理中连接服务器</p>
       </div>
     )
   }
@@ -470,7 +470,7 @@ function Terminal() {
     const sessionItems = conn.sessions.map((s, idx) => ({
       key: s.id,
       label: (
-        <span style={{ color: '#CCC', fontSize: 12 }}>
+        <span style={{ color: 'var(--color-text)', fontSize: 12 }}>
           会话{idx + 1}
           <CloseOutlined style={{ marginLeft: 6, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseSession(conn.connectionId, s.id) }} />
         </span>
@@ -487,16 +487,16 @@ function Terminal() {
               display: 'flex',
               alignItems: 'center',
               gap: 4,
-              background: 'rgba(45, 45, 48, 0.95)',
+              background: 'var(--color-bg-elevated)',
               borderRadius: 6,
               padding: '4px 8px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              boxShadow: 'var(--shadow-md)',
             }}
             onMouseLeave={() => { if (autoHideToolbar) { setToolbarState('ball'); setMouseOverBall(false) } }}
             >
               <Tooltip title="复制选中内容">
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     const key = `${conn.connectionId}_${s.id}`
                     const term = terminalInstances.current[key]
@@ -516,7 +516,7 @@ function Terminal() {
               </Tooltip>
               <Tooltip title="搜索">
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => setSearchVisible(!searchVisible)}
                 >
                   <SearchOutlined />
@@ -524,7 +524,7 @@ function Terminal() {
               </Tooltip>
               <Tooltip title={isFullscreen ? "退出全屏" : "全屏"}>
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     const key = `${conn.connectionId}_${s.id}`
                     handleToggleFullscreen(key)
@@ -533,10 +533,10 @@ function Terminal() {
                   <FullscreenOutlined />
                 </span>
               </Tooltip>
-              <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
+              <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 4px' }} />
               <Tooltip title="系统监控">
                 <span
-                  style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
                   onClick={() => {
                     setMonitorVisible(true)
                     if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
@@ -550,7 +550,7 @@ function Terminal() {
               <Tooltip title="文件管理">
                 <span
                   style={{
-                    color: '#999',
+                    color: 'var(--color-text-tertiary)',
                     cursor: 'pointer',
                     padding: '4px 6px',
                     fontSize: 14
@@ -582,10 +582,10 @@ function Terminal() {
                 </Tooltip>
               )}
               
-              <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
+              <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 4px' }} />
               <Tooltip title={autoHideToolbar ? "固定工具栏" : "自动隐藏"}>
                 <span
-                  style={{ color: autoHideToolbar ? '#666' : '#00b96b', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
+                  style={{ color: autoHideToolbar ? 'var(--color-text-quaternary)' : 'var(--color-primary)', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
                   onClick={() => setAutoHideToolbar(!autoHideToolbar)}
                 >
                   <PushpinOutlined />
@@ -607,18 +607,18 @@ function Terminal() {
                   width: 28,
                   height: 28,
                   borderRadius: '50%',
-                  background: 'rgba(45, 45, 48, 0.9)',
+                  background: 'var(--color-bg-elevated)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: autoHideToolbar ? 'default' : 'pointer',
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                  boxShadow: 'var(--shadow-md)',
                 }}
                 onClick={() => {
                   if (!autoHideToolbar) setToolbarState('full')
                 }}
               >
-                <ToolOutlined style={{ color: '#999', fontSize: 14 }} />
+                <ToolOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }} />
               </div>
             </Tooltip>
           )}
@@ -633,10 +633,10 @@ function Terminal() {
               display: 'flex',
               alignItems: 'center',
               gap: 4,
-              background: 'rgba(45, 45, 48, 0.95)',
+              background: 'var(--color-bg-elevated)',
               borderRadius: 6,
               padding: '6px 8px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+              boxShadow: 'var(--shadow-md)',
             }}>
               <Input
                 size="small"
@@ -644,16 +644,16 @@ function Terminal() {
                 value={searchText}
                 onChange={(e) => setSearchText(e.target.value)}
                 onPressEnter={() => handleSearch('next')}
-                style={{ width: 150, background: '#1E1E1E', border: '1px solid #3F3F46', color: '#CCC' }}
+                style={{ width: 150, background: 'var(--color-bg-container)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               />
               <Tooltip title="上一个">
-                <Button size="small" icon={<LeftOutlined />} onClick={() => handleSearch('prev')} style={{ background: 'transparent', border: 'none', color: '#999' }} />
+                <Button size="small" icon={<LeftOutlined />} onClick={() => handleSearch('prev')} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />
               </Tooltip>
               <Tooltip title="下一个">
-                <Button size="small" icon={<RightOutlined />} onClick={() => handleSearch('next')} style={{ background: 'transparent', border: 'none', color: '#999' }} />
+                <Button size="small" icon={<RightOutlined />} onClick={() => handleSearch('next')} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />
               </Tooltip>
               <Tooltip title="关闭">
-                <Button size="small" icon={<CloseOutlined />} onClick={() => { setSearchVisible(false); setSearchText('') }} style={{ background: 'transparent', border: 'none', color: '#999' }} />
+                <Button size="small" icon={<CloseOutlined />} onClick={() => { setSearchVisible(false); setSearchText('') }} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />
               </Tooltip>
             </div>
           )}
@@ -666,16 +666,16 @@ function Terminal() {
                 left: contextMenu.x,
                 top: contextMenu.y,
                 zIndex: 1000,
-                background: 'rgba(45, 45, 48, 0.98)',
+                background: 'var(--color-bg-elevated)',
                 borderRadius: 6,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                boxShadow: 'var(--shadow-lg)',
                 overflow: 'hidden',
                 minWidth: 160,
               }}
               onClick={(e) => e.stopPropagation()}
             >
               <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
+                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
                 onClick={handleCopy}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -683,7 +683,7 @@ function Terminal() {
                 <CopyOutlined /> 复制
               </div>
               <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
+                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
                 onClick={handlePaste}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -691,7 +691,7 @@ function Terminal() {
                 <SnippetsOutlined /> 粘贴
               </div>
               <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: '#CCC', display: 'flex', alignItems: 'center', gap: 8 }}
+                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
                 onClick={handleSelectAll}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -704,7 +704,7 @@ function Terminal() {
           
           <div 
             ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }} 
-            style={{ flex: 1, width: '100%', background: '#000', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
+            style={{ flex: 1, width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
             onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
           />
         </div>
@@ -714,7 +714,7 @@ function Terminal() {
     return {
       key: conn.connectionId,
       label: (
-        <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : '#CCC', fontWeight: 500 }}>
+        <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500 }}>
           {conn.connection.username}@{conn.connection.host}
           <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} />
         </span>
@@ -723,10 +723,10 @@ function Terminal() {
         <Tabs
           activeKey={conn.activeSessionId || undefined}
           onChange={sid => { if (sid !== '__add__') setActiveSession(conn.connectionId, sid) }}
-          items={[...sessionItems, { key: '__add__', label: <span style={{ color: '#0b9', fontSize: 12 }}><PlusOutlined /> 新建</span>, children: <div /> }]}
+          items={[...sessionItems, { key: '__add__', label: <span style={{ color: 'var(--color-primary)', fontSize: 12 }}><PlusOutlined /> 新建</span>, children: <div /> }]}
           type="card"
           style={{ height: '100%' }}
-          tabBarStyle={{ margin: 0, padding: '0 8px', background: '#1E1E1E', minHeight: 28 }}
+          tabBarStyle={{ margin: 0, padding: '0 8px', background: 'var(--color-bg-container)', minHeight: 28 }}
           onTabClick={(key) => { if (key === '__add__') handleAddSession(conn.connectionId) }}
           destroyInactiveTabPane={false}
           size="small"
@@ -760,7 +760,7 @@ function Terminal() {
           onChange={setActiveConnection}
           items={connectionItems}
           style={{ height: '100%' }}
-          tabBarStyle={{ margin: 0, padding: '0 12px', background: '#252526' }}
+          tabBarStyle={{ margin: 0, padding: '0 12px', background: 'var(--color-bg-elevated)' }}
           destroyInactiveTabPane={false}
         />
       </div>
