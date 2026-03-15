@@ -5,6 +5,26 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>iTerminal - SSH Manager</title>
+    <script>
+      (function() {
+        try {
+          var saved = localStorage.getItem('iterminal_theme');
+          var theme = 'dark';
+          if (saved) {
+            var parsed = JSON.parse(saved);
+            var mode = parsed.appThemeMode || parsed.appTheme;
+            if (mode === 'system') {
+              theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+            } else if (mode) {
+              theme = mode;
+            }
+          } else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) {
+            theme = 'light';
+          }
+          document.documentElement.setAttribute('data-theme', theme);
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
