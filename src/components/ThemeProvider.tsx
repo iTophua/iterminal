@@ -22,15 +22,11 @@ function applyThemeToDOM(theme: AppTheme) {
   document.documentElement.setAttribute('data-theme', theme)
 }
 
-function getSystemTheme(): AppTheme {
-  if (typeof window !== 'undefined' && window.matchMedia) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-  }
-  return 'dark'
-}
-
 export function ThemeProvider({ children }: ThemeProviderProps) {
-  const { appTheme, appThemeMode, hydrate, hydrated } = useThemeStore()
+  const appTheme = useThemeStore(s => s.appTheme)
+  const appThemeMode = useThemeStore(s => s.appThemeMode)
+  const hydrate = useThemeStore(s => s.hydrate)
+  const hydrated = useThemeStore(s => s.hydrated)
   
   useIsomorphicLayoutEffect(() => {
     hydrate()
@@ -46,25 +42,53 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   useEffect(() => {
     if (appThemeMode !== 'system') return
     
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    let unlisten: (() => void) | null = null
+    let pollInterval: ReturnType<typeof setInterval> | null = null
     
-    const handleChange = () => {
-      const newTheme = getSystemTheme()
+    const handleThemeChange = (newTheme: AppTheme) => {
+      applyThemeToDOM(newTheme)
+      setWindowTheme(newTheme)
       useThemeStore.setState({ appTheme: newTheme })
       const state = useThemeStore.getState()
-      const persisted = {
+      localStorage.setItem('iterminal_theme', JSON.stringify({
         appThemeMode: state.appThemeMode,
         appTheme: newTheme,
         terminalTheme: state.terminalTheme,
         version: 2,
-      }
+      }))
+    }
+    
+    const setupListener = async () => {
       try {
-        localStorage.setItem('iterminal_theme', JSON.stringify(persisted))
+        const mainWindow = getCurrentWindow()
+        unlisten = await mainWindow.onThemeChanged(({ payload: theme }) => {
+          handleThemeChange(theme as AppTheme)
+        })
       } catch {}
     }
     
-    mediaQuery.addEventListener('change', handleChange)
-    return () => mediaQuery.removeEventListener('change', handleChange)
+    setupListener()
+    
+    pollInterval = setInterval(async () => {
+      try {
+        const mainWindow = getCurrentWindow()
+        const currentTheme = await mainWindow.theme()
+        const newTheme = currentTheme as AppTheme
+        const storeTheme = useThemeStore.getState().appTheme
+        if (newTheme !== storeTheme) {
+          handleThemeChange(newTheme)
+        }
+      } catch {}
+    }, 1000)
+    
+    return () => {
+      if (unlisten) {
+        unlisten()
+      }
+      if (pollInterval) {
+        clearInterval(pollInterval)
+      }
+    }
   }, [appThemeMode])
   
   if (!hydrated) {

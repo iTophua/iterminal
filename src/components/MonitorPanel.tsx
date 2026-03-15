@@ -126,9 +126,9 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
 
   // 获取进度条颜色
   const getProgressColor = (percent: number): string => {
-    if (percent >= 90) return '#ff4d4f'
-    if (percent >= 70) return '#faad14'
-    return '#00b96b'
+    if (percent >= 90) return 'var(--color-error)'
+    if (percent >= 70) return 'var(--color-warning)'
+    return 'var(--color-success)'
   }
 
   return (

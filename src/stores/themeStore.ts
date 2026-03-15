@@ -50,6 +50,7 @@ interface ThemeState {
   setTerminalTheme: (theme: TerminalThemeName | null) => void
   resetTerminalTheme: () => void
   hydrate: () => void
+  updateSystemTheme: () => void
 }
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
@@ -112,6 +113,22 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
         terminalTheme: null,
         hydrated: true,
       })
+    }
+  },
+  
+  updateSystemTheme: () => {
+    const state = get()
+    if (state.appThemeMode === 'system') {
+      const newTheme = getSystemTheme()
+      if (newTheme !== state.appTheme) {
+        set({ appTheme: newTheme })
+        persistTheme({
+          appThemeMode: state.appThemeMode,
+          appTheme: newTheme,
+          terminalTheme: state.terminalTheme,
+          version: CURRENT_VERSION,
+        })
+      }
     }
   },
 }))

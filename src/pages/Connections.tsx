@@ -313,9 +313,9 @@ function Connections() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'online': return '#52c41a' // 更鲜艳的绿色
-      case 'connecting': return '#007ACC'
-      default: return '#999999'
+      case 'online': return 'var(--color-success)'
+      case 'connecting': return 'var(--color-info)'
+      default: return 'var(--color-text-quaternary)'
     }
   }
 
@@ -484,7 +484,7 @@ function Connections() {
                 hoverable={conn.status !== 'connecting'}
                 style={{
                   background: 'var(--color-bg-elevated)',
-                  borderColor: conn.status === 'connecting' ? '#007ACC' : 'var(--color-border)',
+                  borderColor: conn.status === 'connecting' ? 'var(--color-info)' : 'var(--color-border)',
                   cursor: 'pointer',
                   opacity: conn.status === 'connecting' ? 0.85 : 1,
                   transition: 'all 0.3s ease',
@@ -502,7 +502,7 @@ function Connections() {
                         width: 8,
                         height: 8,
                         borderRadius: '50%',
-                        background: conn.status === 'connecting' ? '#007ACC' : (isConnected(conn.id) ? '#52c41a' : getStatusColor(conn.status)),
+                        background: conn.status === 'connecting' ? 'var(--color-info)' : (isConnected(conn.id) ? 'var(--color-success)' : getStatusColor(conn.status)),
                         marginLeft: 8
                       }} />
                     </div>
@@ -514,7 +514,7 @@ function Connections() {
                         {conn.group}
                       </Tag>
                       {conn.tags.map(tag => (
-                        <Tag key={tag} style={{ background: '#094771', border: 'none', color: '#4EC9B0', marginLeft: 4 }}>
+                        <Tag key={tag} style={{ background: 'var(--color-primary)', border: 'none', color: '#fff', marginLeft: 4, opacity: 0.9 }}>
                           {tag}
                         </Tag>
                       ))}
@@ -547,7 +547,7 @@ function Connections() {
                     size="small"
                     icon={<CopyOutlined />}
                     onClick={(e) => handleCopyConfig(e, conn)}
-                    style={{ color: '#52c41a' }}
+                    style={{ color: 'var(--color-success)' }}
                   >
                     复制
                   </Button>
@@ -559,7 +559,7 @@ function Connections() {
                       e.stopPropagation()
                       if (conn.status !== 'connecting') handleConnect(conn) 
                     }}
-                    style={{ color: conn.status === 'connecting' ? '#007ACC' : undefined }}
+                    style={{ color: conn.status === 'connecting' ? 'var(--color-info)' : undefined }}
                   >
                     {conn.status === 'connecting' ? '连接中' : (isConnected(conn.id) ? '打开' : '连接')}
                   </Button>
@@ -632,12 +632,12 @@ function Connections() {
               {testResult && (
                 <Space>
                   {testResult === 'success' ? (
-                    <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
+                    <CheckCircleOutlined style={{ color: 'var(--color-success)', fontSize: 16 }} />
                   ) : (
-                    <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 16 }} />
+                    <CloseCircleOutlined style={{ color: 'var(--color-error)', fontSize: 16 }} />
                   )}
                   <span style={{ 
-                    color: testResult === 'success' ? '#52c41a' : '#ff4d4f',
+                    color: testResult === 'success' ? 'var(--color-success)' : 'var(--color-error)',
                     fontSize: 14
                   }}>
                     {testMessage}

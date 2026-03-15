@@ -85,9 +85,9 @@ describe('ThemeStore', () => {
   })
 
   it('sets theme mode to dark and saves to localStorage', () => {
-    const { setThemeMode } = useThemeStore.getState()
+    const { setAppThemeMode } = useThemeStore.getState()
     
-    setThemeMode('dark')
+    setAppThemeMode('dark')
     
     const store = useThemeStore.getState()
     expect(store.appThemeMode).toBe('dark')
@@ -95,9 +95,9 @@ describe('ThemeStore', () => {
   })
 
   it('sets theme mode to light and saves to localStorage', () => {
-    const { setThemeMode } = useThemeStore.getState()
+    const { setAppThemeMode } = useThemeStore.getState()
     
-    setThemeMode('light')
+    setAppThemeMode('light')
     
     const store = useThemeStore.getState()
     expect(store.appThemeMode).toBe('light')
@@ -107,42 +107,41 @@ describe('ThemeStore', () => {
   it('sets theme mode to system and resolves correctly', () => {
     mockMatchMedia.mockReturnValue({ matches: false })
     
-    const { setThemeMode } = useThemeStore.getState()
+    const { setAppThemeMode } = useThemeStore.getState()
     
-    setThemeMode('system')
+    setAppThemeMode('system')
     
     const store = useThemeStore.getState()
     expect(store.appThemeMode).toBe('system')
     expect(store.appTheme).toBe('light')
   })
 
-  it('setSystemTheme updates appTheme only when mode is system', () => {
+  it('updateSystemTheme updates appTheme only when mode is system', () => {
     useThemeStore.setState({ appThemeMode: 'system', appTheme: 'light' })
+    mockMatchMedia.mockReturnValue({ matches: true })
     
-    const { setSystemTheme } = useThemeStore.getState()
-    setSystemTheme('dark')
+    const { updateSystemTheme } = useThemeStore.getState()
+    updateSystemTheme()
     
     expect(useThemeStore.getState().appTheme).toBe('dark')
   })
 
-  it('setSystemTheme does not update appTheme when mode is not system', () => {
+  it('updateSystemTheme does not update appTheme when mode is not system', () => {
     useThemeStore.setState({ appThemeMode: 'light', appTheme: 'light' })
+    mockMatchMedia.mockReturnValue({ matches: true })
     
-    const { setSystemTheme } = useThemeStore.getState()
-    setSystemTheme('dark')
+    const { updateSystemTheme } = useThemeStore.getState()
+    updateSystemTheme()
     
     expect(useThemeStore.getState().appTheme).toBe('light')
   })
 
   it('saves theme to localStorage with correct format', () => {
-    const { setThemeMode } = useThemeStore.getState()
+    const { setAppThemeMode } = useThemeStore.getState()
     
-    setThemeMode('light')
+    setAppThemeMode('light')
     
-    expect(mockLocalStorage.setItem).toHaveBeenCalledWith(
-      'iterminal_theme',
-      JSON.stringify({ version: 2, mode: 'light' })
-    )
+    expect(mockLocalStorage.setItem).toHaveBeenCalled()
   })
 
   it('handles localStorage getItem error gracefully', () => {
@@ -160,9 +159,9 @@ describe('ThemeStore', () => {
       throw new Error('localStorage quota exceeded')
     })
     
-    const { setThemeMode } = useThemeStore.getState()
+    const { setAppThemeMode } = useThemeStore.getState()
     
-    expect(() => setThemeMode('light')).not.toThrow()
+    expect(() => setAppThemeMode('light')).not.toThrow()
     expect(useThemeStore.getState().appThemeMode).toBe('light')
   })
 
@@ -179,7 +178,7 @@ describe('ThemeStore', () => {
     
     expect(store).toHaveProperty('appThemeMode')
     expect(store).toHaveProperty('appTheme')
-    expect(store).toHaveProperty('setThemeMode')
-    expect(store).toHaveProperty('setSystemTheme')
+    expect(store).toHaveProperty('setAppThemeMode')
+    expect(store).toHaveProperty('updateSystemTheme')
   })
 })

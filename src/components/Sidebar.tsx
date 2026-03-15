@@ -109,7 +109,7 @@ function Sidebar() {
         <span>
           终端
           {connectedCount > 0 && (
-            <Badge count={connectedCount} size="small" style={{ marginLeft: 8, backgroundColor: '#52c41a' }} />
+            <Badge count={connectedCount} size="small" style={{ marginLeft: 8, backgroundColor: 'var(--color-success)' }} />
           )}
         </span>
       )
@@ -121,7 +121,7 @@ function Sidebar() {
         <span>
           传输管理
           {transferringCount > 0 && (
-            <Badge count={transferringCount} size="small" style={{ marginLeft: 8, backgroundColor: '#1890ff' }} />
+            <Badge count={transferringCount} size="small" style={{ marginLeft: 8, backgroundColor: 'var(--color-info)' }} />
           )}
         </span>
       ),

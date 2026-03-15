@@ -9,22 +9,11 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
-import { useThemeStore, TerminalThemeKey } from '../stores/themeStore'
+import { useThemeStore } from '../stores/themeStore'
+import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
-import { terminalThemes, TerminalTheme } from '../styles/themes/terminal-themes'
-
-function getTerminalTheme(key: TerminalThemeKey): TerminalTheme['theme'] {
-  const themeMap: Record<TerminalThemeKey, TerminalTheme> = {
-    'classic': terminalThemes[0],
-    'solarized-dark': terminalThemes[1],
-    'solarized-light': terminalThemes[2],
-    'dracula': terminalThemes[3],
-    'one-dark': terminalThemes[4],
-  }
-  return themeMap[key]?.theme ?? terminalThemes[0].theme
-}
 
 function Terminal() {
   const { message } = App.useApp()
@@ -40,6 +29,7 @@ function Terminal() {
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
   const terminalThemeKey = useThemeStore(state => state.terminalTheme)
+  const appTheme = useThemeStore(state => state.appTheme)
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -71,7 +61,7 @@ function Terminal() {
   
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     const saved = localStorage.getItem('iterminal_mcp_enabled')
-    return saved ? saved === 'true' : true
+    return saved ? saved === 'true' : false
   })
   
   useEffect(() => {
@@ -84,7 +74,7 @@ function Terminal() {
     
     const checkInterval = setInterval(() => {
       const saved = localStorage.getItem('iterminal_mcp_enabled')
-      const enabled = saved ? saved === 'true' : true
+      const enabled = saved ? saved === 'true' : false
       setMcpEnabled(prev => prev !== enabled ? enabled : prev)
     }, 1000)
     
@@ -95,8 +85,7 @@ function Terminal() {
   }, [])
   
   useEffect(() => {
-    const newTheme = getTerminalTheme(terminalThemeKey)
-    console.log('[Terminal] Theme changed to:', terminalThemeKey, newTheme)
+    const newTheme = resolveTerminalTheme(appTheme, terminalThemeKey)
     const instances = Object.values(terminalInstances.current)
     for (let i = 0; i < instances.length; i++) {
       const term = instances[i]
@@ -105,7 +94,7 @@ function Terminal() {
         term.refresh(0, term.rows - 1)
       }
     }
-  }, [terminalThemeKey])
+  }, [terminalThemeKey, appTheme])
   
   // 全屏状态
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -157,7 +146,7 @@ function Terminal() {
         cursorBlink: true,
         fontSize: terminalSettings.fontSize,
         fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-        theme: getTerminalTheme(terminalThemeKey),
+        theme: resolveTerminalTheme(appTheme, terminalThemeKey),
         convertEol: true,
         disableStdin: false,
       })

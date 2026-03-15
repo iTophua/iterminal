@@ -4,8 +4,9 @@
   box-sizing: border-box;
 }
 
-/* CSS 变量系统 - 亮色主题（默认） */
-:root {
+/* CSS 变量系统 - 亮色主题 */
+:root,
+[data-theme='light'] {
   --color-primary: #00b96b;
   --color-primary-hover: #00a35e;
   --color-primary-active: #008f51;
@@ -28,6 +29,7 @@
   --color-error: #ff4d4f;
   --color-warning: #faad14;
   --color-info: #1677ff;
+  --color-text-inverse: #ffffff;
   
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
@@ -58,6 +60,7 @@
   --color-error: #ff4d4f;
   --color-warning: #faad14;
   --color-info: #1677ff;
+  --color-text-inverse: #ffffff;
   
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);

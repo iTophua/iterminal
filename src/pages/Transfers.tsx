@@ -48,9 +48,9 @@ function Transfers() {
 
   const getTypeIcon = (type: string) => {
     return type === 'upload' ? (
-      <UploadOutlined style={{ color: '#00b96b', fontSize: 16 }} />
+      <UploadOutlined style={{ color: 'var(--color-success)', fontSize: 16 }} />
     ) : (
-      <DownloadOutlined style={{ color: '#1890ff', fontSize: 16 }} />
+      <DownloadOutlined style={{ color: 'var(--color-info)', fontSize: 16 }} />
     )
   }
 
@@ -207,16 +207,16 @@ function Transfers() {
           <span style={{ color: 'var(--color-text)', fontSize: 16, fontWeight: 500 }}>传输记录</span>
           <Space size={12}>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              上传中: <span style={{ color: '#00b96b' }}>{uploadingCount}</span>
+              上传中: <span style={{ color: 'var(--color-success)' }}>{uploadingCount}</span>
             </span>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              下载中: <span style={{ color: '#1890ff' }}>{downloadingCount}</span>
+              下载中: <span style={{ color: 'var(--color-info)' }}>{downloadingCount}</span>
             </span>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              已完成: <span style={{ color: '#52c41a' }}>{completedCount}</span>
+              已完成: <span style={{ color: 'var(--color-success)' }}>{completedCount}</span>
             </span>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              失败: <span style={{ color: '#ff4d4f' }}>{failedCount}</span>
+              失败: <span style={{ color: 'var(--color-error)' }}>{failedCount}</span>
             </span>
           </Space>
         </div>
@@ -317,7 +317,7 @@ function Transfers() {
                         size="small"
                         type="link"
                         icon={<CloseCircleOutlined />}
-                        style={{ color: '#ff4d4f', padding: 0 }}
+                        style={{ color: 'var(--color-error)', padding: 0 }}
                         onClick={() => cancelTask(record.id)}
                       >
                         取消
@@ -330,7 +330,7 @@ function Transfers() {
                         size="small"
                         type="link"
                         icon={<ReloadOutlined />}
-                        style={{ color: '#1890ff', padding: 0 }}
+                        style={{ color: 'var(--color-info)', padding: 0 }}
                         onClick={() => retryTask(record)}
                       >
                         重试
@@ -342,7 +342,7 @@ function Transfers() {
                       key={`open-${record.id}`}
                       size="small"
                       type="link"
-                      style={{ color: '#00b96b', padding: 0 }}
+                      style={{ color: 'var(--color-success)', padding: 0 }}
                       onClick={() => openFileLocation(record.localPath)}
                     >
                       打开位置
@@ -404,7 +404,7 @@ function Transfers() {
                               return 0
                             })()}
                             size="small"
-                            strokeColor={record.type === 'upload' ? '#00b96b' : '#1890ff'}
+                            strokeColor={record.type === 'upload' ? 'var(--color-success)' : 'var(--color-info)'}
                             format={() => {
                               const p = progress[record.id]
                               const speed = p?.speed ? ` ${formatSpeed(p.speed)}` : ''
@@ -421,7 +421,7 @@ function Transfers() {
                         </div>
                       )}
                       {record.status === 'failed' && record.error && (
-                        <div style={{ fontSize: 11, color: '#ff4d4f', marginTop: 4 }}>
+                        <div style={{ fontSize: 11, color: 'var(--color-error)', marginTop: 4 }}>
                           错误: {record.error}
                         </div>
                       )}

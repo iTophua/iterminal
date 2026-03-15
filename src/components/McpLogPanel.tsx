@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { Button, Tooltip, Empty, Select } from 'antd'
 import { CloseOutlined, DownloadOutlined, ClearOutlined, ApiOutlined } from '@ant-design/icons'
@@ -28,15 +28,20 @@ const operationLabels: Record<string, string> = {
   monitor: '系统监控',
 }
 
-const operationColors: Record<string, string> = {
-  connect: '#52c41a',
-  disconnect: '#faad14',
-  exec: '#1890ff',
-  list_dir: '#722ed1',
-  mkdir: '#13c2c2',
-  rm: '#f5222d',
-  rename: '#eb2f96',
-  monitor: '#fa8c16',
+// 操作类型颜色映射 - 使用 CSS 变量实现主题适配
+// 注意：紫色、青色、粉色等语义色保持硬编码，因为它们用于区分操作类型而非跟随主题
+const getOperationColor = (operation: string): string => {
+  const colorMap: Record<string, string> = {
+    connect: 'var(--color-success)',
+    disconnect: 'var(--color-warning)',
+    exec: 'var(--color-info)',
+    list_dir: '#722ed1',  // 紫色 - 语义固定
+    mkdir: '#13c2c2',     // 青色 - 语义固定
+    rm: 'var(--color-error)',
+    rename: '#eb2f96',    // 粉色 - 语义固定
+    monitor: '#fa8c16',   // 橙色 - 语义固定
+  }
+  return colorMap[operation] || 'var(--color-text-secondary)'
 }
 
 function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
@@ -85,14 +90,18 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
     URL.revokeObjectURL(url)
   }
 
-  const filteredLogs = filter === 'all' 
-    ? logs 
-    : filter === 'success' 
-      ? logs.filter(l => l.success) 
-      : logs.filter(l => !l.success)
+  const filteredLogs = useMemo(() => {
+    if (filter === 'all') return logs
+    if (filter === 'success') return logs.filter(l => l.success)
+    return logs.filter(l => !l.success)
+  }, [logs, filter])
 
-  const successCount = logs.filter(l => l.success).length
-  const failCount = logs.filter(l => !l.success).length
+  const { successCount, failCount } = useMemo(() => {
+    return {
+      successCount: logs.filter(l => l.success).length,
+      failCount: logs.filter(l => !l.success).length,
+    }
+  }, [logs])
 
   return (
     <div
@@ -102,8 +111,8 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
         right: 0,
         bottom: 0,
         width: 380,
-        background: '#1E1E1E',
-        borderLeft: '1px solid #3F3F46',
+        background: 'var(--color-bg-container)',
+        borderLeft: '1px solid var(--color-border)',
         zIndex: 999,
         transform: visible ? 'translateX(0)' : 'translateX(100%)',
         transition: 'transform 0.3s ease',
@@ -118,16 +127,16 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '12px 16px',
-          borderBottom: '1px solid #3F3F46',
-          background: '#252526',
+          borderBottom: '1px solid var(--color-border)',
+          background: 'var(--color-bg-elevated)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#CCC', fontWeight: 500 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--color-text)', fontWeight: 500 }}>
           <ApiOutlined />
           <span>MCP 操作日志</span>
           <span style={{ 
-            background: successCount > 0 ? '#52c41a' : '#3F3F46', 
-            color: '#fff', 
+            background: successCount > 0 ? 'var(--color-success)' : 'var(--color-border)', 
+            color: 'var(--color-text-inverse)', 
             fontSize: 11, 
             padding: '0 6px', 
             borderRadius: 10,
@@ -137,8 +146,8 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
           </span>
           {failCount > 0 && (
             <span style={{ 
-              background: '#f5222d', 
-              color: '#fff', 
+              background: 'var(--color-error)', 
+              color: 'var(--color-text-inverse)', 
               fontSize: 11, 
               padding: '0 6px', 
               borderRadius: 10 
@@ -163,7 +172,7 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
             <Button
               size="small"
               type="text"
-              icon={<DownloadOutlined style={{ color: '#888', fontSize: 14 }} />}
+              icon={<DownloadOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }} />}
               onClick={downloadLogs}
               disabled={logs.length === 0}
             />
@@ -172,14 +181,14 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
             <Button
               size="small"
               type="text"
-              icon={<ClearOutlined style={{ color: '#888', fontSize: 14 }} />}
+              icon={<ClearOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }} />}
               onClick={clearLogs}
               disabled={logs.length === 0}
             />
           </Tooltip>
           <CloseOutlined
             onClick={onClose}
-            style={{ color: '#888', cursor: 'pointer', fontSize: 14 }}
+            style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 14 }}
           />
         </div>
       </div>
@@ -198,39 +207,39 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
               style={{
                 padding: '8px 12px',
                 marginBottom: 4,
-                background: 'rgba(45, 45, 48, 0.6)',
+                background: 'var(--color-bg-spotlight)',
                 borderRadius: 6,
                 fontSize: 12,
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                <span style={{ color: '#666', fontSize: 11 }}>{log.timestamp}</span>
+                <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>{log.timestamp}</span>
                 <span
                   style={{
-                    color: operationColors[log.operation] || '#999',
+                    color: getOperationColor(log.operation),
                     fontWeight: 500,
                   }}
                 >
                   {operationLabels[log.operation] || log.operation}
                 </span>
                 <span style={{
-                  color: '#fff',
+                  color: 'var(--color-text-inverse)',
                   fontSize: 10,
                   padding: '1px 6px',
                   borderRadius: 3,
-                  background: log.success ? '#52c41a' : '#f5222d',
+                  background: log.success ? 'var(--color-success)' : 'var(--color-error)',
                 }}>
                   {log.success ? '成功' : '失败'}
                 </span>
                 {log.connection_id && (
-                  <span style={{ color: '#666', fontSize: 10 }}>
+                  <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>
                     [{log.connection_id.slice(0, 8)}]
                   </span>
                 )}
               </div>
               <div
                 style={{
-                  color: log.success ? '#AAA' : '#f5222d',
+                  color: log.success ? 'var(--color-text-secondary)' : 'var(--color-error)',
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
@@ -245,11 +254,11 @@ function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
 
       <div style={{
         padding: '8px 16px',
-        borderTop: '1px solid #3F3F46',
+        borderTop: '1px solid var(--color-border)',
         textAlign: 'center',
-        color: '#666',
+        color: 'var(--color-text-tertiary)',
         fontSize: 11,
-        background: '#252526',
+        background: 'var(--color-bg-elevated)',
       }}>
         共 {logs.length} 条记录
       </div>

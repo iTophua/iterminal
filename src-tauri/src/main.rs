@@ -40,16 +40,7 @@ fn main() {
             iterminal::commands::api::stop_api_server,
             iterminal::commands::api::start_api_server_command,
         ])
-        .setup(|app| {
-            let app_handle = app.handle().clone();
-            std::thread::spawn(move || {
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    iterminal::commands::api::start_api_server(app_handle).await;
-                });
-            });
-            Ok(())
-        })
+        .setup(|_app| Ok(()))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
