@@ -1,0 +1,24 @@
+{
+  "name": "@iterminal/mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for iTerminal SSH Connection Manager",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "iterminal-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "keywords": ["mcp", "ssh", "terminal", "iterminal"],
+  "license": "MIT"
+}

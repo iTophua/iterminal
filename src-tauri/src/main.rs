@@ -4,6 +4,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![
             iterminal::commands::ssh::connect_ssh,
             iterminal::commands::ssh::disconnect_ssh,
@@ -35,7 +36,20 @@ fn main() {
             iterminal::commands::sftp::is_local_directory,
             iterminal::commands::system::get_system_fonts,
             iterminal::commands::system::get_monospace_fonts,
+            iterminal::commands::api::is_api_server_running,
+            iterminal::commands::api::stop_api_server,
+            iterminal::commands::api::start_api_server_command,
         ])
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    iterminal::commands::api::start_api_server(app_handle).await;
+                });
+            });
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

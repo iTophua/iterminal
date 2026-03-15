@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, Tooltip, Input, Button, App } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -9,8 +9,23 @@ import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
+import { useThemeStore, TerminalThemeKey } from '../stores/themeStore'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
+import McpLogPanel from '../components/McpLogPanel'
+import { terminalThemes, TerminalTheme } from '../styles/themes/terminal-themes'
+
+function getTerminalTheme(key: TerminalThemeKey): TerminalTheme['theme'] {
+  const themeMap: Record<TerminalThemeKey, TerminalTheme> = {
+    'classic': terminalThemes[0],
+    'solarized-dark': terminalThemes[1],
+    'solarized-light': terminalThemes[2],
+    'dracula': terminalThemes[3],
+    'one-dark': terminalThemes[4],
+  }
+  return themeMap[key]?.theme ?? terminalThemes[0].theme
+}
+
 function Terminal() {
   const { message } = App.useApp()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
@@ -24,6 +39,7 @@ function Terminal() {
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
+  const terminalThemeKey = useThemeStore(state => state.terminalTheme)
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -50,6 +66,46 @@ function Terminal() {
   
   // 监控面板状态
   const [monitorVisible, setMonitorVisible] = useState(false)
+  
+  const [apiLogVisible, setApiLogVisible] = useState(false)
+  
+  const [mcpEnabled, setMcpEnabled] = useState(() => {
+    const saved = localStorage.getItem('iterminal_mcp_enabled')
+    return saved ? saved === 'true' : true
+  })
+  
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'iterminal_mcp_enabled') {
+        setMcpEnabled(e.newValue === 'true')
+      }
+    }
+    window.addEventListener('storage', handleStorageChange)
+    
+    const checkInterval = setInterval(() => {
+      const saved = localStorage.getItem('iterminal_mcp_enabled')
+      const enabled = saved ? saved === 'true' : true
+      setMcpEnabled(prev => prev !== enabled ? enabled : prev)
+    }, 1000)
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange)
+      clearInterval(checkInterval)
+    }
+  }, [])
+  
+  useEffect(() => {
+    const newTheme = getTerminalTheme(terminalThemeKey)
+    console.log('[Terminal] Theme changed to:', terminalThemeKey, newTheme)
+    const instances = Object.values(terminalInstances.current)
+    for (let i = 0; i < instances.length; i++) {
+      const term = instances[i]
+      if (term) {
+        term.options.theme = newTheme
+        term.refresh(0, term.rows - 1)
+      }
+    }
+  }, [terminalThemeKey])
   
   // 全屏状态
   const [isFullscreen, setIsFullscreen] = useState(false)
@@ -101,7 +157,7 @@ function Terminal() {
         cursorBlink: true,
         fontSize: terminalSettings.fontSize,
         fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-        theme: { background: '#000000', foreground: '#FFFFFF', cursor: '#FFFFFF' },
+        theme: getTerminalTheme(terminalThemeKey),
         convertEol: true,
         disableStdin: false,
       })
@@ -510,6 +566,21 @@ function Terminal() {
                   <FolderOutlined />
                 </span>
               </Tooltip>
+              {mcpEnabled && (
+                <Tooltip title="MCP 日志">
+                  <span
+                    style={{
+                      color: '#999',
+                      cursor: 'pointer',
+                      padding: '4px 6px',
+                      fontSize: 14
+                    }}
+                    onClick={() => setApiLogVisible(!apiLogVisible)}
+                  >
+                    <ApiOutlined />
+                  </span>
+                </Tooltip>
+              )}
               
               <div style={{ width: 1, height: 14, background: '#3F3F46', margin: '0 4px' }} />
               <Tooltip title={autoHideToolbar ? "固定工具栏" : "自动隐藏"}>
@@ -668,6 +739,7 @@ function Terminal() {
     let width = 0
     if (monitorVisible) width += 320
     if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
+    if (apiLogVisible) width += 380
     return width
   }
   const rightPanelWidth = getRightPanelWidth()
@@ -702,6 +774,7 @@ function Terminal() {
           />
         </>
       )}
+      <McpLogPanel visible={apiLogVisible} onClose={() => setApiLogVisible(false)} />
     </>
   )
 }

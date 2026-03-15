@@ -1,5 +1,6 @@
-import { Modal, Select, Slider, Typography, Button, Menu, Spin } from 'antd'
+import { Modal, Select, Slider, Typography, Menu, Spin, Radio } from 'antd'
 import { useTerminalStore, type TerminalSettings } from '../stores/terminalStore'
+import { useThemeStore, type AppThemeMode, type TerminalThemeKey } from '../stores/themeStore'
 import { useState, useEffect } from 'react'
 import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined } from '@ant-design/icons'
 
@@ -21,8 +22,8 @@ Hello, Terminal!`
 type SettingCategory = 'terminal' | 'appearance' | 'shortcuts' | 'about'
 
 const SETTING_CATEGORIES = [
+  { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
   { key: 'terminal', label: '终端', icon: <CodeOutlined /> },
-  { key: 'appearance', label: '外观', icon: <BgColorsOutlined />, disabled: true },
   { key: 'shortcuts', label: '快捷键', icon: <KeyOutlined />, disabled: true },
   { key: 'about', label: '关于', icon: <InfoCircleOutlined />, disabled: true },
 ]
@@ -33,36 +34,77 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const availableFonts = useTerminalStore(state => state.availableFonts)
   const fontsLoading = useTerminalStore(state => state.fontsLoading)
   
-  const [activeCategory, setActiveCategory] = useState<SettingCategory>('terminal')
+  const appThemeMode = useThemeStore(state => state.appThemeMode)
+  const setThemeMode = useThemeStore(state => state.setThemeMode)
+  const terminalTheme = useThemeStore(state => state.terminalTheme)
+  const setTerminalTheme = useThemeStore(state => state.setTerminalTheme)
+  
+  const [activeCategory, setActiveCategory] = useState<SettingCategory>('appearance')
   const [tempSettings, setTempSettings] = useState<TerminalSettings>(terminalSettings)
-  const [hasChanges, setHasChanges] = useState(false)
 
   useEffect(() => {
     if (visible) {
       setTempSettings(terminalSettings)
-      setHasChanges(false)
-      setActiveCategory('terminal')
+      setActiveCategory('appearance')
     }
   }, [visible, terminalSettings])
 
   const handleFontChange = (value: TerminalSettings['fontFamily']) => {
     setTempSettings(prev => ({ ...prev, fontFamily: value }))
-    setHasChanges(true)
   }
 
   const handleFontSizeChange = (value: number) => {
     setTempSettings(prev => ({ ...prev, fontSize: value }))
-    setHasChanges(true)
   }
 
-  const handleSave = () => {
-    updateTerminalSettings(tempSettings)
-    onClose()
-  }
+  useEffect(() => {
+    if (tempSettings.fontFamily !== terminalSettings.fontFamily || 
+        tempSettings.fontSize !== terminalSettings.fontSize) {
+      updateTerminalSettings(tempSettings)
+    }
+  }, [tempSettings, terminalSettings, updateTerminalSettings])
 
-  const handleClose = () => {
-    onClose()
-  }
+  const renderAppearanceSettings = () => (
+    <div style={{ padding: '0 16px' }}>
+      <Text strong style={{ color: '#CCC', display: 'block', marginBottom: 16 }}>
+        外观设置
+      </Text>
+
+      <div style={{ marginBottom: 24 }}>
+        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
+          应用主题
+        </Text>
+        <Radio.Group
+          value={appThemeMode}
+          onChange={(e) => setThemeMode(e.target.value as AppThemeMode)}
+          buttonStyle="solid"
+          style={{ display: 'flex', gap: 8 }}
+        >
+          <Radio.Button value="light">浅色</Radio.Button>
+          <Radio.Button value="dark">深色</Radio.Button>
+          <Radio.Button value="system">跟随系统</Radio.Button>
+        </Radio.Group>
+      </div>
+
+      <div>
+        <Text style={{ color: '#999', display: 'block', marginBottom: 8 }}>
+          终端主题
+        </Text>
+        <Select
+          value={terminalTheme}
+          onChange={(value) => setTerminalTheme(value as TerminalThemeKey)}
+          style={{ width: '100%' }}
+          options={[
+            { value: 'classic', label: 'Classic' },
+            { value: 'solarized-dark', label: 'Solarized Dark' },
+            { value: 'solarized-light', label: 'Solarized Light' },
+            { value: 'dracula', label: 'Dracula' },
+            { value: 'one-dark', label: 'One Dark' },
+          ]}
+        />
+      </div>
+    </div>
+  )
 
   const renderTerminalSettings = () => (
     <div style={{ padding: '0 16px' }}>
@@ -131,6 +173,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
 
   const renderContent = () => {
     switch (activeCategory) {
+      case 'appearance':
+        return renderAppearanceSettings()
       case 'terminal':
         return renderTerminalSettings()
       default:
@@ -146,15 +190,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     <Modal
       title="系统设置"
       open={visible}
-      onCancel={handleClose}
-      footer={
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Button onClick={handleClose}>取消</Button>
-          <Button type="primary" onClick={handleSave} disabled={!hasChanges} style={{ background: '#00b96b' }}>
-            保存
-          </Button>
-        </div>
-      }
+      onCancel={onClose}
+      footer={null}
       width={600}
       styles={{
         body: { padding: 0 },

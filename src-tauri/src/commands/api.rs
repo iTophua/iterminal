@@ -1,0 +1,524 @@
+use axum::{
+    extract::Path,
+    http::StatusCode,
+    response::Json,
+    routing::{delete, get, post},
+    Router,
+};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
+use tower_http::cors::{Any, CorsLayer};
+use tokio_util::sync::CancellationToken;
+
+use super::ssh::{self, SSHConnection, CommandResult, MonitorData};
+use super::sftp::{self, FileEntry};
+
+use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::sync::RwLock;
+
+static API_RUNNING: AtomicBool = AtomicBool::new(false);
+static API_CANCELLATION_TOKEN: Lazy<RwLock<Option<CancellationToken>>> = Lazy::new(|| RwLock::new(None));
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ConnectionState {
+    pub id: String,
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub connected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiOperation {
+    pub timestamp: String,
+    pub operation: String,
+    pub connection_id: Option<String>,
+    pub details: String,
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ApiResponse<T> {
+    pub success: bool,
+    pub data: Option<T>,
+    pub error: Option<String>,
+}
+
+impl<T: Serialize> ApiResponse<T> {
+    pub fn success(data: T) -> Self {
+        Self {
+            success: true,
+            data: Some(data),
+            error: None,
+        }
+    }
+
+    pub fn error(msg: &str) -> Self {
+        Self {
+            success: false,
+            data: None,
+            error: Some(msg.to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ConnectRequest {
+    pub id: String,
+    pub host: String,
+    pub port: Option<u16>,
+    pub username: String,
+    pub password: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExecRequest {
+    pub command: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PathRequest {
+    pub path: String,
+}
+
+pub struct ApiState {
+    pub app_handle: AppHandle,
+}
+
+fn emit_operation(
+    app: &AppHandle,
+    operation: &str,
+    connection_id: Option<&str>,
+    details: &str,
+    success: bool,
+    error: Option<&str>,
+) {
+    let log = ApiOperation {
+        timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        operation: operation.to_string(),
+        connection_id: connection_id.map(|s| s.to_string()),
+        details: details.to_string(),
+        success,
+        error: error.map(|s| s.to_string()),
+    };
+    
+    let _ = app.emit("api-operation", &log);
+    
+    if let Some(id) = connection_id {
+        let _ = app.emit("connection-state-changed", serde_json::json!({
+            "connectionId": id,
+            "operation": operation,
+            "success": success
+        }));
+    }
+}
+
+pub fn create_api_router(app_handle: AppHandle) -> Router {
+    let state = Arc::new(ApiState { app_handle });
+
+    Router::new()
+        .route("/api/status", get(get_status))
+        .route("/api/connections", get(list_connections))
+        .route("/api/connections", post(create_connection))
+        .route("/api/connections/{id}", delete(delete_connection))
+        .route("/api/connections/{id}/test", post(test_connection_handler))
+        .route("/api/connections/{id}/exec", post(execute_command_handler))
+        .route("/api/connections/{id}/monitor", get(get_monitor_handler))
+        .route("/api/connections/{id}/files", get(list_files_handler))
+        .route("/api/connections/{id}/mkdir", post(create_directory_handler))
+        .route("/api/connections/{id}/rm", post(delete_file_handler))
+        .route("/api/connections/{id}/rename", post(rename_file_handler))
+        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .with_state(state)
+}
+
+async fn get_status() -> Json<ApiResponse<serde_json::Value>> {
+    Json(ApiResponse::success(serde_json::json!({
+        "name": "iTerminal API",
+        "version": "1.0.0",
+        "status": "running"
+    })))
+}
+
+async fn list_connections() -> Json<ApiResponse<Vec<ConnectionState>>> {
+    let sessions = ssh::SESSIONS.read().await;
+    let connections: Vec<ConnectionState> = sessions
+        .iter()
+        .map(|(id, session)| ConnectionState {
+            id: id.clone(),
+            host: session.connection.host.clone(),
+            port: session.connection.port,
+            username: session.connection.username.clone(),
+            connected: true,
+        })
+        .collect();
+    drop(sessions);
+    Json(ApiResponse::success(connections))
+}
+
+async fn create_connection(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Json(payload): Json<ConnectRequest>,
+) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
+    let connection = SSHConnection {
+        host: payload.host.clone(),
+        port: payload.port.unwrap_or(22),
+        username: payload.username.clone(),
+        password: payload.password.clone(),
+        key_file: None,
+    };
+
+    let details = format!("{}@{}:{}", payload.username, payload.host, payload.port.unwrap_or(22));
+    
+    match ssh::connect_ssh(payload.id.clone(), connection).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "connect",
+                Some(&payload.id),
+                &details,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(payload.id)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "connect",
+                Some(&payload.id),
+                &details,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn delete_connection(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    let sessions = ssh::SESSIONS.read().await;
+    let info = sessions.get(&id).map(|s| {
+        format!("{}@{}:{}", s.connection.username, s.connection.host, s.connection.port)
+    });
+    drop(sessions);
+    
+    match ssh::disconnect_ssh(id.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "disconnect",
+                Some(&id),
+                &info.unwrap_or_default(),
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "disconnect",
+                Some(&id),
+                &id,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn test_connection_handler(
+    Json(payload): Json<ConnectRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    let connection = SSHConnection {
+        host: payload.host,
+        port: payload.port.unwrap_or(22),
+        username: payload.username,
+        password: payload.password,
+        key_file: None,
+    };
+
+    match ssh::test_connection(connection).await {
+        Ok(_) => Ok(Json(ApiResponse::success(true))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+async fn execute_command_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<ExecRequest>,
+) -> Result<Json<ApiResponse<CommandResult>>, (StatusCode, Json<ApiResponse<CommandResult>>)> {
+    let cmd_preview = if payload.command.len() > 50 {
+        format!("{}...", &payload.command[..50])
+    } else {
+        payload.command.clone()
+    };
+    
+    match ssh::execute_command(id.clone(), payload.command).await {
+        Ok(result) => {
+            emit_operation(
+                &state.app_handle,
+                "exec",
+                Some(&id),
+                &cmd_preview,
+                result.success,
+                result.error.as_deref(),
+            );
+            Ok(Json(ApiResponse::success(result)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "exec",
+                Some(&id),
+                &cmd_preview,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn get_monitor_handler(
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<MonitorData>>, (StatusCode, Json<ApiResponse<MonitorData>>)> {
+    match ssh::get_system_monitor(id).await {
+        Ok(data) => Ok(Json(ApiResponse::success(data))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+async fn list_files_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<ApiResponse<Vec<FileEntry>>>, (StatusCode, Json<ApiResponse<Vec<FileEntry>>>)> {
+    let path = params.get("path").cloned().unwrap_or_else(|| "/".to_string());
+    
+    match sftp::list_directory(id.clone(), path.clone()).await {
+        Ok(entries) => {
+            emit_operation(
+                &state.app_handle,
+                "list_dir",
+                Some(&id),
+                &path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(entries)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "list_dir",
+                Some(&id),
+                &path,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn create_directory_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<PathRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::create_directory(id.clone(), payload.path.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "mkdir",
+                Some(&id),
+                &payload.path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "mkdir",
+                Some(&id),
+                &payload.path,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn delete_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<PathRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::delete_file(id.clone(), payload.path.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "rm",
+                Some(&id),
+                &payload.path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "rm",
+                Some(&id),
+                &payload.path,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn rename_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<serde_json::Value>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    let old_path = payload.get("old_path").and_then(|v| v.as_str()).unwrap_or("");
+    let new_path = payload.get("new_path").and_then(|v| v.as_str()).unwrap_or("");
+    
+    match sftp::rename_file(id.clone(), old_path.to_string(), new_path.to_string()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "rename",
+                Some(&id),
+                &format!("{} -> {}", old_path, new_path),
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "rename",
+                Some(&id),
+                &format!("{} -> {}", old_path, new_path),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+pub async fn start_api_server(app_handle: AppHandle) {
+    let cancel_token = CancellationToken::new();
+    
+    {
+        let mut token_guard = API_CANCELLATION_TOKEN.write().await;
+        *token_guard = Some(cancel_token.clone());
+    }
+    
+    API_RUNNING.store(true, Ordering::SeqCst);
+    
+    let app = create_api_router(app_handle);
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 27149));
+
+    println!("iTerminal API Server running on http://{}", addr);
+
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("Failed to bind API server: {}", e);
+            API_RUNNING.store(false, Ordering::SeqCst);
+            return;
+        }
+    };
+    
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            cancel_token.cancelled().await;
+            println!("API Server shutting down...");
+        })
+        .await
+        .ok();
+    
+    API_RUNNING.store(false, Ordering::SeqCst);
+    println!("API Server stopped");
+}
+
+#[tauri::command]
+pub async fn is_api_server_running() -> bool {
+    API_RUNNING.load(Ordering::SeqCst)
+}
+
+#[tauri::command]
+pub async fn stop_api_server() -> Result<bool, String> {
+    if !API_RUNNING.load(Ordering::SeqCst) {
+        return Ok(false);
+    }
+    
+    let token_guard = API_CANCELLATION_TOKEN.read().await;
+    if let Some(token) = token_guard.as_ref() {
+        token.cancel();
+    }
+    
+    for _ in 0..50 {
+        if !API_RUNNING.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn start_api_server_command(app_handle: AppHandle) -> Result<bool, String> {
+    if API_RUNNING.load(Ordering::SeqCst) {
+        return Ok(true);
+    }
+    
+    {
+        let token_guard = API_CANCELLATION_TOKEN.read().await;
+        if let Some(token) = token_guard.as_ref() {
+            if token.is_cancelled() {
+                drop(token_guard);
+                let mut token_guard = API_CANCELLATION_TOKEN.write().await;
+                *token_guard = None;
+            }
+        }
+    }
+    
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            start_api_server(app_handle).await;
+        });
+    });
+    
+    for _ in 0..50 {
+        if API_RUNNING.load(Ordering::SeqCst) {
+            return Ok(true);
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+    
+    Err("Failed to start API server".to_string())
+}
