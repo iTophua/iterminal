@@ -195,33 +195,33 @@ function Transfers() {
   }
 
   return (
-    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#1E1E1E' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--color-bg-container)' }}>
       <div style={{
         padding: '12px 16px',
-        borderBottom: '1px solid #3F3F46',
+        borderBottom: '1px solid var(--color-border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-          <span style={{ color: '#CCC', fontSize: 16, fontWeight: 500 }}>传输记录</span>
+          <span style={{ color: 'var(--color-text)', fontSize: 16, fontWeight: 500 }}>传输记录</span>
           <Space size={12}>
-            <span style={{ fontSize: 12, color: '#888' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               上传中: <span style={{ color: '#00b96b' }}>{uploadingCount}</span>
             </span>
-            <span style={{ fontSize: 12, color: '#888' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               下载中: <span style={{ color: '#1890ff' }}>{downloadingCount}</span>
             </span>
-            <span style={{ fontSize: 12, color: '#888' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               已完成: <span style={{ color: '#52c41a' }}>{completedCount}</span>
             </span>
-            <span style={{ fontSize: 12, color: '#888' }}>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               失败: <span style={{ color: '#ff4d4f' }}>{failedCount}</span>
             </span>
           </Space>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 12, color: '#888' }}>保留时间:</span>
+          <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>保留时间:</span>
           <Select
             value={retentionPeriod}
             onChange={handleRetentionChange}
@@ -234,7 +234,7 @@ function Transfers() {
 
       <div style={{
         padding: '8px 16px',
-        borderBottom: '1px solid #3F3F46',
+        borderBottom: '1px solid var(--color-border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -286,7 +286,7 @@ function Transfers() {
           <Button
             size="small"
             icon={<FilterOutlined />}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           >
             清除
           </Button>
@@ -297,7 +297,7 @@ function Transfers() {
         {filteredRecords.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<span style={{ color: '#666' }}>暂无传输记录</span>}
+            description={<span style={{ color: 'var(--color-text-quaternary)' }}>暂无传输记录</span>}
             style={{ marginTop: 80 }}
           />
         ) : (
@@ -307,7 +307,7 @@ function Transfers() {
               <List.Item
                 style={{
                   padding: '12px 16px',
-                  borderBottom: '1px solid #3F3F46',
+                  borderBottom: '1px solid var(--color-border)',
                   cursor: 'pointer',
                 }}
                 actions={[
@@ -364,32 +364,32 @@ function Transfers() {
                   avatar={getTypeIcon(record.type)}
                   title={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                      <span style={{ color: '#CCC', fontSize: 14 }}>{record.fileName}</span>
+                      <span style={{ color: 'var(--color-text)', fontSize: 14 }}>{record.fileName}</span>
                       {getStatusTag(record.status)}
                     </div>
                   }
                   description={
                     <div style={{ marginTop: 6 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: '#888' }}>
-                        <span style={{ color: '#666' }}>{record.connectionName}</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                        <span style={{ color: 'var(--color-text-quaternary)' }}>{record.connectionName}</span>
                         <span>@</span>
                         <span>{record.connectionHost}</span>
                       </div>
-                      <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
                         {record.type === 'upload' ? (
                           <>本地: {record.localPath}</>
                         ) : (
                           <>远程: {record.remotePath}</>
                         )}
                       </div>
-                      <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 2 }}>
                         {record.type === 'upload' ? (
                           <>远程: {record.remotePath}</>
                         ) : (
                           <>本地: {record.localPath}</>
                         )}
                       </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: '#888', marginTop: 4 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
                         <span>{formatTime(record.startTime)}</span>
                         <span>{formatSize(record.fileSize || record.transferred)}</span>
                       </div>
@@ -412,7 +412,7 @@ function Transfers() {
                                 ? ` (${p.completedFiles || 0}/${p.totalFiles} 文件)` 
                                 : ''
                               return (
-                                <span style={{ fontSize: 11, color: '#888' }}>
+                                <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>
                                   {formatSize(p?.transferred || 0)} / {formatSize(p?.fileSize || 0)}{speed}{fileCount}
                                 </span>
                               )

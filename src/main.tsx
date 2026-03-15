@@ -1,7 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { ConfigProvider, theme, App as AntdApp } from 'antd'
 import App from './App'
+import { ThemeProvider } from './components/ThemeProvider'
 import { useTransferStore } from './stores/transferStore'
 import { setupNightlyCleanup } from './utils/transferCleanup'
 import './styles/global.css'
@@ -25,27 +25,9 @@ const initializeApp = () => {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider
-      theme={{
-        algorithm: theme.darkAlgorithm,
-        token: {
-          colorPrimary: '#00b96b',
-          borderRadius: 6,
-        },
-        components: {
-          Tree: {
-            nodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
-            nodeSelectedColor: '#fff',
-            directoryNodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
-            directoryNodeSelectedColor: '#fff',
-          },
-        },
-      }}
-    >
-      <AntdApp>
-        <App />
-      </AntdApp>
-    </ConfigProvider>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
   </React.StrictMode>
 )
 

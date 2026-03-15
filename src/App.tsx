@@ -40,7 +40,7 @@ function MainContent() {
     <Content style={{
       margin: 0,
       padding: 0,
-      background: '#1E1E1E',
+      background: 'var(--color-bg-container)',
       overflow: 'hidden',
       flex: 1,
       display: 'flex',
@@ -105,7 +105,7 @@ function App() {
   return (
     <BrowserRouter>
       <FontPreloader />
-      <Layout style={{ minHeight: '100vh', background: '#1E1E1E' }}>
+      <Layout style={{ minHeight: '100vh', background: 'var(--color-bg-container)' }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>
           {/* 左侧导航栏 */}
@@ -118,12 +118,12 @@ function App() {
         {/* 底部状态栏 */}
         <div style={{
           height: 32,
-          background: '#252526',
-          borderTop: '1px solid #3F3F46',
+          background: 'var(--color-bg-elevated)',
+          borderTop: '1px solid var(--color-border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#999999',
+          color: 'var(--color-text-tertiary)',
           fontSize: 12
         }}>
           iTerminal - SSH 连接管理器 ©2026

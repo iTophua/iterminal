@@ -336,12 +336,12 @@ const renderTreeNode = (node: TreeNode) => (
       style={{
         userSelect: 'none',
         WebkitUserSelect: 'none',
-        color: node.isDirectory ? '#00b96b' : '#CCC',
+        color: node.isDirectory ? 'var(--color-primary)' : 'var(--color-text)',
       }}
     >
       {node.title}
       {!node.isDirectory && node.size !== undefined && node.size > 0 && (
-        <span style={{ fontSize: 11, color: '#888', marginLeft: 8 }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
           {formatSize(node.size)}
         </span>
       )}
@@ -954,8 +954,8 @@ const renderTreeNode = (node: TreeNode) => (
         right: 0,
         bottom: 32,
         width: 360,
-        background: isDragOver ? 'rgba(0, 185, 107, 0.05)' : '#252526',
-        borderLeft: isDragOver ? '3px solid #00b96b' : '1px solid #3F3F46',
+        background: isDragOver ? 'rgba(0, 185, 107, 0.05)' : 'var(--color-bg-elevated)',
+        borderLeft: isDragOver ? '3px solid var(--color-primary)' : '1px solid var(--color-border)',
         zIndex: 100,
         display: 'flex',
         flexDirection: 'column',
@@ -972,26 +972,26 @@ const renderTreeNode = (node: TreeNode) => (
           padding: '12px 16px',
           background: 'rgba(0, 185, 107, 0.15)',
           borderRadius: 6,
-          border: '2px dashed #00b96b',
+          border: '2px dashed var(--color-primary)',
           zIndex: 10,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           backdropFilter: 'blur(4px)',
         }}>
-          <CloudUploadOutlined style={{ color: '#00b96b', fontSize: 18, marginRight: 8 }} />
-          <span style={{ color: '#00b96b', fontSize: 14, fontWeight: 500 }}>释放以上传文件到当前目录</span>
+          <CloudUploadOutlined style={{ color: 'var(--color-primary)', fontSize: 18, marginRight: 8 }} />
+          <span style={{ color: 'var(--color-primary)', fontSize: 14, fontWeight: 500 }}>释放以上传文件到当前目录</span>
         </div>
       )}
       <div style={{
         padding: '12px 16px',
-        borderBottom: '1px solid #3F3F46',
+        borderBottom: '1px solid var(--color-border)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ color: '#CCC', fontSize: 14, fontWeight: 500 }}>文件管理</span>
+          <span style={{ color: 'var(--color-text)', fontSize: 14, fontWeight: 500 }}>文件管理</span>
           <Tooltip title={viewMode === 'tree' ? '切换到列表视图' : '切换到树形视图'}>
             <Button
               size="small"
@@ -1001,7 +1001,7 @@ const renderTreeNode = (node: TreeNode) => (
                 setViewMode(newMode)
                 localStorage.setItem('iterminal_file_view_mode', newMode)
               }}
-              style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
             />
           </Tooltip>
         </div>
@@ -1009,13 +1009,13 @@ const renderTreeNode = (node: TreeNode) => (
           size="small"
           icon={<ArrowRightOutlined />}
           onClick={onClose}
-          style={{ background: 'transparent', border: 'none', color: '#999' }}
+          style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }}
         />
       </div>
 
       <div style={{
         padding: '8px 12px',
-        borderBottom: '1px solid #3F3F46',
+        borderBottom: '1px solid var(--color-border)',
         display: 'flex',
         alignItems: 'center',
         gap: 8,
@@ -1028,16 +1028,16 @@ const renderTreeNode = (node: TreeNode) => (
           placeholder="输入路径..."
           style={{
             flex: 1,
-            background: '#1E1E1E',
-            border: '1px solid #3F3F46',
-            color: '#CCC',
+            background: 'var(--color-bg-container)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text)',
           }}
         />
       </div>
 
       <div style={{
         padding: '8px 12px',
-        borderBottom: '1px solid #3F3F46',
+        borderBottom: '1px solid var(--color-border)',
         display: 'flex',
         alignItems: 'center',
         gap: 4,
@@ -1047,7 +1047,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<HomeOutlined />}
             onClick={goHome}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <Tooltip title="返回上级">
@@ -1059,7 +1059,7 @@ const renderTreeNode = (node: TreeNode) => (
               store.setCurrentPath(connectionId, parent)
               loadDirectory(parent, true)
             }}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <Tooltip title="刷新当前文件夹">
@@ -1067,7 +1067,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<ReloadOutlined />}
             onClick={refreshCurrent}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <div style={{ flex: 1 }} />
@@ -1076,7 +1076,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={showHidden ? <EyeOutlined /> : <EyeInvisibleOutlined />}
             onClick={() => setShowHidden(!showHidden)}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <Tooltip title="上传文件">
@@ -1084,7 +1084,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<UploadOutlined />}
             onClick={handleUploadFile}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <Tooltip title="上传文件夹">
@@ -1092,7 +1092,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<CloudUploadOutlined />}
             onClick={handleUploadFolder}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <Tooltip title="下载选中文件">
@@ -1100,7 +1100,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<DownloadOutlined />}
             onClick={handleDownloadSelected}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
         <Tooltip title="新建文件夹">
@@ -1108,7 +1108,7 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<FolderAddOutlined />}
             onClick={() => setNewFolderVisible(true)}
-            style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
       </div>
@@ -1119,7 +1119,7 @@ const renderTreeNode = (node: TreeNode) => (
           flex: 1,
           overflow: 'auto',
           padding: 8,
-          background: '#252526',
+          background: 'var(--color-bg-elevated)',
           userSelect: 'none',
           WebkitUserSelect: 'none',
         }}
@@ -1131,7 +1131,7 @@ const renderTreeNode = (node: TreeNode) => (
         ) : treeData.length === 0 ? (
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<span style={{ color: '#666' }}>空目录</span>}
+            description={<span style={{ color: 'var(--color-text-quaternary)' }}>空目录</span>}
           />
         ) : viewMode === 'tree' ? (
           <DirectoryTree
@@ -1150,7 +1150,7 @@ const renderTreeNode = (node: TreeNode) => (
               display: 'flex', 
               gap: 8, 
               padding: '4px 8px', 
-              borderBottom: '1px solid #3F3F46',
+              borderBottom: '1px solid var(--color-border)',
               marginBottom: 4,
             }}>
               <span
@@ -1165,7 +1165,7 @@ const renderTreeNode = (node: TreeNode) => (
                   }
                 }}
                 style={{ 
-                  color: sortField === 'name' ? '#00b96b' : '#666', 
+                  color: sortField === 'name' ? 'var(--color-primary)' : 'var(--color-text-quaternary)', 
                   fontSize: 11, 
                   cursor: 'pointer',
                   display: 'flex',
@@ -1189,7 +1189,7 @@ const renderTreeNode = (node: TreeNode) => (
                   }
                 }}
                 style={{ 
-                  color: sortField === 'size' ? '#00b96b' : '#666', 
+                  color: sortField === 'size' ? 'var(--color-primary)' : 'var(--color-text-quaternary)', 
                   fontSize: 11, 
                   cursor: 'pointer',
                   display: 'flex',
@@ -1213,7 +1213,7 @@ const renderTreeNode = (node: TreeNode) => (
                   }
                 }}
                 style={{ 
-                  color: sortField === 'modified' ? '#00b96b' : '#666', 
+                  color: sortField === 'modified' ? 'var(--color-primary)' : 'var(--color-text-quaternary)', 
                   fontSize: 11, 
                   cursor: 'pointer',
                   display: 'flex',
@@ -1270,7 +1270,7 @@ const renderTreeNode = (node: TreeNode) => (
                     transition: 'background 0.15s',
                     userSelect: 'none',
                     WebkitUserSelect: 'none',
-                    border: dragTargetPath === item.path ? '2px dashed #00b96b' : '2px solid transparent',
+                    border: dragTargetPath === item.path ? '2px dashed var(--color-primary)' : '2px solid transparent',
                   }}
                   onMouseEnter={(e) => {
                     if (!selectedKeys.includes(item.key) && dragTargetPath !== item.path) {
@@ -1295,14 +1295,14 @@ const renderTreeNode = (node: TreeNode) => (
                   }}>
                     {item.isDirectory ? <FolderOutlined /> : <FileOutlined />}
                     <span style={{ 
-                      color: item.isDirectory ? '#00b96b' : '#CCC',
+                      color: item.isDirectory ? 'var(--color-primary)' : 'var(--color-text)',
                       overflow: 'hidden', 
                       textOverflow: 'ellipsis', 
                       whiteSpace: 'nowrap' 
                     }}>{item.title}</span>
                   </div>
                   <div style={{ 
-                    color: '#666', 
+                    color: 'var(--color-text-quaternary)', 
                     fontSize: 11,
                     display: 'flex',
                     gap: 12,
@@ -1324,7 +1324,7 @@ const renderTreeNode = (node: TreeNode) => (
             left: contextMenuPos.x,
             top: Math.min(contextMenuPos.y, window.innerHeight - 400),
             zIndex: 9999,
-            background: '#2D2D30',
+            background: 'var(--color-bg-elevated)',
             borderRadius: 4,
             boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
             minWidth: 160,
@@ -1338,14 +1338,14 @@ const renderTreeNode = (node: TreeNode) => (
         >
           {contextMenuItems.map((item, index) => (
             item.type === 'divider' ? (
-              <div key={`divider-${index}`} style={{ height: 1, background: '#3F3F46', margin: '4px 0' }} />
+              <div key={`divider-${index}`} style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
             ) : (
               <div
                 key={item.key}
                 style={{
                   padding: '8px 12px',
                   cursor: 'pointer',
-                  color: item.danger ? '#ff4d4f' : '#CCC',
+                  color: item.danger ? '#ff4d4f' : 'var(--color-text)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
@@ -1371,7 +1371,7 @@ const renderTreeNode = (node: TreeNode) => (
         onCancel={() => { setNewFileVisible(false); setNewFileName('') }}
         okText="确定"
         cancelText="取消"
-        okButtonProps={{ style: { background: '#00b96b' } }}
+        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
       >
         <Input
           value={newFileName}
@@ -1388,7 +1388,7 @@ const renderTreeNode = (node: TreeNode) => (
         onCancel={() => { setNewFolderVisible(false); setNewFolderName('') }}
         okText="确定"
         cancelText="取消"
-        okButtonProps={{ style: { background: '#00b96b' } }}
+        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
       >
         <Input
           value={newFolderName}
@@ -1405,7 +1405,7 @@ const renderTreeNode = (node: TreeNode) => (
         onCancel={() => { setRenameVisible(false); setRenameValue('') }}
         okText="确定"
         cancelText="取消"
-        okButtonProps={{ style: { background: '#00b96b' } }}
+        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
       >
         <Input
           value={renameValue}
@@ -1435,7 +1435,7 @@ const renderTreeNode = (node: TreeNode) => (
         onCancel={() => { setChmodVisible(false); setChmodValue('644') }}
         okText="确定"
         cancelText="取消"
-        okButtonProps={{ style: { background: '#00b96b' } }}
+        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
       >
         <Input
           value={chmodValue}
@@ -1452,7 +1452,7 @@ const renderTreeNode = (node: TreeNode) => (
         onCancel={() => { setCompressVisible(false); setCompressName('') }}
         okText="确定"
         cancelText="取消"
-        okButtonProps={{ style: { background: '#00b96b' } }}
+        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
       >
         <p>将 {selectedNode?.title} 压缩为：</p>
         <Input
@@ -1483,24 +1483,24 @@ const renderTreeNode = (node: TreeNode) => (
               目标位置已存在同名文件
             </p>
           </div>
-          <p style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>文件名</p>
-          <p style={{ color: '#CCC', fontSize: 14, marginBottom: 16, wordBreak: 'break-all' }}>
+          <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginBottom: 8 }}>文件名</p>
+          <p style={{ color: 'var(--color-text)', fontSize: 14, marginBottom: 16, wordBreak: 'break-all' }}>
             {conflictFile?.fileName}
           </p>
-          <p style={{ color: '#999', fontSize: 12, marginBottom: 8 }}>目标路径</p>
-          <p style={{ color: '#CCC', fontSize: 14, marginBottom: 24, wordBreak: 'break-all' }}>
+          <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginBottom: 8 }}>目标路径</p>
+          <p style={{ color: 'var(--color-text)', fontSize: 14, marginBottom: 24, wordBreak: 'break-all' }}>
             {conflictFile?.remotePath}
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <Button
               onClick={() => resolveConflictDialog('skip')}
-              style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
             >
               跳过
             </Button>
             <Button
               onClick={() => resolveConflictDialog('rename')}
-              style={{ background: 'transparent', border: '1px solid #3F3F46', color: '#999' }}
+              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
             >
               保留两者
             </Button>

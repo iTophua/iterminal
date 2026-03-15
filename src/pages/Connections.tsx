@@ -468,7 +468,7 @@ function Connections() {
             alignItems: 'center', 
             justifyContent: 'center',
             height: '100%',
-            color: '#999999'
+            color: 'var(--color-text-tertiary)'
           }}>
             <p style={{ marginBottom: 16 }}>暂无连接</p>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
@@ -483,8 +483,8 @@ function Connections() {
                 size="small"
                 hoverable={conn.status !== 'connecting'}
                 style={{
-                  background: '#2D2D30',
-                  borderColor: conn.status === 'connecting' ? '#007ACC' : '#3F3F46',
+                  background: 'var(--color-bg-elevated)',
+                  borderColor: conn.status === 'connecting' ? '#007ACC' : 'var(--color-border)',
                   cursor: 'pointer',
                   opacity: conn.status === 'connecting' ? 0.85 : 1,
                   transition: 'all 0.3s ease',
@@ -496,7 +496,7 @@ function Connections() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                      <span style={{ color: '#CCCCCC', fontWeight: 500 }}>{conn.name}</span>
+                      <span style={{ color: 'var(--color-text)', fontWeight: 500 }}>{conn.name}</span>
                       <span style={{
                         display: 'inline-block',
                         width: 8,
@@ -506,11 +506,11 @@ function Connections() {
                         marginLeft: 8
                       }} />
                     </div>
-                    <div style={{ color: '#999999', fontSize: 12 }}>
+                    <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
                       {conn.username}@{conn.host}:{conn.port}
                     </div>
                     <div style={{ marginTop: 8 }}>
-                      <Tag style={{ background: '#3F3F46', border: 'none', color: '#CCCCCC' }}>
+                      <Tag style={{ background: 'var(--color-border)', border: 'none', color: 'var(--color-text)' }}>
                         {conn.group}
                       </Tag>
                       {conn.tags.map(tag => (
@@ -526,7 +526,7 @@ function Connections() {
                       size="small"
                       icon={<EnvironmentOutlined />}
                       onClick={(e) => handleQuickCopy(e, conn.host, 'IP')}
-                      style={{ color: '#999', fontSize: 12 }}
+                      style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}
                     >
                       复制IP
                     </Button>
@@ -535,7 +535,7 @@ function Connections() {
                       size="small"
                       icon={<KeyOutlined />}
                       onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
-                      style={{ color: '#999', fontSize: 12 }}
+                      style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}
                     >
                       复制信息
                     </Button>
@@ -666,13 +666,13 @@ function Connections() {
             支持格式：
           </Typography.Text>
           <div style={{
-            background: '#2D2D30',
+            background: 'var(--color-bg-elevated)',
             padding: 10,
             borderRadius: 4,
             marginTop: 8,
             fontSize: 11,
-            color: '#888',
-            border: '1px solid #3F3F46',
+            color: 'var(--color-text-tertiary)',
+            border: '1px solid var(--color-border)',
             lineHeight: 1.8
           }}>
             <div><span style={{ color: '#00b96b' }}>键值对:</span> 名称: xxx / 地址: xxx / 端口: 22 / 用户: xxx / 密码: xxx</div>
@@ -690,7 +690,7 @@ function Connections() {
         />
         
         <div style={{ marginBottom: 16 }}>
-          <span style={{ marginRight: 8, color: '#CCCCCC' }}>分组：</span>
+          <span style={{ marginRight: 8, color: 'var(--color-text)' }}>分组：</span>
           <Select
             value={quickImportGroup}
             onChange={setQuickImportGroup}
