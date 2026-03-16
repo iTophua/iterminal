@@ -14,7 +14,9 @@ interface ThemeProviderProps {
 async function applyTauriTheme(theme: AppTheme | null) {
   try {
     await setAppTheme(theme)
-  } catch {}
+  } catch (error) {
+    console.warn('Failed to set app theme:', error)
+  }
 }
 
 function applyThemeToDOM(theme: AppTheme) {
