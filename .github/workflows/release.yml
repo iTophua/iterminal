@@ -67,6 +67,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: List build outputs (debug)
+        shell: bash
         run: |
           echo "=== Build outputs ==="
           find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle directory found"
