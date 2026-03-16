@@ -123,6 +123,10 @@ interface TerminalState {
   getActiveSession: () => Session | null
   // 设置侧边栏折叠状态
   setSidebarCollapsed: (collapsed: boolean) => void
+  // 重排连接顺序
+  reorderConnections: (oldIndex: number, newIndex: number) => void
+  // 重排会话顺序
+  reorderSessions: (connectionId: string, oldIndex: number, newIndex: number) => void
 
   // 文件管理面板控制
   setFileManagerVisible: (connectionId: string, visible: boolean) => void
@@ -341,6 +345,36 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setSidebarCollapsed: (collapsed: boolean) => {
     set({ sidebarCollapsed: collapsed })
+  },
+
+  reorderConnections: (oldIndex: number, newIndex: number) => {
+    set((state) => {
+      const connections = [...state.connectedConnections]
+      if (oldIndex < 0 || oldIndex >= connections.length || newIndex < 0 || newIndex >= connections.length) {
+        return state
+      }
+      const [removed] = connections.splice(oldIndex, 1)
+      connections.splice(newIndex, 0, removed)
+      return { connectedConnections: connections }
+    })
+  },
+
+  reorderSessions: (connectionId: string, oldIndex: number, newIndex: number) => {
+    set((state) => {
+      const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+      if (!conn) return state
+      const sessions = [...conn.sessions]
+      if (oldIndex < 0 || oldIndex >= sessions.length || newIndex < 0 || newIndex >= sessions.length) {
+        return state
+      }
+      const [removed] = sessions.splice(oldIndex, 1)
+      sessions.splice(newIndex, 0, removed)
+      return {
+        connectedConnections: state.connectedConnections.map(c =>
+          c.connectionId === connectionId ? { ...c, sessions } : c
+        ),
+      }
+    })
   },
 
   setFileManagerVisible: (connectionId: string, visible: boolean) => {

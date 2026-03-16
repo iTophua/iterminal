@@ -130,6 +130,12 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             directoryNodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
             directoryNodeSelectedColor: appTheme === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
           },
+          Tabs: {
+            itemSelectedColor: '#00b96b',
+            itemHoverColor: appTheme === 'dark' ? '#1cc77a' : '#00a35e',
+            itemActiveColor: '#00b96b',
+            inkBarColor: '#00b96b',
+          },
         },
       }}
     >

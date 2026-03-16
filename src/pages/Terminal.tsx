@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, Tooltip, Input, Button, App } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined, HolderOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -8,6 +8,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
@@ -15,6 +18,32 @@ import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
+
+interface SortableTabProps {
+  id: string
+  label: React.ReactNode
+}
+
+function SortableTab({ id, label }: SortableTabProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    cursor: 'grab',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+  }
+
+  return (
+    <span ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', cursor: 'grab' }} />
+      {label}
+    </span>
+  )
+}
 
 function Terminal() {
   const { message } = App.useApp()
@@ -29,8 +58,14 @@ function Terminal() {
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
+  const reorderConnections = useTerminalStore(state => state.reorderConnections)
   const terminalThemeKey = useThemeStore(state => state.terminalTheme)
   const appTheme = useThemeStore(state => state.appTheme)
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -38,6 +73,8 @@ function Terminal() {
   const initializedRef = useRef<Set<string>>(new Set())
   const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
+  // 防抖定时器 ref，用于 ResizeObserver 防抖
+  const resizeTimeoutsRef = useRef<{ [key: string]: NodeJS.Timeout }>({})
   
   // 工具栏显示状态：'full' = 完整工具栏, 'ball' = 小球形态
   const [toolbarState, setToolbarState] = useState<'full' | 'ball'>('ball')
@@ -230,10 +267,17 @@ function Terminal() {
       
       unlistenersRef.current[key] = unlisten
       
-      // 4. 设置 ResizeObserver 监听容器尺寸变化
+      // 4. 设置 ResizeObserver 监听容器尺寸变化（带防抖，避免 transition 期间频繁触发）
       const resizeObserver = new ResizeObserver(() => {
-        const addon = fitAddons.current[key]
-        if (addon) { try { addon.fit() } catch {} }
+        // 清除之前的定时器
+        if (resizeTimeoutsRef.current[key]) {
+          clearTimeout(resizeTimeoutsRef.current[key])
+        }
+        // 延迟 150ms 执行 fit()，等待 CSS transition (300ms) 趋于稳定
+        resizeTimeoutsRef.current[key] = setTimeout(() => {
+          const addon = fitAddons.current[key]
+          if (addon) { try { addon.fit() } catch {} }
+        }, 150)
       })
       resizeObserver.observe(container)
       resizeObserversRef.current[key] = resizeObserver
@@ -255,6 +299,10 @@ function Terminal() {
 
     return () => {
       cancelled = true
+      if (resizeTimeoutsRef.current[key]) {
+        clearTimeout(resizeTimeoutsRef.current[key])
+        delete resizeTimeoutsRef.current[key]
+      }
       if (resizeObserversRef.current[key]) {
         resizeObserversRef.current[key].disconnect()
         delete resizeObserversRef.current[key]
@@ -295,6 +343,10 @@ function Terminal() {
       terminalInstances.current[key].dispose()
       delete terminalInstances.current[key]
     }
+    if (resizeTimeoutsRef.current[key]) {
+      clearTimeout(resizeTimeoutsRef.current[key])
+      delete resizeTimeoutsRef.current[key]
+    }
     delete fitAddons.current[key]
     delete searchAddons.current[key]
     delete resizeObserversRef.current[key]
@@ -325,6 +377,10 @@ function Terminal() {
       if (terminalInstances.current[key]) {
         terminalInstances.current[key].dispose()
         delete terminalInstances.current[key]
+      }
+      if (resizeTimeoutsRef.current[key]) {
+        clearTimeout(resizeTimeoutsRef.current[key])
+        delete resizeTimeoutsRef.current[key]
       }
       delete fitAddons.current[key]
       delete searchAddons.current[key]
@@ -529,7 +585,29 @@ function Terminal() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeConnectionId, connectedConnections])
 
-   
+  // 右侧面板宽度变化时调整终端尺寸（必须在条件 return 之前）
+  const getRightPanelWidth = () => {
+    let width = 0
+    if (monitorVisible) width += 320
+    if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
+    if (apiLogVisible) width += 380
+    return width
+  }
+  const rightPanelWidth = getRightPanelWidth()
+
+  const prevPanelWidthRef = useRef(rightPanelWidth)
+  useEffect(() => {
+    if (prevPanelWidthRef.current !== rightPanelWidth) {
+      prevPanelWidthRef.current = rightPanelWidth
+      const timer = setTimeout(() => {
+        Object.values(fitAddons.current).forEach(addon => {
+          try { addon?.fit() } catch {}
+        })
+      }, 350)
+      return () => clearTimeout(timer)
+    }
+  }, [rightPanelWidth])
+
   if (connectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
@@ -543,7 +621,7 @@ function Terminal() {
     const sessionItems = conn.sessions.map((s, idx) => ({
       key: s.id,
       label: (
-        <span style={{ color: 'var(--color-text)', fontSize: 12 }}>
+        <span style={{ fontSize: 12 }}>
           会话{idx + 1}
           <CloseOutlined style={{ marginLeft: 6, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseSession(conn.connectionId, s.id) }} />
         </span>
@@ -743,10 +821,15 @@ function Terminal() {
     return {
       key: conn.connectionId,
       label: (
-        <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500 }}>
-          {conn.connection.username}@{conn.connection.host}
-          <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} />
-        </span>
+        <SortableTab
+          id={conn.connectionId}
+          label={
+            <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500 }}>
+              {conn.connection.username}@{conn.connection.host}
+              <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} />
+            </span>
+          }
+        />
       ),
       children: (
         <Tabs
@@ -764,14 +847,16 @@ function Terminal() {
     }
   })
 
-  const getRightPanelWidth = () => {
-    let width = 0
-    if (monitorVisible) width += 320
-    if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
-    if (apiLogVisible) width += 380
-    return width
+  const handleConnectionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event
+    if (over && active.id !== over.id) {
+      const oldIndex = connectedConnections.findIndex(c => c.connectionId === active.id)
+      const newIndex = connectedConnections.findIndex(c => c.connectionId === over.id)
+      if (oldIndex !== -1 && newIndex !== -1) {
+        reorderConnections(oldIndex, newIndex)
+      }
+    }
   }
-  const rightPanelWidth = getRightPanelWidth()
 
   return (
     <>
@@ -784,14 +869,18 @@ function Terminal() {
         transition: 'margin-right 0.3s ease',
         width: `calc(100% - ${rightPanelWidth}px)`
       }}>
-        <Tabs
-          activeKey={activeConnectionId || undefined}
-          onChange={setActiveConnection}
-          items={connectionItems}
-          style={{ height: '100%' }}
-          tabBarStyle={{ margin: 0, padding: '0 12px', background: 'var(--color-bg-elevated)' }}
-          destroyInactiveTabPane={false}
-        />
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleConnectionDragEnd}>
+          <SortableContext items={connectedConnections.map(c => c.connectionId)} strategy={horizontalListSortingStrategy}>
+            <Tabs
+              activeKey={activeConnectionId || undefined}
+              onChange={setActiveConnection}
+              items={connectionItems}
+              style={{ height: '100%' }}
+              tabBarStyle={{ margin: 0, padding: '0 12px', background: 'var(--color-bg-elevated)' }}
+              destroyInactiveTabPane={false}
+            />
+          </SortableContext>
+        </DndContext>
       </div>
       <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
       {activeConnectionId && (
