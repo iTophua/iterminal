@@ -1,6 +1,7 @@
 # iTerminal - SSH Connection Manager
 
-**Generated:** 2026-03-13
+**Generated:** 2026-03-16
+**Commit:** 2227cd9
 **Branch:** main
 
 **技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 5.3 + Rust (russh 0.50 + russh-sftp 2.1)
@@ -97,6 +98,9 @@
 │   ├── Cargo.toml              # Rust 依赖
 │   ├── tauri.conf.json         # Tauri 配置
 │   └── icons/                  # 应用图标
+├── mcp/                        # MCP 服务器
+│   └── iterminal-mcp/          # SSH 桥接 MCP 服务
+│       └── src/index.ts        # MCP 工具定义 (iter_*)
 ├── package.json                # npm 依赖
 ├── vite.config.ts              # Vite 配置 (端口 1430)
 └── tsconfig.json               # TypeScript 配置 (strict 模式)
@@ -288,7 +292,7 @@ npm run tauri build
 - Shell 输出通过 Events 推送，事件名格式 `shell-output-{shellId}`
 - 关闭会话时需调用 `unlisten()` 取消事件订阅
 - 无 CI/CD 配置（无 .github 目录）
-- 无测试文件
+- 测试框架: Vitest + @testing-library/react（测试覆盖低，仅 themeStore 有完整测试）
 - russh 使用原生 async/await，需要 Rust 1.75+
 
 ## 安全注意事项
