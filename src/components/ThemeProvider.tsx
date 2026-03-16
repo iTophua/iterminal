@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, type ReactNode } from 'react'
 import { ConfigProvider, theme as antdTheme, App as AntdApp } from 'antd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { setTheme as setAppTheme } from '@tauri-apps/api/app'
 import { useThemeStore } from '../stores/themeStore'
 import type { AppTheme } from '../types/theme'
 
@@ -10,16 +11,22 @@ interface ThemeProviderProps {
   children: ReactNode
 }
 
-async function setWindowTheme(theme: AppTheme) {
+async function applyTauriTheme(theme: AppTheme | null) {
   try {
-    const mainWindow = getCurrentWindow()
-    await mainWindow.setTheme(theme)
-  } catch {
-  }
+    await setAppTheme(theme)
+  } catch {}
 }
 
 function applyThemeToDOM(theme: AppTheme) {
   document.documentElement.setAttribute('data-theme', theme)
+}
+
+function disableTransitions() {
+  document.documentElement.classList.add('theme-transitioning')
+}
+
+function enableTransitions() {
+  document.documentElement.classList.remove('theme-transitioning')
 }
 
 export function ThemeProvider({ children }: ThemeProviderProps) {
@@ -35,19 +42,28 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   useEffect(() => {
     if (!hydrated) return
     
+    disableTransitions()
     applyThemeToDOM(appTheme)
-    setWindowTheme(appTheme)
-  }, [appTheme, hydrated])
+    applyTauriTheme(appThemeMode === 'system' ? null : appTheme)
+    
+    const timer = requestAnimationFrame(() => {
+      enableTransitions()
+    })
+    
+    return () => {
+      cancelAnimationFrame(timer)
+      enableTransitions()
+    }
+  }, [appTheme, appThemeMode, hydrated])
   
   useEffect(() => {
     if (appThemeMode !== 'system') return
     
     let unlisten: (() => void) | null = null
-    let pollInterval: ReturnType<typeof setInterval> | null = null
     
     const handleThemeChange = (newTheme: AppTheme) => {
+      disableTransitions()
       applyThemeToDOM(newTheme)
-      setWindowTheme(newTheme)
       useThemeStore.setState({ appTheme: newTheme })
       const state = useThemeStore.getState()
       localStorage.setItem('iterminal_theme', JSON.stringify({
@@ -56,37 +72,39 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         terminalTheme: state.terminalTheme,
         version: 2,
       }))
+      requestAnimationFrame(enableTransitions)
     }
+    
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleMediaQueryChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      const newTheme: AppTheme = e.matches ? 'dark' : 'light'
+      const storeTheme = useThemeStore.getState().appTheme
+      if (newTheme !== storeTheme) {
+        handleThemeChange(newTheme)
+      }
+    }
+    
+    mediaQuery.addEventListener('change', handleMediaQueryChange)
     
     const setupListener = async () => {
       try {
         const mainWindow = getCurrentWindow()
         unlisten = await mainWindow.onThemeChanged(({ payload: theme }) => {
-          handleThemeChange(theme as AppTheme)
+          const newTheme = theme as AppTheme
+          const storeTheme = useThemeStore.getState().appTheme
+          if (newTheme !== storeTheme) {
+            handleThemeChange(newTheme)
+          }
         })
       } catch {}
     }
     
     setupListener()
     
-    pollInterval = setInterval(async () => {
-      try {
-        const mainWindow = getCurrentWindow()
-        const currentTheme = await mainWindow.theme()
-        const newTheme = currentTheme as AppTheme
-        const storeTheme = useThemeStore.getState().appTheme
-        if (newTheme !== storeTheme) {
-          handleThemeChange(newTheme)
-        }
-      } catch {}
-    }, 1000)
-    
     return () => {
+      mediaQuery.removeEventListener('change', handleMediaQueryChange)
       if (unlisten) {
         unlisten()
-      }
-      if (pollInterval) {
-        clearInterval(pollInterval)
       }
     }
   }, [appThemeMode])

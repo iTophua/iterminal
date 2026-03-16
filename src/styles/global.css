@@ -4,6 +4,12 @@
   box-sizing: border-box;
 }
 
+/* 主题切换时禁用过渡动画，避免闪烁 */
+.theme-transitioning,
+.theme-transitioning * {
+  transition: none !important;
+}
+
 /* CSS 变量系统 - 亮色主题 */
 :root,
 [data-theme='light'] {
