@@ -8,3 +8,10 @@
 /.opencode/
 /.sisyphus/
 /MONETIZATION.md
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 冗余 lock 文件
+pnpm-lock.yaml
