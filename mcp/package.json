@@ -1,24 +1,52 @@
 {
-  "name": "@iterminal/mcp-server",
-  "version": "1.0.0",
-  "description": "MCP Server for iTerminal SSH Connection Manager",
+  "name": "iterminal-mcp-server",
+  "version": "1.0.1",
+  "mcpName": "io.github.iTophua/iterminal",
+  "description": "MCP Server for iTerminal SSH Connection Manager - Control SSH servers through Claude and other AI assistants",
   "type": "module",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "bin": {
     "iterminal-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "ssh",
+    "terminal",
+    "iterminal",
+    "claude",
+    "ai",
+    "remote-server",
+    "server-management"
+  ],
+  "author": "iTophua",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iTophua/iterminal.git",
+    "directory": "mcp"
+  },
+  "bugs": {
+    "url": "https://github.com/iTophua/iterminal/issues"
+  },
+  "homepage": "https://github.com/iTophua/iterminal#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "typescript": "^5.0.0"
-  },
-  "keywords": ["mcp", "ssh", "terminal", "iterminal"],
-  "license": "MIT"
+  }
 }
