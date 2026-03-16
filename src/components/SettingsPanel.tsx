@@ -116,6 +116,26 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     setHasTerminalChanges(true)
   }
 
+  const handleScrollbackChange = (value: number) => {
+    setTempSettings(prev => ({ ...prev, scrollback: value }))
+    setHasTerminalChanges(true)
+  }
+
+  const handleCopyOnSelectChange = (checked: boolean) => {
+    setTempSettings(prev => ({ ...prev, copyOnSelect: checked }))
+    setHasTerminalChanges(true)
+  }
+
+  const handleCursorStyleChange = (value: 'block' | 'underline' | 'bar') => {
+    setTempSettings(prev => ({ ...prev, cursorStyle: value }))
+    setHasTerminalChanges(true)
+  }
+
+  const handleCursorBlinkChange = (checked: boolean) => {
+    setTempSettings(prev => ({ ...prev, cursorBlink: checked }))
+    setHasTerminalChanges(true)
+  }
+
   const handleSave = () => {
     updateTerminalSettings(tempSettings)
     onClose()
@@ -130,6 +150,59 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 16 }}>
         终端设置
       </Text>
+
+      <div style={{ marginBottom: 20 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
+          回滚缓冲区: {tempSettings.scrollback.toLocaleString()} 行
+        </Text>
+        <Slider
+          min={100}
+          max={100000}
+          step={100}
+          value={tempSettings.scrollback}
+          onChange={handleScrollbackChange}
+          marks={{ 100: '100', 10000: '1万', 50000: '5万', 100000: '10万' }}
+        />
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: 'var(--color-text-secondary)' }}>选中即复制</Text>
+          <Switch
+            checked={tempSettings.copyOnSelect}
+            onChange={handleCopyOnSelectChange}
+          />
+        </div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+          选中终端文本时自动复制到剪贴板
+        </Text>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
+          光标样式
+        </Text>
+        <Select
+          value={tempSettings.cursorStyle}
+          onChange={handleCursorStyleChange}
+          options={[
+            { value: 'block', label: '块状' },
+            { value: 'underline', label: '下划线' },
+            { value: 'bar', label: '竖线' },
+          ]}
+          style={{ width: '100%' }}
+        />
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: 'var(--color-text-secondary)' }}>光标闪烁</Text>
+          <Switch
+            checked={tempSettings.cursorBlink}
+            onChange={handleCursorBlinkChange}
+          />
+        </div>
+      </div>
 
       <div style={{ marginBottom: 20 }}>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>

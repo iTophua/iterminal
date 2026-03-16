@@ -7,6 +7,7 @@ import { SearchAddon } from 'xterm-addon-search'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import 'xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
@@ -143,18 +144,34 @@ function Terminal() {
       
       // 2. 创建终端
       const terminal = new XTerm({
-        cursorBlink: true,
+        cursorBlink: terminalSettings.cursorBlink,
+        cursorStyle: terminalSettings.cursorStyle,
         fontSize: terminalSettings.fontSize,
         fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
         theme: resolveTerminalTheme(appTheme, terminalThemeKey),
         convertEol: true,
         disableStdin: false,
+        scrollback: terminalSettings.scrollback,
       })
 
       const fitAddon = new FitAddon()
       terminal.loadAddon(fitAddon)
       container.innerHTML = ''
       terminal.open(container)
+      
+      // 拦截 Ctrl+V，阻止 xterm 默认处理，手动粘贴
+      terminal.attachCustomKeyEventHandler(event => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && event.type === 'keydown') {
+          terminal.clearSelection()
+          readText().then(text => {
+            if (text) {
+              invoke('write_shell', { id: shellId, data: text })
+            }
+}).catch(err => console.error('粘贴失败:', err))
+          return false
+        }
+        return true
+      })
       
       // 输入处理
       terminal.onData(data => {
@@ -164,6 +181,15 @@ function Terminal() {
       // 终端尺寸变化时通知 SSH 服务器
       terminal.onResize(({ cols, rows }) => {
         invoke('resize_shell', { id: shellId, cols, rows }).catch(console.error)
+      })
+
+      terminal.onSelectionChange(() => {
+        if (terminalSettings.copyOnSelect && terminal.hasSelection()) {
+          const selection = terminal.getSelection()
+          if (selection) {
+            writeText(selection).catch(() => {})
+          }
+        }
       })
 
       // 暂存到 ref，供事件回调使用
@@ -206,6 +232,7 @@ function Terminal() {
       // 5. 初始调整终端大小（延迟确保 xterm 完成渲染）
       setTimeout(() => {
         try { fitAddon.fit() } catch {}
+        try { terminal.focus() } catch {}
       }, 100)
       
       // 标记为已初始化
@@ -219,12 +246,10 @@ function Terminal() {
 
     return () => {
       cancelled = true
-      // 清理 ResizeObserver
       if (resizeObserversRef.current[key]) {
         resizeObserversRef.current[key].disconnect()
         delete resizeObserversRef.current[key]
       }
-      // 不取消事件监听器 - 保持活跃状态
     }
   }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId])
 
@@ -318,10 +343,19 @@ function Terminal() {
   
   // 点击其他地方关闭右键菜单
   useEffect(() => {
-    const handleClick = () => setContextMenu(prev => ({ ...prev, visible: false }))
-    window.addEventListener('click', handleClick)
-    return () => window.removeEventListener('click', handleClick)
-  }, [])
+    const handleMouseDown = (e: MouseEvent) => {
+      if (contextMenu.visible) {
+        const menuEl = document.getElementById('terminal-context-menu')
+        if (menuEl && !menuEl.contains(e.target as Node)) {
+          setTimeout(() => {
+            setContextMenu(prev => ({ ...prev, visible: false }))
+          }, 0)
+        }
+      }
+    }
+    document.addEventListener('mousedown', handleMouseDown, true)
+    return () => document.removeEventListener('mousedown', handleMouseDown, true)
+  }, [contextMenu.visible])
 
   // 自动隐藏设置持久化
   useEffect(() => {
@@ -334,6 +368,8 @@ function Terminal() {
       if (term) {
         term.options.fontFamily = `"${terminalSettings.fontFamily}", Menlo, Monaco, monospace`
         term.options.fontSize = terminalSettings.fontSize
+        term.options.cursorStyle = terminalSettings.cursorStyle
+        term.options.cursorBlink = terminalSettings.cursorBlink
       }
     })
     Object.values(fitAddons.current).forEach(addon => {
@@ -403,12 +439,12 @@ function Terminal() {
   }, [])
   
   // 复制选中内容
-  const handleCopy = useCallback(() => {
+  const handleCopy = useCallback(async () => {
     const term = terminalInstances.current[contextMenu.sessionKey]
     if (term) {
       const selection = term.getSelection()
       if (selection) {
-        navigator.clipboard.writeText(selection)
+        await writeText(selection)
         message.success('已复制')
       } else {
         message.info('请先选择要复制的内容')
@@ -417,18 +453,25 @@ function Terminal() {
     setContextMenu(prev => ({ ...prev, visible: false }))
   }, [contextMenu.sessionKey])
   
-  // 粘贴
+  // 粘贴 - 使用 Tauri 剪贴板 API，绕过浏览器瞬态激活限制
   const handlePaste = useCallback(async () => {
+    const term = terminalInstances.current[contextMenu.sessionKey]
+    
     try {
-      const text = await navigator.clipboard.readText()
+      // 使用 Tauri 原生剪贴板 API，不受浏览器安全策略限制
+      const text = await readText()
       if (text) {
-        // 解析 sessionKey 获取正确的 shellId
         const [connId, sessId] = contextMenu.sessionKey.split('_')
         const conn = connectedConnections.find(c => c.connectionId === connId)
         const sess = conn?.sessions.find(s => s.id === sessId)
         if (sess?.shellId) {
           await invoke('write_shell', { id: sess.shellId, data: text })
         }
+      }
+      if (term) {
+        // 清除选择状态，避免选择背景残留
+        term.clearSelection()
+        term.focus()
       }
     } catch (err) {
       console.error('粘贴失败:', err)
@@ -445,7 +488,39 @@ function Terminal() {
     setContextMenu(prev => ({ ...prev, visible: false }))
   }, [contextMenu.sessionKey])
 
-  
+  const handleFindFromContextMenu = useCallback(() => {
+    const term = terminalInstances.current[contextMenu.sessionKey]
+    if (term) {
+      const selection = term.getSelection()
+      if (selection) {
+        setSearchText(selection)
+      }
+    }
+    setSearchVisible(true)
+    setContextMenu(prev => ({ ...prev, visible: false }))
+  }, [contextMenu.sessionKey])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        const activeSess = activeConn?.sessions.find(s => s.id === activeConn?.activeSessionId)
+        if (activeSess) {
+          const key = `${activeSess.connectionId}_${activeSess.id}`
+          const term = terminalInstances.current[key]
+          if (term && term.hasSelection()) {
+            setSearchText(term.getSelection())
+          }
+        }
+        setSearchVisible(prev => !prev)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [activeConnectionId, connectedConnections])
+
+   
   if (connectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
@@ -467,7 +542,7 @@ function Terminal() {
       children: (
         <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
           {/* 悬浮工具栏 */}
-          {toolbarState === 'full' && (!autoHideToolbar || mouseOverBall) ? (
+          {(toolbarState === 'full' && (!autoHideToolbar || mouseOverBall)) || searchVisible ? (
             <div style={{
               position: 'absolute',
               top: 8,
@@ -481,18 +556,18 @@ function Terminal() {
               padding: '4px 8px',
               boxShadow: 'var(--shadow-md)',
             }}
-            onMouseLeave={() => { if (autoHideToolbar) { setToolbarState('ball'); setMouseOverBall(false) } }}
+            onMouseLeave={() => { if (autoHideToolbar && !searchVisible) { setToolbarState('ball'); setMouseOverBall(false) } }}
             >
               <Tooltip title="复制选中内容">
                 <span
                   style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={() => {
+                  onClick={async () => {
                     const key = `${conn.connectionId}_${s.id}`
                     const term = terminalInstances.current[key]
                     if (term) {
                       const selection = term.getSelection()
                       if (selection) {
-                        navigator.clipboard.writeText(selection)
+                        await writeText(selection)
                         message.success('已复制')
                       } else {
                         message.info('请先选择要复制的内容')
@@ -613,7 +688,7 @@ function Terminal() {
           )}
           
           {/* 搜索栏 */}
-          {searchVisible && toolbarState === 'full' && (
+          {searchVisible && (
             <div style={{
               position: 'absolute',
               top: 44,
@@ -650,6 +725,7 @@ function Terminal() {
           {/* 右键菜单 */}
           {contextMenu.visible && (
             <div
+              id="terminal-context-menu"
               style={{
                 position: 'fixed',
                 left: contextMenu.x,
@@ -662,6 +738,7 @@ function Terminal() {
                 minWidth: 160,
               }}
               onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
             >
               <div
                 style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
@@ -686,6 +763,15 @@ function Terminal() {
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
               >
                 <CheckCircleOutlined /> 全选
+              </div>
+              <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+              <div
+                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleFindFromContextMenu}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <SearchOutlined /> 查找 <span style={{ marginLeft: 'auto', color: 'var(--color-text-tertiary)', fontSize: 11 }}>Ctrl+F</span>
               </div>
               
             </div>

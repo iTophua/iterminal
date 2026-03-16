@@ -65,12 +65,20 @@ export interface FileItem {
 export interface TerminalSettings {
   fontFamily: string
   fontSize: number  // 10-24
+  scrollback: number  // 回滚缓冲区行数 100-100000
+  copyOnSelect: boolean  // 选中即复制
+  cursorStyle: 'block' | 'underline' | 'bar'
+  cursorBlink: boolean
 }
 
 // 默认终端设置
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   fontFamily: 'Menlo',
   fontSize: 14,
+  scrollback: 10000,
+  copyOnSelect: false,
+  cursorStyle: 'block',
+  cursorBlink: true,
 }
 
 interface TerminalState {
@@ -420,6 +428,9 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const newSettings = { ...state.terminalSettings, ...settings }
       if (typeof newSettings.fontSize === 'number') {
         newSettings.fontSize = Math.max(10, Math.min(24, newSettings.fontSize))
+      }
+      if (typeof newSettings.scrollback === 'number') {
+        newSettings.scrollback = Math.max(100, Math.min(100000, newSettings.scrollback))
       }
       localStorage.setItem('iterminal_terminal_settings', JSON.stringify(newSettings))
       return { terminalSettings: newSettings }

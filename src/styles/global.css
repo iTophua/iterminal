@@ -189,6 +189,16 @@ body {
   width: 100% !important;
 }
 
+/* 修复 xterm.js 选择背景溢出问题 */
+.xterm-selection {
+  overflow: hidden !important;
+}
+
+.xterm-selection div {
+  position: absolute;
+  pointer-events: none;
+}
+
 /* File Manager Tree - drop target highlight */
 .file-manager-panel .ant-tree {
   background: transparent;
