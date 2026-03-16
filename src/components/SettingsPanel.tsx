@@ -324,7 +324,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       "type": "local",
       "command": [
         "node",
-        "/path/to/iTerminal/mcp/iterminal-mcp/dist/index.js"
+        "/path/to/iTerminal/mcp/dist/index.js"
       ],
       "enabled": true
     }
@@ -334,7 +334,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   "mcpServers": {
     "iterminal": {
       "command": "node",
-      "args": ["/path/to/iTerminal/mcp/iterminal-mcp/dist/index.js"]
+      "args": ["/path/to/iTerminal/mcp/dist/index.js"]
     }
   }
 }`

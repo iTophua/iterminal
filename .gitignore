@@ -3,8 +3,8 @@
 /src-tauri/target/
 /.idea/
 /.claude/
-/mcp/iterminal-mcp/dist/
-/mcp/iterminal-mcp/node_modules/
+/mcp/dist/
+/mcp/node_modules/
 /.opencode/
 /.sisyphus/
 /MONETIZATION.md

@@ -99,8 +99,7 @@
 │   ├── tauri.conf.json         # Tauri 配置
 │   └── icons/                  # 应用图标
 ├── mcp/                        # MCP 服务器
-│   └── iterminal-mcp/          # SSH 桥接 MCP 服务
-│       └── src/index.ts        # MCP 工具定义 (iter_*)
+│   └── src/index.ts            # MCP 工具定义 (iter_*)
 ├── package.json                # npm 依赖
 ├── vite.config.ts              # Vite 配置 (端口 1430)
 └── tsconfig.json               # TypeScript 配置 (strict 模式)
