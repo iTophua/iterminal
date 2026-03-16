@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -63,6 +66,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: List build outputs (debug)
+        run: |
+          echo "=== Build outputs ==="
+          find src-tauri/target/release/bundle -type f 2>/dev/null || echo "No bundle directory found"
+
       - name: Upload artifacts (macOS)
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
@@ -103,6 +111,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: iterminal-*
+          merge-multiple: true
+
+      - name: List artifacts (debug)
+        run: |
+          echo "=== Artifacts ==="
+          find artifacts -type f 2>/dev/null || echo "No artifacts found"
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
