@@ -159,7 +159,16 @@ function Terminal() {
       container.innerHTML = ''
       terminal.open(container)
       
-      // 拦截 Ctrl+V，阻止 xterm 默认处理，手动粘贴
+      // 禁用 xterm 内部 textarea 的 paste 事件，防止双重粘贴
+      const textarea = terminal.element?.querySelector('textarea')
+      if (textarea) {
+        textarea.addEventListener('paste', (e: Event) => {
+          e.preventDefault()
+          e.stopPropagation()
+        }, true)
+      }
+      
+      // 拦截 Ctrl+V，手动粘贴
       terminal.attachCustomKeyEventHandler(event => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && event.type === 'keydown') {
           terminal.clearSelection()
@@ -167,7 +176,7 @@ function Terminal() {
             if (text) {
               invoke('write_shell', { id: shellId, data: text })
             }
-}).catch(err => console.error('粘贴失败:', err))
+          }).catch(err => console.error('粘贴失败:', err))
           return false
         }
         return true
@@ -722,63 +731,8 @@ function Terminal() {
             </div>
           )}
           
-          {/* 右键菜单 */}
-          {contextMenu.visible && (
-            <div
-              id="terminal-context-menu"
-              style={{
-                position: 'fixed',
-                left: contextMenu.x,
-                top: contextMenu.y,
-                zIndex: 1000,
-                background: 'var(--color-bg-elevated)',
-                borderRadius: 6,
-                boxShadow: 'var(--shadow-lg)',
-                overflow: 'hidden',
-                minWidth: 160,
-              }}
-              onClick={(e) => e.stopPropagation()}
-              onMouseDown={(e) => e.stopPropagation()}
-            >
-              <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleCopy}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <CopyOutlined /> 复制
-              </div>
-              <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handlePaste}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <SnippetsOutlined /> 粘贴
-              </div>
-              <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleSelectAll}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <CheckCircleOutlined /> 全选
-              </div>
-              <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
-              <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleFindFromContextMenu}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <SearchOutlined /> 查找 <span style={{ marginLeft: 'auto', color: 'var(--color-text-tertiary)', fontSize: 11 }}>Ctrl+F</span>
-              </div>
-              
-            </div>
-          )}
-          
-          <div 
-            ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }} 
+          <div
+            ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
             style={{ flex: 1, width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
             onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
           />
@@ -850,6 +804,60 @@ function Terminal() {
         </>
       )}
       <McpLogPanel visible={apiLogVisible} onClose={() => setApiLogVisible(false)} />
+
+      {/* 右键菜单 - 只渲染一次，避免多会话时重复 */}
+      {contextMenu.visible && (
+        <div
+          id="terminal-context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 1000,
+            background: 'var(--color-bg-elevated)',
+            borderRadius: 6,
+            boxShadow: 'var(--shadow-lg)',
+            overflow: 'hidden',
+            minWidth: 160,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handleCopy}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <CopyOutlined /> 复制
+          </div>
+          <div
+            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handlePaste}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <SnippetsOutlined /> 粘贴
+          </div>
+          <div
+            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handleSelectAll}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <CheckCircleOutlined /> 全选
+          </div>
+          <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+          <div
+            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handleFindFromContextMenu}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <SearchOutlined /> 查找 <span style={{ marginLeft: 'auto', color: 'var(--color-text-tertiary)', fontSize: 11 }}>Ctrl+F</span>
+          </div>
+        </div>
+      )}
     </>
   )
 }
