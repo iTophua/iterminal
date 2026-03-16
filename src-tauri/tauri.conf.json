@@ -4,9 +4,9 @@
   "version": "1.0.0",
   "identifier": "com.iterminal.ssh",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "pnpm run dev",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "pnpm run build",
     "frontendDist": "../dist"
   },
   "app": {
