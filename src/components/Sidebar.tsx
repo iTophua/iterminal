@@ -1,6 +1,6 @@
 import { Layout, Menu, Badge, Tooltip } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined, SettingOutlined } from '@ant-design/icons'
+import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined, SettingOutlined, GithubOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo } from 'react'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
@@ -193,7 +193,7 @@ style={{
         onClick={(e) => handleMenuClick(e.key)}
       />
       
-      {/* 底部设置按钮 */}
+      {/* 底部设置和 GitHub */}
       <div
         style={{
           position: 'absolute',
@@ -204,20 +204,40 @@ style={{
           padding: collapsed ? '12px 0' : '12px 16px',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'flex-start',
-          cursor: 'pointer',
+          justifyContent: collapsed ? 'center' : 'space-between',
           background: 'var(--color-bg-elevated)',
         }}
-        onClick={() => setSettingsOpen(true)}
-        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-spotlight)'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'var(--color-bg-elevated)'}
       >
-        <Tooltip title={collapsed ? '设置' : ''} placement="right">
-          <SettingOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }} />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            cursor: 'pointer',
+          }}
+          onClick={() => setSettingsOpen(true)}
+          onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
+          onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+        >
+          <Tooltip title={collapsed ? '设置' : ''} placement="right">
+            <SettingOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }} />
+          </Tooltip>
+          {!collapsed && (
+            <span style={{ color: 'var(--color-text-tertiary)', marginLeft: 10 }}>设置</span>
+          )}
+        </div>
+        
+        <Tooltip title="GitHub" placement="left">
+          <a
+            href="https://github.com/iTophua/iterminal"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center' }}
+            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
+            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+          >
+            <GithubOutlined style={{ fontSize: 16 }} />
+          </a>
         </Tooltip>
-        {!collapsed && (
-          <span style={{ color: 'var(--color-text-tertiary)', marginLeft: 10 }}>设置</span>
-        )}
       </div>
       
       {/* 设置弹窗 */}

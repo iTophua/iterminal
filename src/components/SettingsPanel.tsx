@@ -28,7 +28,7 @@ const SETTING_CATEGORIES = [
   { key: 'terminal', label: '终端', icon: <CodeOutlined /> },
   { key: 'mcp', label: 'MCP', icon: <ApiOutlined /> },
   { key: 'shortcuts', label: '快捷键', icon: <KeyOutlined />, disabled: true },
-  { key: 'about', label: '关于', icon: <InfoCircleOutlined />, disabled: true },
+  { key: 'about', label: '关于', icon: <InfoCircleOutlined /> },
 ]
 
 export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) {
@@ -524,6 +524,70 @@ ${claudeConfig}`}
         return renderTerminalSettings()
       case 'mcp':
         return renderMcpSettings()
+      case 'about':
+        return (
+          <div style={{ padding: '0 16px' }}>
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div style={{ fontSize: 48, marginBottom: 12 }}>🖥️</div>
+              <Text strong style={{ fontSize: 20, color: 'var(--color-text)' }}>iTerminal</Text>
+              <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>v1.0.0</Text>
+            </div>
+
+            <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+            <div style={{ marginBottom: 16 }}>
+              <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
+                一款现代化的 SSH 连接管理工具，支持多会话终端、文件管理、系统监控。
+              </Text>
+            </div>
+
+            <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+            <div style={{ marginBottom: 16 }}>
+              <Text style={{ color: 'var(--color-text)', fontWeight: 500, display: 'block', marginBottom: 8 }}>
+                技术栈
+              </Text>
+              <Text type="secondary" style={{ fontSize: 13 }}>
+                Tauri 2 + React 19 + TypeScript + Rust + russh
+              </Text>
+            </div>
+
+            <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+            <div style={{ marginBottom: 16 }}>
+              <Text style={{ color: 'var(--color-text)', fontWeight: 500, display: 'block', marginBottom: 8 }}>
+                开源协议
+              </Text>
+              <Text type="secondary" style={{ fontSize: 13 }}>MIT License</Text>
+            </div>
+
+            <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+            <div>
+              <Text style={{ color: 'var(--color-text)', fontWeight: 500, display: 'block', marginBottom: 8 }}>
+                相关链接
+              </Text>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <a
+                  href="https://github.com/iTophua/iterminal"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--color-primary)', fontSize: 13 }}
+                >
+                  🔗 GitHub 仓库
+                </a>
+                <a
+                  href="https://github.com/iTophua/iterminal/issues"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--color-primary)', fontSize: 13 }}
+                >
+                  🐛 问题反馈
+                </a>
+              </div>
+            </div>
+          </div>
+        )
       default:
         return (
           <div style={{ padding: '0 16px', textAlign: 'center', color: 'var(--color-text-tertiary)', marginTop: 40 }}>
