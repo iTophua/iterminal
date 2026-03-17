@@ -193,30 +193,28 @@ style={{
         onClick={(e) => handleMenuClick(e.key)}
       />
       
-      {/* 底部设置和 GitHub */}
+      {/* 底部区域 */}
       <div
         style={{
           position: 'absolute',
           bottom: 0,
           left: 0,
           right: 0,
-          borderTop: '1px solid var(--color-border)',
-          padding: collapsed ? '12px 0' : '12px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: collapsed ? 'center' : 'space-between',
           background: 'var(--color-bg-elevated)',
         }}
       >
         <div
           style={{
+            borderTop: '1px solid var(--color-border)',
+            padding: collapsed ? '12px 0' : '12px 16px',
             display: 'flex',
             alignItems: 'center',
+            justifyContent: collapsed ? 'center' : 'flex-start',
             cursor: 'pointer',
           }}
           onClick={() => setSettingsOpen(true)}
-          onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
-          onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-spotlight)'}
+          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
         >
           <Tooltip title={collapsed ? '设置' : ''} placement="right">
             <SettingOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }} />
@@ -226,18 +224,40 @@ style={{
           )}
         </div>
         
-        <Tooltip title="GitHub" placement="left">
-          <a
-            href="https://github.com/iTophua/iterminal"
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{ color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center' }}
-            onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
-            onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-          >
-            <GithubOutlined style={{ fontSize: 16 }} />
-          </a>
-        </Tooltip>
+        <div
+          style={{
+            borderTop: '1px solid var(--color-border)',
+            padding: collapsed ? '12px 0' : '12px 16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: collapsed ? 'center' : 'flex-start',
+          }}
+        >
+          <Tooltip title={collapsed ? 'GitHub' : ''} placement="right">
+            <a
+              href="https://github.com/iTophua/iterminal"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--color-text-tertiary)', display: 'flex', alignItems: 'center' }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+            >
+              <GithubOutlined style={{ fontSize: 16 }} />
+            </a>
+          </Tooltip>
+          {!collapsed && (
+            <a
+              href="https://github.com/iTophua/iterminal"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'var(--color-text-tertiary)', marginLeft: 10, fontSize: 14 }}
+              onMouseEnter={(e) => e.currentTarget.style.opacity = '0.7'}
+              onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+            >
+              GitHub
+            </a>
+          )}
+        </div>
       </div>
       
       {/* 设置弹窗 */}
