@@ -13,7 +13,7 @@ jobs:
   check-changes:
     runs-on: ubuntu-latest
     outputs:
-      mcp-changed: ${{ steps.filter.outputs.mcp }}
+      mcp-changed: ${{ steps.check.outputs.mcp-changed }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -21,12 +21,26 @@ jobs:
           fetch-depth: 0
 
       - name: Check MCP changes
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            mcp:
-              - 'mcp/**'
+        id: check
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREV_TAG" ]; then
+            # First release, publish everything
+            echo "mcp-changed=true" >> $GITHUB_OUTPUT
+            echo "First release, will publish MCP"
+          else
+            # Check if mcp/ directory changed between tags
+            CHANGED=$(git diff --name-only $PREV_TAG HEAD -- mcp/ | head -1)
+            if [ -n "$CHANGED" ]; then
+              echo "mcp-changed=true" >> $GITHUB_OUTPUT
+              echo "MCP changes detected between $PREV_TAG and ${{ github.ref_name }}"
+            else
+              echo "mcp-changed=false" >> $GITHUB_OUTPUT
+              echo "No MCP changes between $PREV_TAG and ${{ github.ref_name }}"
+            fi
+          fi
 
   build:
     strategy:
