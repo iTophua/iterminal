@@ -5,6 +5,7 @@ import { useState, useEffect } from 'react'
 import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { invoke } from '@tauri-apps/api/core'
+import { getVersion } from '@tauri-apps/api/app'
 
 const { Text } = Typography
 
@@ -52,6 +53,20 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const [mcpLoading, setMcpLoading] = useState(false)
   const [apiServerRunning, setApiServerRunning] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [appVersion, setAppVersion] = useState<string>('')
+
+  useEffect(() => {
+    const fetchVersion = async () => {
+      try {
+        const version = await getVersion()
+        setAppVersion(version)
+      } catch (e) {
+        console.error('Failed to get app version:', e)
+        setAppVersion('1.0.0')
+      }
+    }
+    fetchVersion()
+  }, [])
 
   useEffect(() => {
     const checkMcpStatus = async () => {
@@ -530,7 +545,7 @@ ${claudeConfig}`}
             <div style={{ textAlign: 'center', marginBottom: 24 }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🖥️</div>
               <Text strong style={{ fontSize: 20, color: 'var(--color-text)' }}>iTerminal</Text>
-              <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>v1.0.0</Text>
+              <Text type="secondary" style={{ display: 'block', marginTop: 4 }}>v{appVersion || '...'}</Text>
             </div>
 
             <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
