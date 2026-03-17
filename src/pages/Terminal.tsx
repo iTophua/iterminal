@@ -693,6 +693,7 @@ function Terminal() {
                     if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
                       setFileManagerVisible(activeConnectionId, false)
                     }
+                    setApiLogVisible(false)
                   }}
                 >
                   <DashboardOutlined />
@@ -711,6 +712,7 @@ function Terminal() {
                     setFileManagerVisible(conn.connectionId, !isVisible)
                     if (!isVisible) {
                       setMonitorVisible(false)
+                      setApiLogVisible(false)
                     }
                   }}
                 >
@@ -726,7 +728,16 @@ function Terminal() {
                       padding: '4px 6px',
                       fontSize: 14
                     }}
-                    onClick={() => setApiLogVisible(!apiLogVisible)}
+                    onClick={() => {
+                      const newVisible = !apiLogVisible
+                      setApiLogVisible(newVisible)
+                      if (newVisible) {
+                        setMonitorVisible(false)
+                        if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
+                          setFileManagerVisible(activeConnectionId, false)
+                        }
+                      }
+                    }}
                   >
                     <ApiOutlined />
                   </span>

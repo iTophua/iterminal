@@ -337,10 +337,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   "mcp": {
     "iterminal": {
       "type": "local",
-      "command": [
-        "node",
-        "/path/to/iTerminal/mcp/dist/index.js"
-      ],
+      "command": ["npx", "iterminal-mcp-server"],
       "enabled": true
     }
   }
@@ -348,8 +345,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     const claudeConfig = `{
   "mcpServers": {
     "iterminal": {
-      "command": "node",
-      "args": ["/path/to/iTerminal/mcp/dist/index.js"]
+      "command": "npx",
+      "args": ["iterminal-mcp-server"]
     }
   }
 }`
@@ -479,7 +476,7 @@ ${claudeConfig}`}
           </div>
 
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-            将 /path/to/iTerminal 替换为项目实际路径，配置后重启 AI 工具生效
+            配置后重启 AI 工具生效，确保 iTerminal 已启动且 MCP 服务开启
           </Text>
         </div>
 

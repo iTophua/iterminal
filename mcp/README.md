@@ -27,6 +27,35 @@ iterminal-mcp
 
 ## Configuration
 
+### OpenCode (推荐)
+
+OpenCode 是一款强大的 AI 编程助手，支持 MCP 协议。配置步骤：
+
+1. 打开配置文件 `~/.config/opencode/opencode.jsonc`
+2. 在 `mcp` 字段中添加 iTerminal 配置：
+
+```json
+{
+  "mcp": {
+    "iterminal": {
+      "type": "local",
+      "command": ["npx", "iterminal-mcp-server"],
+      "enabled": true
+    }
+  }
+}
+```
+
+3. 重启 OpenCode 生效
+
+**配置说明：**
+
+| 字段 | 说明 |
+|------|------|
+| `type` | 固定为 `"local"`，表示本地 MCP 服务器 |
+| `command` | 启动命令，使用 npx 直接运行 npm 包 |
+| `enabled` | 是否启用该 MCP 服务器 |
+
 ### Claude Desktop
 
 Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS):
@@ -42,9 +71,25 @@ Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_
 }
 ```
 
+### Cursor / Windsurf
+
+在 AI 设置中添加 MCP 服务器：
+
+```json
+{
+  "mcpServers": {
+    "iterminal": {
+      "command": "npx",
+      "args": ["iterminal-mcp-server"]
+    }
+  }
+}
+```
+
 ### Prerequisites
 
 - iTerminal desktop app must be running with the HTTP API enabled on port 27149
+- Node.js 18+ (for npx)
 - SSH credentials for your servers
 
 ## Available Tools
