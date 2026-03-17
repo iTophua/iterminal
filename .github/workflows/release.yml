@@ -10,6 +10,24 @@ permissions:
   contents: write
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mcp-changed: ${{ steps.filter.outputs.mcp }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check MCP changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            mcp:
+              - 'mcp/**'
+
   build:
     strategy:
       fail-fast: false
@@ -129,9 +147,9 @@ jobs:
           files: artifacts/**/*
 
   publish-mcp:
-    needs: release
+    needs: [release, check-changes]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && needs.check-changes.outputs.mcp-changed == 'true'
     permissions:
       contents: read
       id-token: write
