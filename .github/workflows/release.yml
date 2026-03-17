@@ -178,6 +178,12 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Update npm to latest
+        run: npm install -g npm@latest
+
+      - name: Verify npm version
+        run: npm --version
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -193,15 +199,24 @@ jobs:
 
       - name: Publish to npm
         working-directory: ./mcp
-        run: npm publish --provenance --access public
+        run: |
+          echo "Publishing with npm $(npm --version)"
+          echo "Node version: $(node --version)"
+          npm publish --provenance --access public
 
       - name: Install mcp-publisher
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
-          sudo mv mcp-publisher /usr/local/bin/
+
+      - name: Authenticate to MCP Registry
+        run: ./mcp-publisher login github-oidc
+
+      - name: Update server.json version
+        working-directory: ./mcp
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
 
       - name: Publish to MCP Registry
         working-directory: ./mcp
-        run: mcp-publisher publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ../mcp-publisher publish
