@@ -43,6 +43,16 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 
 ---
 
+## 应用图片
+
+<div style="display: flex; overflow-x: auto; gap: 10px; white-space: nowrap;">
+  <img src="https://github.com/user-attachments/assets/4068ff65-8c11-44ed-92bc-c4db42a6103e" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://github.com/user-attachments/assets/e89feda1-7843-410a-a731-379bf8a8fac4" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://github.com/user-attachments/assets/789a9a53-f748-4e42-abd2-6f0a4246de01" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://github.com/user-attachments/assets/a123419b-5548-4c03-83fe-f29848a957d1" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
+</div>
+
+
 ## 安装与打包
 
 ### 环境要求
