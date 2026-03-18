@@ -6,6 +6,7 @@ import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOut
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
+import { STORAGE_KEYS, API_CONFIG } from '../config/constants'
 
 const { Text } = Typography
 
@@ -47,7 +48,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const [tempSettings, setTempSettings] = useState<TerminalSettings>(terminalSettings)
   const [hasTerminalChanges, setHasTerminalChanges] = useState(false)
   const [mcpEnabled, setMcpEnabled] = useState(() => {
-    const saved = localStorage.getItem('iterminal_mcp_enabled')
+    const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
   })
   const [mcpLoading, setMcpLoading] = useState(false)
@@ -72,7 +73,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     const checkMcpStatus = async () => {
       try {
         const running = await invoke<boolean>('is_api_server_running')
-        const saved = localStorage.getItem('iterminal_mcp_enabled')
+        const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
         const enabled = saved ? saved === 'true' : false
         if (enabled && !running) {
           await invoke('start_api_server_command')
@@ -92,12 +93,14 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       if (checked) {
         await invoke('start_api_server_command')
         setMcpEnabled(true)
-        localStorage.setItem('iterminal_mcp_enabled', 'true')
+        localStorage.setItem(STORAGE_KEYS.MCP_ENABLED, 'true')
       } else {
         await invoke('stop_api_server')
         setMcpEnabled(false)
-        localStorage.setItem('iterminal_mcp_enabled', 'false')
+        localStorage.setItem(STORAGE_KEYS.MCP_ENABLED, 'false')
       }
+      // 通知其他组件 MCP 状态变更
+      window.dispatchEvent(new CustomEvent('mcp-status-change', { detail: checked }))
     } catch (e) {
       message.error(`MCP 服务${checked ? '启动' : '停止'}失败: ${e}`)
     } finally {
@@ -395,7 +398,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
               color: 'var(--color-text-secondary)',
               flex: 1,
             }}>
-              http://127.0.0.1:27149
+              {API_CONFIG.BASE_URL}
             </div>
             {apiServerRunning ? (
               <span style={{ color: 'var(--color-success)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>

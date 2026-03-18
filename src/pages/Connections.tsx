@@ -5,8 +5,8 @@ import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App }
 import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
-
-const STORAGE_KEY = 'iterminal_connections'
+import { STORAGE_KEYS, PORT_CHECK_CONFIG } from '../config/constants'
+import { generateUniqueId } from '../types/shared'
 
 type TestResult = 'success' | 'failed' | null
 
@@ -15,7 +15,7 @@ function Connections() {
   const location = useLocation()
   const { modal, message } = App.useApp()
   const [connections, setConnections] = useState<Connection[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
+    const saved = localStorage.getItem(STORAGE_KEYS.CONNECTIONS)
     const parsed = saved ? JSON.parse(saved) : []
     // 启动时重置所有连接状态为 offline
     return parsed.map((conn: Connection) => ({ ...conn, status: 'offline' as const }))
@@ -52,7 +52,7 @@ function Connections() {
   // localStorage 写入防抖，避免频繁写入阻塞
   useEffect(() => {
     const timer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(connections))
+      localStorage.setItem(STORAGE_KEYS.CONNECTIONS, JSON.stringify(connections))
       window.dispatchEvent(new CustomEvent('connections-updated'))
     }, 300)
     return () => clearTimeout(timer)
@@ -70,10 +70,15 @@ function Connections() {
 
 
   // 端口探测 - 检测服务器在线状态（完全异步，不阻塞）
+  // 优化：只在页面可见时检测，跳过已连接和正在连接的
   useEffect(() => {
     let cancelled = false
+    let intervalId: ReturnType<typeof setInterval> | null = null
 
     const checkAllConnections = async () => {
+      // 页面不可见时跳过检测
+      if (document.hidden) return
+
       // 防止并发检测
       if (checkingRef.current) return
       checkingRef.current = true
@@ -127,16 +132,30 @@ function Connections() {
       checkingRef.current = false
     }
 
+    // 页面可见性变化时检测
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        checkAllConnections()
+      }
+    }
+
+    // 初始检测
     checkAllConnections()
 
-    // 每 10 分钟检测一次
-    const interval = setInterval(() => {
-      checkAllConnections()
-    }, 600000)
+    // 使用配置的检测间隔
+    intervalId = setInterval(() => {
+      if (!document.hidden) {
+        checkAllConnections()
+      }
+    }, PORT_CHECK_CONFIG.CHECK_INTERVAL)
+
+    // 监听页面可见性变化
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
       cancelled = true
-      clearInterval(interval)
+      if (intervalId) clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, []) // 空依赖数组，只在挂载时运行一次
 
@@ -209,7 +228,7 @@ function Connections() {
       message.success('连接已更新')
     } else {
       const newConn: Connection = {
-        id: Date.now().toString(),
+        id: generateUniqueId(),
         name: values.name || '',
         host: values.host || '',
         port,
@@ -417,7 +436,7 @@ function Connections() {
     }
     
     const newConn: Connection = {
-      id: Date.now().toString(),
+      id: generateUniqueId(),
       name: parsed.name || '',
       host: parsed.host || '',
       port: parsed.port || 22,

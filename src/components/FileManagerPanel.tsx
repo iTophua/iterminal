@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Tree, Input, Button, Tooltip, Modal, Empty, Spin, App
+  Tree, Input, Button, Tooltip, Empty, Spin, App
 } from 'antd'
 const { DirectoryTree } = Tree
 import {
@@ -10,39 +10,22 @@ import {
   FolderAddOutlined, FileAddOutlined, ScissorOutlined,
   CopyOutlined, CompressOutlined, EyeOutlined, EyeInvisibleOutlined,
   ArrowLeftOutlined, ArrowRightOutlined, CloudUploadOutlined,
-  ExclamationCircleOutlined, UnorderedListOutlined, PartitionOutlined,
+  UnorderedListOutlined, PartitionOutlined,
   ArrowUpOutlined, ArrowDownOutlined, FolderOutlined, FileOutlined
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
-import type { DataNode } from 'antd/es/tree'
 import { useTerminalStore } from '../stores/terminalStore'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { useTransferStore } from '../stores/transferStore'
+import { TreeNode, ConflictFile } from './fileManager/types'
+import { NewFileModal, NewFolderModal, RenameModal, DeleteModal, ChmodModal, CompressModal, ConflictModal } from './fileManager/Modals'
 
 interface FileManagerPanelProps {
   connectionId: string
   visible: boolean
   onClose: () => void
-}
-
-interface TreeNode extends DataNode {
-  key: string
-  title: string
-  isDirectory: boolean
-  path: string
-  size?: number
-  modified?: string
-  permissions?: string
-  children?: TreeNode[]
-}
-
-interface ConflictFile {
-  localPath: string
-  remotePath: string
-  fileName: string
-  targetDir: string
 }
 
 export default function FileManagerPanel({ connectionId, visible, onClose }: FileManagerPanelProps) {
@@ -1364,156 +1347,62 @@ const renderTreeNode = (node: TreeNode) => (
         document.body
       )}
 
-      <Modal
-        title="新建文件"
-        open={newFileVisible}
-        onOk={handleCreateFile}
+      <NewFileModal
+        visible={newFileVisible}
+        fileName={newFileName}
+        onFileNameChange={setNewFileName}
+        onConfirm={handleCreateFile}
         onCancel={() => { setNewFileVisible(false); setNewFileName('') }}
-        okText="确定"
-        cancelText="取消"
-        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
-      >
-        <Input
-          value={newFileName}
-          onChange={(e) => setNewFileName(e.target.value)}
-          placeholder="输入文件名"
-          style={{ marginTop: 8 }}
-        />
-      </Modal>
+      />
 
-      <Modal
-        title="新建文件夹"
-        open={newFolderVisible}
-        onOk={handleCreateFolder}
+      <NewFolderModal
+        visible={newFolderVisible}
+        folderName={newFolderName}
+        onFolderNameChange={setNewFolderName}
+        onConfirm={handleCreateFolder}
         onCancel={() => { setNewFolderVisible(false); setNewFolderName('') }}
-        okText="确定"
-        cancelText="取消"
-        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
-      >
-        <Input
-          value={newFolderName}
-          onChange={(e) => setNewFolderName(e.target.value)}
-          placeholder="输入文件夹名"
-          style={{ marginTop: 8 }}
-        />
-      </Modal>
+      />
 
-      <Modal
-        title="重命名"
-        open={renameVisible}
-        onOk={handleRename}
+      <RenameModal
+        visible={renameVisible}
+        currentValue={renameValue}
+        onValueChange={setRenameValue}
+        onConfirm={handleRename}
         onCancel={() => { setRenameVisible(false); setRenameValue('') }}
-        okText="确定"
-        cancelText="取消"
-        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
-      >
-        <Input
-          value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
-          placeholder="输入新名称"
-          style={{ marginTop: 8 }}
-        />
-      </Modal>
+      />
 
-      <Modal
-        title="确认删除"
-        open={deleteVisible}
-        onOk={handleDelete}
+      <DeleteModal
+        visible={deleteVisible}
+        fileName={selectedNodeRef.current?.title || selectedNodeRef.current?.path?.split('/').pop() || ''}
+        isDirectory={selectedNodeRef.current?.isDirectory || false}
+        onConfirm={handleDelete}
         onCancel={() => setDeleteVisible(false)}
-        okText="删除"
-        cancelText="取消"
-        okButtonProps={{ danger: true }}
-      >
-        <p>确定要删除 {selectedNodeRef.current?.title || selectedNodeRef.current?.path?.split('/').pop()} 吗？</p>
-        <p style={{ color: '#ff4d4f' }}>此操作不可撤销</p>
-      </Modal>
+      />
 
-      <Modal
-        title="修改权限"
-        open={chmodVisible}
-        onOk={handleChmod}
+      <ChmodModal
+        visible={chmodVisible}
+        value={chmodValue}
+        onValueChange={setChmodValue}
+        onConfirm={handleChmod}
         onCancel={() => { setChmodVisible(false); setChmodValue('644') }}
-        okText="确定"
-        cancelText="取消"
-        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
-      >
-        <Input
-          value={chmodValue}
-          onChange={(e) => setChmodValue(e.target.value)}
-          placeholder="如: 644, 755"
-          style={{ marginTop: 8 }}
-        />
-      </Modal>
+      />
 
-      <Modal
-        title="压缩文件"
-        open={compressVisible}
-        onOk={handleCompress}
+      <CompressModal
+        visible={compressVisible}
+        fileName={compressName}
+        onFileNameChange={setCompressName}
+        onConfirm={handleCompress}
         onCancel={() => { setCompressVisible(false); setCompressName('') }}
-        okText="确定"
-        cancelText="取消"
-        okButtonProps={{ style: { background: 'var(--color-primary)' } }}
-      >
-        <p>将 {selectedNode?.title} 压缩为：</p>
-        <Input
-          value={compressName}
-          onChange={(e) => setCompressName(e.target.value)}
-          placeholder="输出文件名"
-          style={{ marginTop: 8 }}
-        />
-      </Modal>
+      />
 
-      <Modal
-        title="文件冲突"
-        open={conflictModalVisible}
-        onCancel={() => resolveConflictDialog('skip')}
-        footer={null}
-        width={420}
-      >
-        <div style={{ padding: '8px 0' }}>
-          <div style={{
-            padding: '12px',
-            background: 'rgba(255, 77, 79, 0.1)',
-            borderRadius: 6,
-            border: '1px solid rgba(255, 77, 79, 0.3)',
-            marginBottom: 16
-          }}>
-            <p style={{ color: '#ff4d4f', margin: 0, fontSize: 13 }}>
-              <ExclamationCircleOutlined style={{ marginRight: 6 }} />
-              目标位置已存在同名文件
-            </p>
-          </div>
-          <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginBottom: 8 }}>文件名</p>
-          <p style={{ color: 'var(--color-text)', fontSize: 14, marginBottom: 16, wordBreak: 'break-all' }}>
-            {conflictFile?.fileName}
-          </p>
-          <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginBottom: 8 }}>目标路径</p>
-          <p style={{ color: 'var(--color-text)', fontSize: 14, marginBottom: 24, wordBreak: 'break-all' }}>
-            {conflictFile?.remotePath}
-          </p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <Button
-              onClick={() => resolveConflictDialog('skip')}
-              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
-            >
-              跳过
-            </Button>
-            <Button
-              onClick={() => resolveConflictDialog('rename')}
-              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
-            >
-              保留两者
-            </Button>
-            <Button
-              danger
-              onClick={() => resolveConflictDialog('overwrite')}
-              style={{ background: '#ff4d4f', borderColor: '#ff4d4f' }}
-            >
-              覆盖
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      <ConflictModal
+        visible={conflictModalVisible}
+        fileName={conflictFile?.fileName || ''}
+        remotePath={conflictFile?.remotePath}
+        onOverwrite={() => resolveConflictDialog('overwrite')}
+        onSkip={() => resolveConflictDialog('skip')}
+        onRename={() => resolveConflictDialog('rename')}
+      />
     </div>
   )
 }

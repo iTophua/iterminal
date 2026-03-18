@@ -18,6 +18,7 @@ import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
+import { STORAGE_KEYS } from '../config/constants'
 
 interface SortableTabProps {
   id: string
@@ -73,14 +74,12 @@ function Terminal() {
   const initializedRef = useRef<Set<string>>(new Set())
   const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
-  // 防抖定时器 ref，用于 ResizeObserver 防抖
-  const resizeTimeoutsRef = useRef<{ [key: string]: NodeJS.Timeout }>({})
   
   // 工具栏显示状态：'full' = 完整工具栏, 'ball' = 小球形态
   const [toolbarState, setToolbarState] = useState<'full' | 'ball'>('ball')
   // 工具栏自动隐藏设置
   const [autoHideToolbar, setAutoHideToolbar] = useState(() => {
-    const saved = localStorage.getItem('iterminal_auto_hide_toolbar')
+    const saved = localStorage.getItem(STORAGE_KEYS.AUTO_HIDE_TOOLBAR)
     return saved ? saved === 'true' : true
   })
   const [mouseOverBall, setMouseOverBall] = useState(false)
@@ -96,29 +95,43 @@ function Terminal() {
   const [monitorVisible, setMonitorVisible] = useState(false)
   
   const [apiLogVisible, setApiLogVisible] = useState(false)
+  const apiLogVisibleRef = useRef(false)
+
+  // 同步 ref
+  useEffect(() => {
+    apiLogVisibleRef.current = apiLogVisible
+  }, [apiLogVisible])
   
   const [mcpEnabled, setMcpEnabled] = useState(() => {
-    const saved = localStorage.getItem('iterminal_mcp_enabled')
+    const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
   })
-  
+
+  // MCP 状态同步 - 使用自定义事件替代轮询
   useEffect(() => {
+    // 自定义事件处理
+    const handleMcpStatusChange = (e: CustomEvent<boolean>) => {
+      setMcpEnabled(e.detail)
+      // MCP 关闭时，关闭 MCP 日志面板
+      if (!e.detail && apiLogVisibleRef.current) {
+        setApiLogVisible(false)
+      }
+    }
+
+    // storage 事件处理（跨标签页同步）
     const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === 'iterminal_mcp_enabled') {
+      if (e.key === STORAGE_KEYS.MCP_ENABLED && e.newValue !== null) {
         setMcpEnabled(e.newValue === 'true')
       }
     }
+
+    // 监听自定义事件和 storage 事件
+    window.addEventListener('mcp-status-change', handleMcpStatusChange as EventListener)
     window.addEventListener('storage', handleStorageChange)
-    
-    const checkInterval = setInterval(() => {
-      const saved = localStorage.getItem('iterminal_mcp_enabled')
-      const enabled = saved ? saved === 'true' : false
-      setMcpEnabled(prev => prev !== enabled ? enabled : prev)
-    }, 1000)
-    
+
     return () => {
+      window.removeEventListener('mcp-status-change', handleMcpStatusChange as EventListener)
       window.removeEventListener('storage', handleStorageChange)
-      clearInterval(checkInterval)
     }
   }, [])
   
@@ -145,13 +158,13 @@ function Terminal() {
 
     const key = `${activeSession.connectionId}_${activeSession.id}`
     const shellId = activeSession.shellId
-    
+
     // 已初始化过，调整大小并获取焦点
     if (initializedRef.current.has(key)) {
       const addon = fitAddons.current[key]
       const term = terminalInstances.current[key]
-      if (addon) setTimeout(() => { try { addon.fit() } catch {} }, 50)
-      if (term) setTimeout(() => { try { term.focus() } catch {} }, 50)
+      if (addon) requestAnimationFrame(() => { try { addon.fit() } catch {} })
+      if (term) requestAnimationFrame(() => { try { term.focus() } catch {} })
       return
     }
 
@@ -159,6 +172,7 @@ function Terminal() {
     if (!container) return
 
     let cancelled = false
+    let initialized = false
 
     // 使用 async 函数确保正确的初始化顺序
     const init = async () => {
@@ -166,6 +180,10 @@ function Terminal() {
       const waitForContainerSize = (): Promise<void> => {
         return new Promise((resolve) => {
           const checkSize = () => {
+            if (cancelled) {
+              resolve()
+              return
+            }
             const rect = container.getBoundingClientRect()
             if (rect.width > 0 && rect.height > 0) {
               resolve()
@@ -176,9 +194,12 @@ function Terminal() {
           checkSize()
         })
       }
-      
+
       await waitForContainerSize()
-      
+
+      // 检查是否在等待过程中被取消
+      if (cancelled) return
+
       // 2. 创建终端
       const terminal = new XTerm({
         cursorBlink: terminalSettings.cursorBlink,
@@ -195,7 +216,7 @@ function Terminal() {
       terminal.loadAddon(fitAddon)
       container.innerHTML = ''
       terminal.open(container)
-      
+
       // 禁用 xterm 内部 textarea 的 paste 事件，防止双重粘贴
       const textarea = terminal.element?.querySelector('textarea')
       if (textarea) {
@@ -204,36 +225,47 @@ function Terminal() {
           e.stopPropagation()
         }, true)
       }
-      
+
       // 拦截 Ctrl+V，手动粘贴
       terminal.attachCustomKeyEventHandler(event => {
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && event.type === 'keydown') {
           terminal.clearSelection()
           readText().then(text => {
             if (text) {
-              invoke('write_shell', { id: shellId, data: text })
+              invoke('write_shell', { id: shellId, data: text }).catch(err => {
+                console.error('写入终端失败:', err)
+              })
             }
-          }).catch(err => console.error('粘贴失败:', err))
+          }).catch(err => {
+            console.error('粘贴失败:', err)
+            message.error('粘贴失败')
+          })
           return false
         }
         return true
       })
-      
-      // 输入处理
+
+      // 输入处理 - 添加错误处理
       terminal.onData(data => {
-        invoke('write_shell', { id: shellId, data }).catch(console.error)
+        invoke('write_shell', { id: shellId, data }).catch(err => {
+          console.error('写入终端失败:', err)
+        })
       })
-      
-      // 终端尺寸变化时通知 SSH 服务器
+
+      // 终端尺寸变化时通知 SSH 服务器 - 添加错误处理
       terminal.onResize(({ cols, rows }) => {
-        invoke('resize_shell', { id: shellId, cols, rows }).catch(console.error)
+        invoke('resize_shell', { id: shellId, cols, rows }).catch(err => {
+          console.error('调整终端大小失败:', err)
+        })
       })
 
       terminal.onSelectionChange(() => {
         if (terminalSettings.copyOnSelect && terminal.hasSelection()) {
           const selection = terminal.getSelection()
           if (selection) {
-            writeText(selection).catch(() => {})
+            writeText(selection).catch(err => {
+              console.error('复制失败:', err)
+            })
           }
         }
       })
@@ -241,14 +273,15 @@ function Terminal() {
       // 暂存到 ref，供事件回调使用
       terminalInstances.current[key] = terminal
       fitAddons.current[key] = fitAddon
-      
+
       // 加载搜索插件
       const searchAddon = new SearchAddon()
       terminal.loadAddon(searchAddon)
       searchAddons.current[key] = searchAddon
+
       // 3. 注册事件监听
       const eventName = `shell-output-${shellId}`
-      
+
       const unlisten = await listen<string>(eventName, (event) => {
         const term = terminalInstances.current[key]
         if (term && event.payload) {
@@ -259,56 +292,76 @@ function Terminal() {
           term.write(event.payload)
         }
       })
-      
+
       if (cancelled) {
         unlisten()
         return
       }
-      
+
       unlistenersRef.current[key] = unlisten
-      
-      // 4. 设置 ResizeObserver 监听容器尺寸变化（带防抖，避免 transition 期间频繁触发）
+
+      // 4. 设置 ResizeObserver 监听容器尺寸变化
+      // 使用 requestAnimationFrame 实现更流畅的调整
+      let rafId: number | null = null
       const resizeObserver = new ResizeObserver(() => {
-        // 清除之前的定时器
-        if (resizeTimeoutsRef.current[key]) {
-          clearTimeout(resizeTimeoutsRef.current[key])
+        // 取消之前的 RAF
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
         }
-        // 延迟 150ms 执行 fit()，等待 CSS transition (300ms) 趋于稳定
-        resizeTimeoutsRef.current[key] = setTimeout(() => {
+        // 使用 RAF 确保在下一帧执行
+        rafId = requestAnimationFrame(() => {
           const addon = fitAddons.current[key]
-          if (addon) { try { addon.fit() } catch {} }
-        }, 150)
+          if (addon) {
+            try { addon.fit() } catch {}
+          }
+          rafId = null
+        })
       })
       resizeObserver.observe(container)
       resizeObserversRef.current[key] = resizeObserver
-      
-      // 5. 初始调整终端大小（延迟确保 xterm 完成渲染）
-      setTimeout(() => {
+
+      // 5. 初始调整终端大小
+      requestAnimationFrame(() => {
         try { fitAddon.fit() } catch {}
         try { terminal.focus() } catch {}
-      }, 100)
-      
+      })
+
       // 标记为已初始化
+      initialized = true
       initializedRef.current.add(key)
-      
+
       // 6. 通知后端开始发送数据
-      await invoke('start_shell_reader', { id: shellId })
+      try {
+        await invoke('start_shell_reader', { id: shellId })
+      } catch (err) {
+        console.error('启动终端读取器失败:', err)
+        message.error('启动终端失败，请重试')
+      }
     }
 
-    init().catch(console.error)
+    init().catch(err => {
+      console.error('终端初始化失败:', err)
+      message.error('终端初始化失败')
+    })
 
     return () => {
       cancelled = true
-      if (resizeTimeoutsRef.current[key]) {
-        clearTimeout(resizeTimeoutsRef.current[key])
-        delete resizeTimeoutsRef.current[key]
+      // 如果初始化未完成，清理已创建的资源
+      if (!initialized) {
+        initializedRef.current.delete(key)
+        if (terminalInstances.current[key]) {
+          terminalInstances.current[key].dispose()
+          delete terminalInstances.current[key]
+        }
+        delete fitAddons.current[key]
+        delete searchAddons.current[key]
       }
       if (resizeObserversRef.current[key]) {
         resizeObserversRef.current[key].disconnect()
         delete resizeObserversRef.current[key]
       }
     }
-  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId])
+  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, terminalSettings, appTheme, terminalThemeKey, message])
 
 
   // 新建会话
@@ -343,10 +396,6 @@ function Terminal() {
       terminalInstances.current[key].dispose()
       delete terminalInstances.current[key]
     }
-    if (resizeTimeoutsRef.current[key]) {
-      clearTimeout(resizeTimeoutsRef.current[key])
-      delete resizeTimeoutsRef.current[key]
-    }
     delete fitAddons.current[key]
     delete searchAddons.current[key]
     delete resizeObserversRef.current[key]
@@ -377,10 +426,6 @@ function Terminal() {
       if (terminalInstances.current[key]) {
         terminalInstances.current[key].dispose()
         delete terminalInstances.current[key]
-      }
-      if (resizeTimeoutsRef.current[key]) {
-        clearTimeout(resizeTimeoutsRef.current[key])
-        delete resizeTimeoutsRef.current[key]
       }
       delete fitAddons.current[key]
       delete searchAddons.current[key]
@@ -424,7 +469,7 @@ function Terminal() {
 
   // 自动隐藏设置持久化
   useEffect(() => {
-    localStorage.setItem('iterminal_auto_hide_toolbar', String(autoHideToolbar))
+    localStorage.setItem(STORAGE_KEYS.AUTO_HIDE_TOOLBAR, String(autoHideToolbar))
   }, [autoHideToolbar])
   
   // 终端设置变更时应用到所有已打开终端

@@ -5,11 +5,9 @@ import { useState, useEffect, useMemo } from 'react'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
 import SettingsPanel from './SettingsPanel'
+import { STORAGE_KEYS } from '../config/constants'
 
 const { Sider } = Layout
-
-const STORAGE_KEY = 'iterminal_connections'
-const COLLAPSED_KEY = 'iterminal_sidebar_collapsed'
 
 interface Connection {
   id: string
@@ -22,7 +20,7 @@ function Sidebar() {
   const [groups, setGroups] = useState<string[]>(['全部', '生产环境', '开发环境', '测试环境'])
   const [groupCounts, setGroupCounts] = useState<Record<string, number>>({})
   const [collapsed, setCollapsed] = useState(() => {
-    const saved = localStorage.getItem(COLLAPSED_KEY)
+    const saved = localStorage.getItem(STORAGE_KEYS.SIDEBAR_COLLAPSED)
     return saved ? JSON.parse(saved) : false
   })
   
@@ -34,7 +32,7 @@ function Sidebar() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
+    const saved = localStorage.getItem(STORAGE_KEYS.CONNECTIONS)
     if (saved) {
       const connections: Connection[] = JSON.parse(saved)
       const uniqueGroups = [...new Set(connections.map(c => c.group))]
@@ -50,7 +48,7 @@ function Sidebar() {
   
   useEffect(() => {
     const handleConnectionsUpdate = () => {
-      const saved = localStorage.getItem(STORAGE_KEY)
+      const saved = localStorage.getItem(STORAGE_KEYS.CONNECTIONS)
       if (saved) {
         const connections: Connection[] = JSON.parse(saved)
         const uniqueGroups = [...new Set(connections.map(c => c.group))]
@@ -69,7 +67,7 @@ function Sidebar() {
   }, [])
   
   useEffect(() => {
-    localStorage.setItem(COLLAPSED_KEY, JSON.stringify(collapsed))
+    localStorage.setItem(STORAGE_KEYS.SIDEBAR_COLLAPSED, JSON.stringify(collapsed))
   }, [collapsed])
   
   useEffect(() => {
