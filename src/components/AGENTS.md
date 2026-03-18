@@ -6,10 +6,10 @@ UI components for iTerminal.
 
 | Component | Lines | Role |
 |-----------|-------|------|
-| Sidebar.tsx | 233 | Navigation, group management, connection counts from localStorage |
+| Sidebar.tsx | 270 | Navigation, group management, connection counts, settings trigger |
 | FileManagerPanel.tsx | 1519 | SFTP file manager, drag-drop upload, context menu, transfer events |
 | MonitorPanel.tsx | 331 | System monitoring, CPU/memory/disk visualization, 3s auto-refresh |
-| SettingsPanel.tsx | 514 | Settings modal with appearance, terminal, MCP categories |
+| SettingsPanel.tsx | 680 | Settings modal with appearance, terminal, MCP, License categories |
 | ThemeProvider.tsx | 139 | Ant Design ConfigProvider with theme algorithm |
 | McpLogPanel.tsx | 269 | MCP operation logs, filter by status, download |
 
@@ -21,6 +21,7 @@ UI components for iTerminal.
 - Tauri events: `listen("event-name-{id}", handler)` with cleanup
 - localStorage keys: `iterminal_*` prefix
 - Icons from `@ant-design/icons`, emojis for section headers
+- Settings categories: appearance, terminal, mcp, license, shortcuts, about
 
 ## Anti-Patterns
 

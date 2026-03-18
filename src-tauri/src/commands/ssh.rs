@@ -9,6 +9,8 @@ use tauri::AppHandle;
 use tauri::Emitter;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
+use super::license::get_max_connections;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SSHConnection {
     pub host: String,
@@ -60,6 +62,15 @@ static SHELLS: Lazy<RwLock<HashMap<String, ShellSession>>> =
 pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String> {
     if SESSIONS.read().await.contains_key(&id) {
         return Ok(true);
+    }
+
+    let current_count = SESSIONS.read().await.len() as u32;
+    let max_connections = get_max_connections().await;
+    if current_count >= max_connections {
+        return Err(format!(
+            "免费版最多支持 {} 个连接，请升级专业版解锁无限连接",
+            max_connections
+        ));
     }
 
     let addr = format!("{}:{}", connection.host, connection.port);

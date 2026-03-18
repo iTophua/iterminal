@@ -1,7 +1,7 @@
 # iTerminal - SSH Connection Manager
 
-**Generated:** 2026-03-16
-**Commit:** 2227cd9
+**Generated:** 2026-03-18
+**Commit:** 5267740
 **Branch:** main
 
 **技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 5.3 + Rust (russh 0.50 + russh-sftp 2.1)
@@ -91,14 +91,17 @@
 │   ├── src/
 │   │   ├── main.rs             # Tauri 入口，注册命令
 │   │   ├── lib.rs              # 模块声明
-│   │   ├── commands/           # Tauri 命令
-│   │   │   ├── ssh.rs          # SSH 操作 (async + Events)
-│   │   │   └── sftp.rs         # SFTP 文件传输 (russh-sftp)
+│   │   └── commands/           # Tauri 命令
+│   │       ├── ssh.rs          # SSH 操作 (async + Events)
+│   │       ├── sftp.rs         # SFTP 文件传输 (russh-sftp)
+│   │       ├── license.rs      # License 验证 (存根/Pro)
+│   │       ├── api.rs          # HTTP API 服务器 (axum)
+│   │       └── system.rs       # 系统信息 (字体等)
 │   │   └── db/                 # 数据库 (未完成)
 │   ├── Cargo.toml              # Rust 依赖
 │   ├── tauri.conf.json         # Tauri 配置
 │   └── icons/                  # 应用图标
-├── mcp/                        # MCP 服务器
+├── mcp/                        # MCP 服务器 (独立 npm 包)
 │   └── src/index.ts            # MCP 工具定义 (iter_*)
 ├── package.json                # npm 依赖
 ├── vite.config.ts              # Vite 配置 (端口 1430)
@@ -111,13 +114,17 @@
 |------|------|------|
 | 添加新 SSH 功能 | `src-tauri/src/commands/ssh.rs` | 核心 SSH 逻辑 (russh async API) |
 | 添加新 SFTP 功能 | `src-tauri/src/commands/sftp.rs` | 文件传输逻辑 |
+| License 验证 | `src-tauri/src/commands/license.rs` | 存根版本，Pro 版在私有仓库 |
+| HTTP API 服务器 | `src-tauri/src/commands/api.rs` | MCP 桥接 API (axum, 端口 27149) |
 | 修改终端事件监听 | `src/pages/Terminal.tsx` | Events 订阅/取消订阅 |
 | 修改文件管理 UI | `src/components/FileManagerPanel.tsx` | 文件树、上传下载 |
 | 修改传输状态 | `src/stores/transferStore.ts` | 传输记录、进度 |
 | 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话状态 |
+| License 状态 | `src/stores/licenseStore.ts` | License 验证状态 (Zustand) |
 | 添加新页面 | `src/pages/` | 创建组件 + 在 App.tsx 添加路由 |
 | 修改终端样式 | `src/styles/global.css` | xterm.js CSS 覆盖 |
 | 添加 Tauri 命令 | `src-tauri/src/commands/` + `main.rs` | 创建命令 + 注册 |
+| MCP 工具定义 | `mcp/src/index.ts` | iter_* 工具 (iter_connect, iter_exec 等) |
 
 ## 代码映射
 
@@ -128,7 +135,7 @@
 | `ShellSession` | struct | `ssh.rs` | Shell 会话 (cancel_tx, resize_tx, write_tx) |
 | `SESSIONS` | static | `ssh.rs` | Global SSH session storage |
 | `SHELLS` | static | `ssh.rs` | Shell session storage |
-| `connect_ssh` | async fn | `ssh.rs` | SSH 连接 (10s 超时) |
+| `connect_ssh` | async fn | `ssh.rs` | SSH 连接 (10s 超时) + License 检查 |
 | `get_shell` | async fn | `ssh.rs` | 创建 PTY + tokio::spawn 任务 |
 | `write_shell` | async fn | `ssh.rs` | 通过 mpsc channel 写入 |
 | `resize_shell` | async fn | `ssh.rs` | 通过 mpsc channel resize |
@@ -140,6 +147,14 @@
 | `download_file` | async fn | `sftp.rs` | 后台下载 (tokio::spawn) |
 | `compress_file` | async fn | `sftp.rs` | 远程压缩 (tar -czf) |
 | `list_directory` | async fn | `sftp.rs` | 列出目录内容 |
+| `LicenseType` | enum | `license.rs` | Free/Personal/Professional/Enterprise |
+| `LicenseInfo` | struct | `license.rs` | License 信息 (类型、功能、连接数限制) |
+| `verify_license` | async fn | `license.rs` | 验证 License Key |
+| `get_max_connections` | async fn | `license.rs` | 获取最大连接数 (免费版 3) |
+| `start_api_server_command` | async fn | `api.rs` | 启动 HTTP API 服务器 (端口 27149) |
+| `useLicenseStore` | hook | `licenseStore.ts` | License 状态管理 (Zustand) |
+| `useTerminalStore` | hook | `terminalStore.ts` | 连接/会话状态 (Zustand) |
+| `useTransferStore` | hook | `transferStore.ts` | 传输状态 (Zustand) |
 
 ## 核心设计
 
@@ -265,6 +280,9 @@ ShellSession {
 - **不要**使用 `entry.metadata().await` - russh-sftp 直接返回 FileAttributes
 - **不要**使用 `location.state` 传递分组 - 使用 URL 查询参数
 - **不要**频繁发送进度事件 - 限制在每 200ms 一次
+- **不要**在公开仓库修改 `license.rs` 的 `SECRET_KEY` - Pro 版在私有仓库
+- **不要**跳过 License 连接数检查 - 免费版限制 3 个连接
+- **不要**直接构建商业版 - 使用 `../iterminal-pro/scripts/build-pro.sh`
 
 ## 命令
 
@@ -285,6 +303,7 @@ npm run tauri build
 ## 注意事项
 
 - 开发端口固定 1430（`vite.config.ts`）
+- MCP API 端口 27149（`api.rs`）
 - SFTP 使用独立 SSH 连接，不阻塞终端
 - 文件传输在后台执行，通过 Events 通知前端
 - 连接数据存储在 `localStorage` key `iterminal_connections`
@@ -293,6 +312,9 @@ npm run tauri build
 - 无 CI/CD 配置（无 .github 目录）
 - 测试框架: Vitest + @testing-library/react（测试覆盖低，仅 themeStore 有完整测试）
 - russh 使用原生 async/await，需要 Rust 1.75+
+- License 系统: 免费版 3 连接限制，付费版无限连接
+- 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)
+- MCP 已发布到 npm: `iterminal-mcp-server@1.0.4`
 
 ## 安全注意事项
 

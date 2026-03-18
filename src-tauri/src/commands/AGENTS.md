@@ -7,8 +7,11 @@ Tauri command handlers for SSH operations (russh 0.50 + russh-sftp 2.1).
 ```
 commands/
 ├── mod.rs      # Module exports
-├── ssh.rs      # SSH connection, shell, command execution (~528 lines)
-└── sftp.rs     # SFTP file operations (~630 lines)
+├── ssh.rs      # SSH connection, shell, command execution (~540 lines)
+├── sftp.rs     # SFTP file operations (~630 lines)
+├── license.rs  # License validation (~260 lines)
+├── api.rs      # HTTP API server for MCP (~200 lines)
+└── system.rs   # System info (fonts) (~50 lines)
 ```
 
 ## Where to Look
@@ -20,7 +23,7 @@ commands/
 | `ShellSession` | struct | ssh.rs | Shell 会话 (cancel_tx, resize_tx, write_tx) |
 | `SESSIONS` | static | ssh.rs | Global SSH session storage (RwLock<HashMap>) |
 | `SHELLS` | static | ssh.rs | Shell session storage (RwLock<HashMap>) |
-| `connect_ssh` | async fn | ssh.rs | TCP + auth, stores session (10s timeout) |
+| `connect_ssh` | async fn | ssh.rs | TCP + auth + License check (10s timeout) |
 | `get_shell` | async fn | ssh.rs | Spawns PTY + tokio task with Events |
 | `write_shell` | async fn | ssh.rs | Sends data via mpsc channel |
 | `resize_shell` | async fn | ssh.rs | Sends resize via mpsc channel |
@@ -36,6 +39,17 @@ commands/
 | `list_directory` | async fn | sftp.rs | 列出目录内容 |
 | `is_directory` | async fn | sftp.rs | 检查远程路径是否为目录 |
 | `is_local_directory` | async fn | sftp.rs | 检查本地路径是否为目录 |
+| `LicenseType` | enum | license.rs | Free/Personal/Professional/Enterprise |
+| `LicenseInfo` | struct | license.rs | License 信息 (类型、功能、过期时间) |
+| `LICENSE_INFO` | static | license.rs | Global license state (RwLock) |
+| `verify_license` | async fn | license.rs | 验证 License Key 格式和校验和 |
+| `get_license` | async fn | license.rs | 获取当前 License 信息 |
+| `get_max_connections` | async fn | license.rs | 返回最大连接数 (免费版 3, 付费版 999) |
+| `check_connection_limit` | async fn | license.rs | 检查是否超限 |
+| `start_api_server_command` | async fn | api.rs | 启动 HTTP API (端口 27149) |
+| `stop_api_server` | async fn | api.rs | 停止 API 服务器 |
+| `is_api_server_running` | async fn | api.rs | 检查 API 状态 |
+| `get_monospace_fonts` | async fn | system.rs | 获取系统等宽字体列表 |
 
 ## Tauri Events Architecture
 

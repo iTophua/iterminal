@@ -40,6 +40,11 @@ fn main() {
             iterminal::commands::api::is_api_server_running,
             iterminal::commands::api::stop_api_server,
             iterminal::commands::api::start_api_server_command,
+            iterminal::commands::license::verify_license,
+            iterminal::commands::license::get_license,
+            iterminal::commands::license::is_feature_available,
+            iterminal::commands::license::check_connection_limit,
+            iterminal::commands::license::clear_license,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

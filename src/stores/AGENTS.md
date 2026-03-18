@@ -1,6 +1,6 @@
 # Stores - Zustand State Management
 
-**Files:** terminalStore.ts (370 lines)
+**Files:** terminalStore.ts (370 lines), transferStore.ts (~100 lines), licenseStore.ts (~80 lines), themeStore.ts (~50 lines)
 
 ## WHERE TO LOOK
 
@@ -11,6 +11,8 @@
 | Session management | terminalStore.ts:156-232 | addSession, closeSession |
 | Transfer tasks | terminalStore.ts:309-351 | File upload/download tracking |
 | File manager state | terminalStore.ts:291-369 | Path, expanded keys, visibility |
+| License validation | licenseStore.ts | verifyLicense, isFeatureAvailable, getMaxConnections |
+| Theme mode | themeStore.ts | appThemeMode, terminalTheme |
 
 ## Data Structures
 
@@ -29,6 +31,13 @@ transferTasks: { [connectionId]: TransferTask[] }
 
 currentPaths: { [connectionId]: string }  // Current directory per connection
 expandedKeys: { [connectionId]: string[] }  // File tree expansion state
+
+licenseInfo: LicenseInfo | null (licenseStore.ts)
+├── license_type: 'Free' | 'Personal' | 'Professional' | 'Enterprise'
+├── expires_at: string | null
+├── features: string[]
+├── max_connections: number (3 for Free, 999 for paid)
+└── is_valid: boolean
 ```
 
 ## CONVENTIONS
@@ -38,6 +47,7 @@ expandedKeys: { [connectionId]: string[] }  // File tree expansion state
 - **Cleanup:** closeConnection/closeSession must delete all related state keys
 - **Default path:** `/home/{username}` for new connections
 - **Session naming:** Auto-increment (会话1, 会话2, ...)
+- **License default:** Free tier, 3 connections max
 
 ## ANTI-PATTERNS
 
@@ -45,8 +55,4 @@ expandedKeys: { [connectionId]: string[] }  // File tree expansion state
 - **Don't** forget to clean up transferTasks when closing connection
 - **Don't** store sensitive data (passwords) in store - Connection interface has password field but should be removed
 - **Don't** use array index as session ID - use timestamp
-
-## Notes
-
-- File manager and transfer features are built but SFTP backend is placeholder
-- Store persists only in memory - no localStorage sync (connections stored separately in Connections.tsx)
+- **Don't** bypass License check for connection limit

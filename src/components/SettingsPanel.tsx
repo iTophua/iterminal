@@ -1,8 +1,9 @@
-import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, Switch, message } from 'antd'
+import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, Switch, message, Input, Tag, Space } from 'antd'
 import { useTerminalStore, type TerminalSettings } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
+import { useLicenseStore } from '../stores/licenseStore'
 import { useState, useEffect } from 'react'
-import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined } from '@ant-design/icons'
+import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
@@ -23,12 +24,13 @@ drwxr-xr-x  12 user  staff   384 Mar 14 10:00 .
 user@server:~$ echo "Hello, Terminal!"
 Hello, Terminal!`
 
-type SettingCategory = 'appearance' | 'terminal' | 'mcp' | 'shortcuts' | 'about'
+type SettingCategory = 'appearance' | 'terminal' | 'mcp' | 'license' | 'shortcuts' | 'about'
 
 const SETTING_CATEGORIES = [
   { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
   { key: 'terminal', label: '终端', icon: <CodeOutlined /> },
   { key: 'mcp', label: 'MCP', icon: <ApiOutlined /> },
+  { key: 'license', label: 'License', icon: <CrownOutlined /> },
   { key: 'shortcuts', label: '快捷键', icon: <KeyOutlined />, disabled: true },
   { key: 'about', label: '关于', icon: <InfoCircleOutlined /> },
 ]
@@ -55,6 +57,12 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const [apiServerRunning, setApiServerRunning] = useState(false)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState<string>('')
+  
+  const licenseInfo = useLicenseStore(state => state.licenseInfo)
+  const licenseLoading = useLicenseStore(state => state.loading)
+  const fetchLicense = useLicenseStore(state => state.fetchLicense)
+  const verifyLicense = useLicenseStore(state => state.verifyLicense)
+  const [licenseKey, setLicenseKey] = useState('')
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -113,8 +121,9 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       setTempSettings(terminalSettings)
       setHasTerminalChanges(false)
       setActiveCategory('appearance')
+      fetchLicense()
     }
-  }, [visible, terminalSettings])
+  }, [visible, terminalSettings, fetchLicense])
 
   useEffect(() => {
     if (visible && activeCategory === 'mcp') {
@@ -531,6 +540,156 @@ ${claudeConfig}`}
     )
   }
 
+  const renderLicenseSettings = () => {
+    const currentType = licenseInfo?.license_type || 'Free'
+    const isPaid = currentType !== 'Free'
+    
+    const licenseTypeLabels: Record<string, string> = {
+      Free: '免费版',
+      Personal: '个人版',
+      Professional: '专业版',
+      Enterprise: '企业版',
+    }
+
+    const licenseFeatures = {
+      Free: ['SSH 连接管理', 'SFTP 文件传输', '系统监控', '最多 3 个连接'],
+      Personal: ['无限连接', 'AI 日志分析', '命令片段库', '终端主题', '优先支持'],
+      Professional: ['无限连接', 'AI 日志分析', '命令片段库', '终端主题', '团队协作', '审计日志', '私有部署支持'],
+      Enterprise: ['所有功能', '无限连接', '专属客服', '定制开发'],
+    }
+
+    const handleActivate = async () => {
+      if (!licenseKey.trim()) {
+        message.error('请输入 License Key')
+        return
+      }
+      const success = await verifyLicense(licenseKey.trim())
+      if (success) {
+        message.success('激活成功！')
+        setLicenseKey('')
+      }
+    }
+
+    return (
+      <div style={{ padding: '0 16px' }}>
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <CrownOutlined style={{ fontSize: 24, color: isPaid ? '#faad14' : 'var(--color-text-tertiary)' }} />
+            <div>
+              <Text strong style={{ fontSize: 18, color: 'var(--color-text)' }}>
+                {licenseTypeLabels[currentType]}
+              </Text>
+              {isPaid && licenseInfo?.expires_at && (
+                <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>
+                  到期时间：{licenseInfo.expires_at}
+                </Text>
+              )}
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {licenseFeatures[currentType].map(feature => (
+              <Tag key={feature} style={{ margin: 0 }}>
+                <CheckCircleOutlined style={{ color: 'var(--color-success)', marginRight: 4 }} />
+                {feature}
+              </Tag>
+            ))}
+          </div>
+        </div>
+
+        <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+        <div style={{ marginBottom: 24 }}>
+          <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 12 }}>
+            升级到付费版
+          </Text>
+          
+          <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+            <div 
+              style={{ 
+                flex: 1, 
+                padding: 16, 
+                border: `1px solid ${currentType === 'Personal' ? '#faad14' : 'var(--color-border)'}`,
+                borderRadius: 8,
+                background: currentType === 'Personal' ? 'rgba(250, 173, 20, 0.05)' : 'var(--color-bg-container)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <CrownOutlined style={{ color: '#faad14' }} />
+                <Text strong style={{ color: 'var(--color-text)' }}>个人版</Text>
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
+                ¥99<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
+              </div>
+              <Button 
+                type="primary" 
+                block 
+                style={{ background: '#faad14', borderColor: '#faad14' }}
+                onClick={() => window.open('https://iterminal.app/buy?plan=personal')}
+              >
+                立即购买
+              </Button>
+            </div>
+            
+            <div 
+              style={{ 
+                flex: 1, 
+                padding: 16, 
+                border: `1px solid ${currentType === 'Professional' ? '#722ed1' : 'var(--color-border)'}`,
+                borderRadius: 8,
+                background: currentType === 'Professional' ? 'rgba(114, 46, 209, 0.05)' : 'var(--color-bg-container)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                <CrownOutlined style={{ color: '#722ed1' }} />
+                <Text strong style={{ color: 'var(--color-text)' }}>专业版</Text>
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
+                ¥299<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
+              </div>
+              <Button 
+                type="primary" 
+                block 
+                style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                onClick={() => window.open('https://iterminal.app/buy?plan=professional')}
+              >
+                立即购买
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+        <div>
+          <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 12 }}>
+            激活 License
+          </Text>
+          
+          <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
+            <Input 
+              placeholder="输入 License Key，如: IT-1-PERSONAL-XXXXXXXX-XXXX"
+              value={licenseKey}
+              onChange={e => setLicenseKey(e.target.value)}
+              onPressEnter={handleActivate}
+            />
+            <Button 
+              type="primary" 
+              onClick={handleActivate}
+              loading={licenseLoading}
+            >
+              激活
+            </Button>
+          </Space.Compact>
+          
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            购买后 License Key 将发送到您的邮箱
+          </Text>
+        </div>
+      </div>
+    )
+  }
+
   const renderContent = () => {
     switch (activeCategory) {
       case 'appearance':
@@ -539,6 +698,8 @@ ${claudeConfig}`}
         return renderTerminalSettings()
       case 'mcp':
         return renderMcpSettings()
+      case 'license':
+        return renderLicenseSettings()
       case 'about':
         return (
           <div style={{ padding: '0 16px' }}>
