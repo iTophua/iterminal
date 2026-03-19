@@ -2,8 +2,9 @@ import { useState, useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App, Upload } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined, FolderOpenOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
 import { PORT_CHECK_CONFIG } from '../config/constants'
 import { generateUniqueId } from '../types/shared'
@@ -281,7 +282,7 @@ function Connections() {
   }
   const handleTestConnection = async () => {
     try {
-      const values = await form.validateFields(['host', 'port', 'username', 'password'])
+      const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile'])
       const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
       
       setTestLoading(true)
@@ -294,7 +295,7 @@ function Connections() {
           port,
           username: values.username,
           password: values.password || null,
-          keyFile: null,
+          key_file: values.keyFile || null,
         }
       })
 
@@ -342,7 +343,7 @@ function Connections() {
           port: conn.port,
           username: conn.username,
           password: conn.password || null,
-          keyFile: null,
+          key_file: conn.keyFile || null,
         }
       })
 
@@ -724,6 +725,34 @@ function Connections() {
           </Form.Item>
           <Form.Item name="password" label="密码">
             <Input.Password placeholder="密码" />
+          </Form.Item>
+          <Form.Item 
+            name="keyFile" 
+            label="密钥文件"
+            extra="支持 OpenSSH 和 PEM 格式的私钥文件，如 ~/.ssh/id_rsa"
+          >
+            <Input 
+              placeholder="选择或输入密钥文件路径" 
+              addonAfter={
+                <Button 
+                  type="text" 
+                  size="small" 
+                  icon={<FolderOpenOutlined />}
+                  onClick={async () => {
+                    const selected = await open({
+                      title: '选择 SSH 密钥文件',
+                      filters: [{
+                        name: 'SSH Private Key',
+                        extensions: ['pem', 'key', 'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa']
+                      }]
+                    })
+                    if (selected) {
+                      form.setFieldValue('keyFile', selected)
+                    }
+                  }}
+                />
+              }
+            />
           </Form.Item>
           <Form.Item name="group" label="分组" initialValue="默认">
             <Select options={groupOptions} />

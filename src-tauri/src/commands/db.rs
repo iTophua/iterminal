@@ -12,6 +12,7 @@ pub struct ConnectionRecord {
     pub port: u16,
     pub username: String,
     pub password: Option<String>,
+    pub key_file: Option<String>,
     pub group_name: Option<String>,
     pub tags: Option<String>,
     pub created_at: Option<String>,
@@ -74,6 +75,7 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
             port INTEGER DEFAULT 22,
             username TEXT NOT NULL,
             password TEXT,
+            key_file TEXT,
             group_name TEXT,
             tags TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -82,6 +84,9 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
         [],
     )
     .map_err(|e| e.to_string())?;
+
+    conn.execute("ALTER TABLE connections ADD COLUMN key_file TEXT", [])
+        .ok();
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
@@ -110,7 +115,7 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
     let conn = get_db().map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, password, group_name, tags, created_at, updated_at FROM connections ORDER BY name"
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at FROM connections ORDER BY name"
     ).map_err(|e| e.to_string())?;
 
     let connections = stmt
@@ -125,10 +130,11 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
                 port: row.get(3)?,
                 username: row.get(4)?,
                 password,
-                group_name: row.get(6)?,
-                tags: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+                key_file: row.get(6)?,
+                group_name: row.get(7)?,
+                tags: row.get(8)?,
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -144,8 +150,8 @@ pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
     let encrypted_password = connection.password.as_ref().map(|p| encrypt_password(p));
 
     conn.execute(
-        "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, group_name, tags, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
+        "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
         rusqlite::params![
             connection.id,
             connection.name,
@@ -153,6 +159,7 @@ pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
             connection.port,
             connection.username,
             encrypted_password,
+            connection.key_file,
             connection.group_name,
             connection.tags,
         ],
@@ -336,6 +343,7 @@ mod tests {
                 port INTEGER DEFAULT 22,
                 username TEXT NOT NULL,
                 password TEXT,
+                key_file TEXT,
                 group_name TEXT,
                 tags TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -366,8 +374,8 @@ mod tests {
         let encrypted_password = connection.password.as_ref().map(|p| encrypt_password(p));
 
         conn.execute(
-            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, group_name, tags, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, CURRENT_TIMESTAMP)",
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
             rusqlite::params![
                 connection.id,
                 connection.name,
@@ -375,6 +383,7 @@ mod tests {
                 connection.port,
                 connection.username,
                 encrypted_password,
+                connection.key_file,
                 connection.group_name,
                 connection.tags,
             ],
@@ -389,7 +398,7 @@ mod tests {
         let conn = db.lock().map_err(|e| e.to_string())?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, name, host, port, username, password, group_name, tags, created_at, updated_at FROM connections ORDER BY name"
+            "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at FROM connections ORDER BY name"
         ).map_err(|e| e.to_string())?;
 
         let connections = stmt
@@ -404,10 +413,11 @@ mod tests {
                     port: row.get(3)?,
                     username: row.get(4)?,
                     password,
-                    group_name: row.get(6)?,
-                    tags: row.get(7)?,
-                    created_at: row.get(8)?,
-                    updated_at: row.get(9)?,
+                    key_file: row.get(6)?,
+                    group_name: row.get(7)?,
+                    tags: row.get(8)?,
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -434,6 +444,7 @@ mod tests {
             port: 22,
             username: "root".to_string(),
             password: Some("secret123".to_string()),
+            key_file: None,
             group_name: Some("Production".to_string()),
             tags: Some(r#"["tag1","tag2"]"#.to_string()),
             created_at: None,
@@ -460,6 +471,7 @@ mod tests {
             port: 22,
             username: "user".to_string(),
             password: Some("my_password".to_string()),
+            key_file: None,
             group_name: None,
             tags: None,
             created_at: None,
@@ -483,6 +495,7 @@ mod tests {
             port: 22,
             username: "user".to_string(),
             password: None,
+            key_file: None,
             group_name: None,
             tags: None,
             created_at: None,
@@ -507,6 +520,7 @@ mod tests {
             port: 22,
             username: "user".to_string(),
             password: None,
+            key_file: None,
             group_name: None,
             tags: None,
             created_at: None,
@@ -522,6 +536,7 @@ mod tests {
             port: 2222,
             username: "admin".to_string(),
             password: Some("newpass".to_string()),
+            key_file: None,
             group_name: Some("Production".to_string()),
             tags: None,
             created_at: None,
@@ -588,6 +603,7 @@ mod tests {
                 port: 22,
                 username: "root".to_string(),
                 password: Some(format!("pass{}", i)),
+                key_file: None,
                 group_name: None,
                 tags: None,
                 created_at: None,

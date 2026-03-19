@@ -9,6 +9,7 @@ interface ConnectionRecord {
   port: number
   username: string
   password: string | null
+  key_file: string | null
   group_name: string | null
   tags: string | null
   created_at: string | null
@@ -23,6 +24,7 @@ function recordToConnection(record: ConnectionRecord): Connection {
     port: record.port,
     username: record.username,
     password: record.password || undefined,
+    keyFile: record.key_file || undefined,
     group: record.group_name || '默认',
     tags: record.tags ? JSON.parse(record.tags) : [],
     status: 'offline'
@@ -37,6 +39,7 @@ function connectionToRecord(conn: Connection): ConnectionRecord {
     port: conn.port,
     username: conn.username,
     password: conn.password || null,
+    key_file: conn.keyFile || null,
     group_name: conn.group || null,
     tags: conn.tags.length > 0 ? JSON.stringify(conn.tags) : null,
     created_at: null,
@@ -131,6 +134,7 @@ export async function migrateFromLocalStorage(): Promise<number> {
     port: conn.port,
     username: conn.username,
     password: conn.password || null,
+    key_file: conn.keyFile || null,
     group_name: conn.group || null,
     tags: conn.tags && conn.tags.length > 0 ? JSON.stringify(conn.tags) : null,
     created_at: null,

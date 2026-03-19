@@ -8,6 +8,7 @@ export interface Connection {
   port: number
   username: string
   password?: string
+  keyFile?: string
   group: string
   tags: string[]
   status: 'online' | 'offline' | 'connecting'

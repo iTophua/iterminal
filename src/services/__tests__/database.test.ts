@@ -144,6 +144,7 @@ describe('database service', () => {
           port: 22,
           username: 'root',
           password: 'secret',
+          key_file: null,
           group_name: 'Production',
           tags: '["tag1"]',
           created_at: null,

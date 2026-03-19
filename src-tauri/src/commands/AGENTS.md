@@ -25,6 +25,7 @@ commands/
 | `SESSIONS` | static | ssh.rs | Global SSH session storage (RwLock<HashMap>) |
 | `SHELLS` | static | ssh.rs | Shell session storage (RwLock<HashMap>) |
 | `connect_ssh` | async fn | ssh.rs | TCP + auth + License check (10s timeout) |
+| `test_connection` | async fn | ssh.rs | Test connection with password/key auth |
 | `get_shell` | async fn | ssh.rs | Spawns PTY + tokio task with Events |
 | `write_shell` | async fn | ssh.rs | Sends data via mpsc channel |
 | `resize_shell` | async fn | ssh.rs | Sends resize via mpsc channel |
@@ -167,7 +168,9 @@ pub async fn upload_file(...) -> Result<String, String> {
 - **Events**: Shell output pushed via `AppHandle.emit()`, not polled
 - **Shell task**: `get_shell` spawns tokio task; `cancel_tx` oneshot controls it
 - **Async I/O**: Native async/await with russh, no blocking mode needed
-- **Auth priority**: Password first, then key file (key auth TODO)
+- **Auth priority**: Password first, then key file (key auth supported)
+- **Key formats**: OpenSSH and PEM formats supported
+- **Key path**: Supports `~` expansion via shellexpand
 - **Shell ID format**: `{connection_id}-shell-{timestamp_ms}`
 - **Event name format**: `shell-output-{shell_id}`, `transfer-progress-{task_id}`
 - **SFTP connection**: Independent SSH connection, not shared with Shell

@@ -21,8 +21,10 @@ interface Connection {
   port: number
   username: string
   password?: string
+  keyFile?: string       // SSH 密钥文件路径
   group: string
   tags?: string[]
+  status: 'online' | 'offline' | 'connecting'
 }
 
 // TerminalSettings (shared.ts)

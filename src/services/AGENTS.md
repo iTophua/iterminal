@@ -37,6 +37,7 @@ interface Connection {
   port: number
   username: string
   password?: string
+  keyFile?: string
   group: string
   tags: string[]
 }
@@ -49,6 +50,7 @@ interface ConnectionRecord {
   port: number
   username: string
   password: string | null
+  key_file: string | null
   group_name: string | null
   tags: string | null        // JSON 字符串
   created_at: string | null
@@ -62,6 +64,7 @@ interface ConnectionRecord {
 |----------|----------|------|
 | `group` | `group_name` | 分组名称 |
 | `tags` (数组) | `tags` (JSON 字符串) | 标签列表 |
+| `keyFile` | `key_file` | SSH 密钥文件路径 |
 
 ### 使用示例
 

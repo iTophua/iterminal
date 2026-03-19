@@ -105,8 +105,26 @@ let auth_success = if let Some(password) = &connection.password {
             Ok(Err(e)) => return Err(format!("认证失败: {}", e)),
             Err(_) => return Err("认证超时".to_string()),
         }
-    } else if let Some(_key_file) = &connection.key_file {
-        return Err("密钥认证暂未实现".to_string());
+    } else if let Some(key_file) = &connection.key_file {
+        let key_path = shellexpand::tilde(key_file).into_owned();
+        let key_pair = russh::keys::load_secret_key(&key_path, None)
+            .map_err(|e| format!("加载密钥文件失败: {}。请确保文件路径正确且格式为 OpenSSH/PEM", e))?;
+
+        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
+            Arc::new(key_pair),
+            None,
+        );
+
+        let auth_result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            handle.authenticate_publickey(&connection.username, key_with_hash)
+        ).await;
+
+        match auth_result {
+            Ok(Ok(auth)) => auth.success(),
+            Ok(Err(e)) => return Err(format!("密钥认证失败: {}。请检查密钥是否已添加到服务器", e)),
+            Err(_) => return Err("密钥认证超时".to_string()),
+        }
     } else {
         return Err("未提供认证信息".to_string());
     };
@@ -207,6 +225,22 @@ pub async fn test_connection(connection: SSHConnection) -> Result<bool, String> 
             .await
             .map(|auth| auth.success())
             .unwrap_or(false)
+    } else if let Some(key_file) = &connection.key_file {
+        let key_path = shellexpand::tilde(key_file).into_owned();
+        match russh::keys::load_secret_key(&key_path, None) {
+            Ok(key_pair) => {
+                let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
+                    Arc::new(key_pair),
+                    None,
+                );
+                handle
+                    .authenticate_publickey(&connection.username, key_with_hash)
+                    .await
+                    .map(|auth| auth.success())
+                    .unwrap_or(false)
+            }
+            Err(_) => false
+        }
     } else {
         false
     };

@@ -61,8 +61,23 @@ async fn create_sftp_connection(connection: &super::ssh::SSHConnection) -> Resul
         if !auth.success() {
             return Err("SFTP认证失败".to_string());
         }
+    } else if let Some(key_file) = &connection.key_file {
+        let key_path = shellexpand::tilde(key_file).into_owned();
+        let key_pair = russh::keys::load_secret_key(&key_path, None)
+            .map_err(|e| format!("加载密钥文件失败: {}", e))?;
+        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
+            Arc::new(key_pair),
+            None,
+        );
+        let auth = handle
+            .authenticate_publickey(&connection.username, key_with_hash)
+            .await
+            .map_err(|e| format!("SFTP密钥认证失败: {}", e))?;
+        if !auth.success() {
+            return Err("SFTP密钥认证失败".to_string());
+        }
     } else {
-        return Err("SFTP需要密码认证".to_string());
+        return Err("SFTP需要密码或密钥认证".to_string());
     }
 
     let channel = handle

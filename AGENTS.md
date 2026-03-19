@@ -137,7 +137,8 @@
 | `ShellSession` | struct | `ssh.rs` | Shell 会话 (cancel_tx, resize_tx, write_tx) |
 | `SESSIONS` | static | `ssh.rs` | Global SSH session storage |
 | `SHELLS` | static | `ssh.rs` | Shell session storage |
-| `connect_ssh` | async fn | `ssh.rs` | SSH 连接 (10s 超时) + License 检查 |
+| `connect_ssh` | async fn | `ssh.rs` | SSH 连接 (10s 超时) + License 检查，支持密码/密钥认证 |
+| `test_connection` | async fn | `ssh.rs` | 测试连接，支持密码/密钥认证 |
 | `get_shell` | async fn | `ssh.rs` | 创建 PTY + tokio::spawn 任务 |
 | `write_shell` | async fn | `ssh.rs` | 通过 mpsc channel 写入 |
 | `resize_shell` | async fn | `ssh.rs` | 通过 mpsc channel resize |
@@ -338,4 +339,7 @@ npm run test:e2e
 
 - **主机密钥验证已跳过** - `check_server_key` 无条件返回 true
 - 生产环境应实现 known_hosts 验证或让用户确认新主机
-- 密钥认证功能尚未实现
+- **认证方式**：支持密码认证和 SSH 密钥认证
+  - 密码：AES-256-GCM 加密存储
+  - 密钥：支持 OpenSSH 和 PEM 格式私钥文件
+  - 密钥路径支持 `~` 展开（如 `~/.ssh/id_rsa`）
