@@ -6,6 +6,7 @@ import {
   listDirectory,
   fileExists,
   formatSize,
+  extractFile,
   FileContent,
 } from '../sftp'
 
@@ -170,6 +171,70 @@ describe('sftp service', () => {
       const tb = 1024 * 1024 * 1024 * 1024
       expect(formatSize(tb)).toBe('1 TB')
       expect(formatSize(2.5 * tb)).toBe('2.5 TB')
+    })
+  })
+
+  describe('searchFiles', () => {
+    it('should call search_files command', async () => {
+      const mockResults = [
+        { name: 'test.txt', path: '/home/user/test.txt', is_directory: false, size: 100, modified: '2024-01-01' },
+        { name: 'testdir', path: '/home/user/testdir', is_directory: true, size: 0, modified: '2024-01-02' },
+      ]
+      mockInvoke.mockResolvedValueOnce(mockResults)
+
+      const { searchFiles } = await import('../sftp')
+      const result = await searchFiles('conn-1', '/home/user', 'test')
+
+      expect(mockInvoke).toHaveBeenCalledWith('search_files', {
+        connectionId: 'conn-1',
+        path: '/home/user',
+        pattern: 'test',
+        maxResults: 100,
+      })
+      expect(result).toHaveLength(2)
+      expect(result[0].name).toBe('test.txt')
+      expect(result[1].is_directory).toBe(true)
+    })
+
+    it('should use custom max results', async () => {
+      mockInvoke.mockResolvedValueOnce([])
+
+      const { searchFiles } = await import('../sftp')
+      await searchFiles('conn-1', '/home', 'query', 50)
+
+      expect(mockInvoke).toHaveBeenCalledWith('search_files', {
+        connectionId: 'conn-1',
+        path: '/home',
+        pattern: 'query',
+        maxResults: 50,
+      })
+    })
+  })
+
+  describe('extractFile', () => {
+    it('should call extract_file command', async () => {
+      mockInvoke.mockResolvedValueOnce(true)
+
+      const result = await extractFile('conn-1', '/home/user/archive.tar.gz', '/home/user')
+
+      expect(mockInvoke).toHaveBeenCalledWith('extract_file', {
+        connectionId: 'conn-1',
+        filePath: '/home/user/archive.tar.gz',
+        targetDir: '/home/user',
+      })
+      expect(result).toBe(true)
+    })
+
+    it('should handle different archive formats', async () => {
+      mockInvoke.mockResolvedValueOnce(true)
+
+      await extractFile('conn-1', '/home/user/data.zip', '/home/user/output')
+
+      expect(mockInvoke).toHaveBeenCalledWith('extract_file', {
+        connectionId: 'conn-1',
+        filePath: '/home/user/data.zip',
+        targetDir: '/home/user/output',
+      })
     })
   })
 })

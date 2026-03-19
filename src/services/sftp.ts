@@ -60,6 +60,40 @@ export async function fileExists(
   })
 }
 
+export interface SearchResult {
+  name: string
+  path: string
+  is_directory: boolean
+  size: number
+  modified: string
+}
+
+export async function searchFiles(
+  connectionId: string,
+  path: string,
+  pattern: string,
+  maxResults?: number
+): Promise<SearchResult[]> {
+  return invoke<SearchResult[]>('search_files', {
+    connectionId,
+    path,
+    pattern,
+    maxResults: maxResults || 100,
+  })
+}
+
+export async function extractFile(
+  connectionId: string,
+  filePath: string,
+  targetDir: string
+): Promise<boolean> {
+  return invoke<boolean>('extract_file', {
+    connectionId,
+    filePath,
+    targetDir,
+  })
+}
+
 export function formatSize(bytes: number): string {
   if (bytes === 0) return '-'
   const k = 1024

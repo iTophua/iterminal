@@ -895,6 +895,75 @@ pub async fn compress_file(
 }
 
 #[tauri::command]
+pub async fn extract_file(
+    connection_id: String,
+    file_path: String,
+    target_dir: String,
+) -> Result<bool, String> {
+    let sessions = super::ssh::SESSIONS.read().await;
+    let session = sessions.get(&connection_id).ok_or("SSH session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open channel: {}", e))?;
+    drop(sessions);
+
+    let command = if file_path.ends_with(".tar.gz") || file_path.ends_with(".tgz") {
+        format!("mkdir -p \"{}\" && tar -xzf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+    } else if file_path.ends_with(".tar.bz2") || file_path.ends_with(".tbz2") {
+        format!("mkdir -p \"{}\" && tar -xjf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+    } else if file_path.ends_with(".tar.xz") || file_path.ends_with(".txz") {
+        format!("mkdir -p \"{}\" && tar -xJf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+    } else if file_path.ends_with(".tar") {
+        format!("mkdir -p \"{}\" && tar -xf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+    } else if file_path.ends_with(".zip") {
+        format!("mkdir -p \"{}\" && unzip -o \"{}\" -d \"{}\"", target_dir, file_path, target_dir)
+    } else if file_path.ends_with(".gz") {
+        let output_file = file_path.trim_end_matches(".gz");
+        format!("mkdir -p \"{}\" && gunzip -c \"{}\" > \"{}/{}\"", target_dir, file_path, target_dir, output_file.rsplit('/').next().unwrap_or("file"))
+    } else if file_path.ends_with(".bz2") {
+        let output_file = file_path.trim_end_matches(".bz2");
+        format!("mkdir -p \"{}\" && bunzip2 -c \"{}\" > \"{}/{}\"", target_dir, file_path, target_dir, output_file.rsplit('/').next().unwrap_or("file"))
+    } else if file_path.ends_with(".xz") {
+        let output_file = file_path.trim_end_matches(".xz");
+        format!("mkdir -p \"{}\" && xz -dc \"{}\" > \"{}/{}\"", target_dir, file_path, target_dir, output_file.rsplit('/').next().unwrap_or("file"))
+    } else {
+        return Err("不支持的压缩格式".to_string());
+    };
+
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    let mut output = Vec::new();
+    let mut exit_status: u32 = 0;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+            russh::ChannelMsg::ExtendedData { data, ext } => {
+                if ext == 1 {
+                    output.extend_from_slice(&data);
+                }
+            }
+            russh::ChannelMsg::ExitStatus { exit_status: status } => {
+                exit_status = status;
+            }
+            russh::ChannelMsg::Eof => break,
+            _ => {}
+        }
+    }
+
+    if exit_status != 0 {
+        let error_msg = String::from_utf8_lossy(&output).to_string();
+        return Err(format!("解压失败 (exit code {}): {}", exit_status, error_msg));
+    }
+
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn open_folder(path: String) -> Result<bool, String> {
     let _ = std::process::Command::new("open").arg(&path).status();
     Ok(true)
@@ -926,6 +995,85 @@ pub async fn pause_transfer(task_id: String) -> Result<bool, String> {
 pub async fn resume_transfer(task_id: String) -> Result<bool, String> {
     TRANSFER_PAUSED.write().await.remove(&task_id);
     Ok(true)
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SearchResult {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+    pub size: u64,
+    pub modified: String,
+}
+
+#[tauri::command]
+pub async fn search_files(
+    connection_id: String,
+    path: String,
+    pattern: String,
+    max_results: Option<u32>,
+) -> Result<Vec<SearchResult>, String> {
+    let sessions = super::ssh::SESSIONS.read().await;
+    let session = sessions.get(&connection_id).ok_or("SSH session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open channel: {}", e))?;
+    drop(sessions);
+
+    let max = max_results.unwrap_or(100);
+    let escaped_pattern = pattern.replace('"', "\\\"").replace('\'', "'\\''");
+    let command = format!(
+        "find \"{}\" -iname \"*{}*\" -printf '%y\t%s\t%T+\t%p\n' 2>/dev/null | head -n {}",
+        path, escaped_pattern, max
+    );
+
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("Failed to execute command: {}", e))?;
+
+    let mut output = Vec::new();
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
+            russh::ChannelMsg::ExtendedData { data, ext } => {
+                if ext == 1 {
+                    output.extend_from_slice(&data);
+                }
+            }
+            russh::ChannelMsg::Eof => break,
+            _ => {}
+        }
+    }
+
+    let output_str = String::from_utf8_lossy(&output);
+    let mut results: Vec<SearchResult> = Vec::new();
+
+    for line in output_str.lines() {
+        let parts: Vec<&str> = line.splitn(4, '\t').collect();
+        if parts.len() >= 4 {
+            let file_type = parts[0];
+            let size_str = parts[1];
+            let modified = parts[2];
+            let full_path = parts[3];
+
+            let name = full_path.rsplit('/').next().unwrap_or(full_path).to_string();
+            let is_directory = file_type == "d";
+            let size = size_str.parse::<u64>().unwrap_or(0);
+
+            results.push(SearchResult {
+                name,
+                path: full_path.to_string(),
+                is_directory,
+                size,
+                modified: modified.to_string(),
+            });
+        }
+    }
+
+    Ok(results)
 }
 
 #[tauri::command]
@@ -1074,5 +1222,32 @@ mod tests {
             cancelled: true,
         };
         assert!(result.cancelled);
+    }
+
+    #[test]
+    fn test_search_result() {
+        let result = SearchResult {
+            name: "test.txt".to_string(),
+            path: "/home/user/test.txt".to_string(),
+            is_directory: false,
+            size: 1024,
+            modified: "2024-01-15".to_string(),
+        };
+        assert_eq!(result.name, "test.txt");
+        assert_eq!(result.path, "/home/user/test.txt");
+        assert!(!result.is_directory);
+        assert_eq!(result.size, 1024);
+    }
+
+    #[test]
+    fn test_search_result_directory() {
+        let result = SearchResult {
+            name: "documents".to_string(),
+            path: "/home/user/documents".to_string(),
+            is_directory: true,
+            size: 0,
+            modified: "2024-01-15".to_string(),
+        };
+        assert!(result.is_directory);
     }
 }

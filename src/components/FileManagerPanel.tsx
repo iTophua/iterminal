@@ -12,7 +12,7 @@ import {
   CopyOutlined, CompressOutlined, EyeOutlined, EyeInvisibleOutlined,
   ArrowLeftOutlined, ArrowRightOutlined, CloudUploadOutlined,
   UnorderedListOutlined, PartitionOutlined,
-  ArrowUpOutlined, ArrowDownOutlined, FolderOutlined, FileOutlined
+  ArrowUpOutlined, ArrowDownOutlined, FolderOutlined, FileOutlined, SearchOutlined, CloseOutlined
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
@@ -99,6 +99,14 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const [editFile, setEditFile] = useState<{ name: string; path: string } | null>(null)
   const [editLoading, setEditLoading] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
+
+  const [searchVisible, setSearchVisible] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<TreeNode[]>([])
+  const [searchLoading, setSearchLoading] = useState(false)
+
+  const [extractVisible, setExtractVisible] = useState(false)
+  const [extractLoading, setExtractLoading] = useState(false)
 
   useEffect(() => {
     dragTargetPathRef.current = dragTargetPath
@@ -942,6 +950,81 @@ const renderTreeNode = (node: TreeNode) => (
     }
   }
 
+  const isCompressedFile = (fileName: string): boolean => {
+    const lowerName = fileName.toLowerCase()
+    return lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tgz') ||
+           lowerName.endsWith('.tar.bz2') || lowerName.endsWith('.tbz2') ||
+           lowerName.endsWith('.tar.xz') || lowerName.endsWith('.txz') ||
+           lowerName.endsWith('.tar') ||
+           lowerName.endsWith('.zip') ||
+           lowerName.endsWith('.gz') ||
+           lowerName.endsWith('.bz2') ||
+           lowerName.endsWith('.xz')
+  }
+
+  const handleExtract = async () => {
+    if (!selectedNode || selectedNode.isDirectory) return
+    setExtractLoading(true)
+    try {
+      const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/'
+      const targetDir = parentPath
+      await invoke('extract_file', {
+        connectionId,
+        filePath: selectedNode.path,
+        targetDir
+      })
+      message.success('解压成功')
+      setExtractVisible(false)
+      refreshCurrent()
+    } catch (err) {
+      message.error(`解压失败: ${err}`)
+    } finally {
+      setExtractLoading(false)
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+    setSearchLoading(true)
+    try {
+      const results = await invoke<{ name: string; path: string; is_directory: boolean; size: number; modified: string }[]>('search_files', {
+        connectionId,
+        path: currentPath,
+        pattern: searchQuery.trim(),
+        maxResults: 100
+      })
+      const nodes: TreeNode[] = results.map(r => ({
+        key: r.path,
+        title: r.name,
+        isDirectory: r.is_directory,
+        path: r.path,
+        size: r.size,
+        modified: r.modified,
+        isLeaf: !r.is_directory,
+      }))
+      setSearchResults(nodes)
+      setSearchVisible(true)
+    } catch (err) {
+      message.error(`搜索失败: ${err}`)
+    } finally {
+      setSearchLoading(false)
+    }
+  }
+
+  const handleSearchSelect = (node: TreeNode) => {
+    if (node.isDirectory) {
+      store.setCurrentPath(connectionId, node.path.substring(0, node.path.lastIndexOf('/')) || '/')
+      loadDirectory(node.path.substring(0, node.path.lastIndexOf('/')) || '/', true)
+    } else {
+      const parentPath = node.path.substring(0, node.path.lastIndexOf('/')) || '/'
+      store.setCurrentPath(connectionId, parentPath)
+      loadDirectory(parentPath, true)
+    }
+    setSearchVisible(false)
+    setSearchQuery('')
+    setSearchResults([])
+  }
+
   const copyFileName = async () => {
     if (selectedNode) {
       try {
@@ -984,6 +1067,7 @@ const renderTreeNode = (node: TreeNode) => (
     { key: 'copyPath', label: '复制绝对路径', icon: <ScissorOutlined />, onClick: copyFullPath },
     { type: 'divider' as const },
     { key: 'compress', label: '压缩', icon: <CompressOutlined />, onClick: () => { setCompressName((selectedNode?.title || '') + '.tar.gz'); setCompressVisible(true); setContextMenuVisible(false) } },
+    { key: 'extract', label: '解压', icon: <CompressOutlined />, onClick: () => { setExtractVisible(true); setContextMenuVisible(false) }, disabled: !selectedNode || selectedNode.isDirectory || !isCompressedFile(selectedNode.title || '') },
     { key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true, onClick: () => { setDeleteVisible(true); setContextMenuVisible(false) } },
   ]
 
@@ -1171,7 +1255,58 @@ const renderTreeNode = (node: TreeNode) => (
             style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
           />
         </Tooltip>
+        <Tooltip title="搜索文件">
+          <Button
+            size="small"
+            icon={<SearchOutlined />}
+            onClick={() => setSearchVisible(!searchVisible)}
+            style={{ background: searchVisible ? 'rgba(0, 185, 107, 0.15)' : 'transparent', border: '1px solid var(--color-border)', color: searchVisible ? 'var(--color-primary)' : 'var(--color-text-tertiary)' }}
+          />
+        </Tooltip>
       </div>
+
+      {searchVisible && (
+        <div style={{
+          padding: '8px 12px',
+          borderBottom: '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          background: 'var(--color-bg-container)',
+        }}>
+          <Input
+            size="small"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onPressEnter={handleSearch}
+            placeholder="输入文件名搜索..."
+            style={{
+              flex: 1,
+              background: 'var(--color-bg-elevated)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text)',
+            }}
+          />
+          <Button
+            size="small"
+            type="primary"
+            loading={searchLoading}
+            onClick={handleSearch}
+          >
+            搜索
+          </Button>
+          <Button
+            size="small"
+            icon={<CloseOutlined />}
+            onClick={() => {
+              setSearchVisible(false)
+              setSearchQuery('')
+              setSearchResults([])
+            }}
+            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+          />
+        </div>
+      )}
 
       <div
         ref={treeContainerRef}
@@ -1184,7 +1319,62 @@ const renderTreeNode = (node: TreeNode) => (
           WebkitUserSelect: 'none',
         }}
       >
-        {loading ? (
+        {searchResults.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, padding: '0 4px' }}>
+              找到 {searchResults.length} 个结果
+            </div>
+            {searchResults.map((item) => (
+              <div
+                key={item.key}
+                onClick={() => handleSearchSelect(item)}
+                onDoubleClick={() => handleSearchSelect(item)}
+                style={{
+                  padding: '8px 12px',
+                  background: 'var(--color-bg-container)',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  transition: 'background 0.15s',
+                  border: '1px solid var(--color-border)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(0, 185, 107, 0.1)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--color-bg-container)'
+                }}
+              >
+                <div style={{
+                  fontSize: 13,
+                  marginBottom: 4,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}>
+                  {item.isDirectory ? <FolderOutlined style={{ color: 'var(--color-primary)' }} /> : <FileOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
+                  <span style={{
+                    color: item.isDirectory ? 'var(--color-primary)' : 'var(--color-text)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>{item.title}</span>
+                </div>
+                <div style={{
+                  color: 'var(--color-text-quaternary)',
+                  fontSize: 11,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {item.path}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : loading ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
@@ -1548,6 +1738,21 @@ const renderTreeNode = (node: TreeNode) => (
             }}
           />
         )}
+      </Modal>
+
+      <Modal
+        open={extractVisible}
+        title="解压文件"
+        onCancel={() => setExtractVisible(false)}
+        onOk={handleExtract}
+        okText="解压"
+        cancelText="取消"
+        confirmLoading={extractLoading}
+      >
+        <p>确定要解压文件 <strong>{selectedNode?.title}</strong> 吗？</p>
+        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+          文件将解压到当前目录
+        </p>
       </Modal>
     </div>
   )

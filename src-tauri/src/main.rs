@@ -39,6 +39,8 @@ fn main() {
             iterminal::commands::sftp::resume_transfer,
             iterminal::commands::sftp::is_directory,
             iterminal::commands::sftp::is_local_directory,
+            iterminal::commands::sftp::search_files,
+            iterminal::commands::sftp::extract_file,
             iterminal::commands::system::get_system_fonts,
             iterminal::commands::system::get_monospace_fonts,
             iterminal::commands::api::is_api_server_running,
