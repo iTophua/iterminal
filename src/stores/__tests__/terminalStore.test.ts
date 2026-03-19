@@ -313,9 +313,178 @@ describe('terminalStore', () => {
     it('should clamp scrollback to valid range', () => {
       useTerminalStore.getState().updateTerminalSettings({ scrollback: 50 })
       expect(useTerminalStore.getState().terminalSettings.scrollback).toBe(100)
-      
+
       useTerminalStore.getState().updateTerminalSettings({ scrollback: 200000 })
       expect(useTerminalStore.getState().terminalSettings.scrollback).toBe(100000)
+    })
+  })
+
+  describe('shortcutSettings', () => {
+    it('should update shortcut settings', () => {
+      useTerminalStore.getState().updateShortcutSettings({
+        clearScreen: 'Ctrl+K',
+        copy: 'Ctrl+C',
+      })
+
+      const state = useTerminalStore.getState()
+      expect(state.shortcutSettings.clearScreen).toBe('Ctrl+K')
+      expect(state.shortcutSettings.copy).toBe('Ctrl+C')
+    })
+
+    it('should reset shortcut settings to default', () => {
+      useTerminalStore.getState().updateShortcutSettings({
+        clearScreen: 'Ctrl+K',
+        copy: 'Ctrl+C',
+      })
+
+      useTerminalStore.getState().resetShortcutSettings()
+
+      const state = useTerminalStore.getState()
+      expect(state.shortcutSettings.clearScreen).toBe('Ctrl+L')
+      expect(state.shortcutSettings.copy).toBe('Ctrl+Shift+C')
+    })
+  })
+
+  describe('splitSession', () => {
+    it('should split session horizontally', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const sessionId = state1.connectedConnections[0].sessions[0].id
+
+      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-2')
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
+      expect(conn?.sessions[0].splitDirection).toBe('horizontal')
+      expect(conn?.sessions[0].splitPanels).toHaveLength(1)
+      expect(conn?.sessions[0].splitPanels?.[0].shellId).toBe('shell-2')
+    })
+
+    it('should split session vertically', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const sessionId = state1.connectedConnections[0].sessions[0].id
+
+      useTerminalStore.getState().splitSession('conn-1', sessionId, 'vertical', 'shell-2')
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
+      expect(conn?.sessions[0].splitDirection).toBe('vertical')
+    })
+
+    it('should add multiple split panels', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const sessionId = state1.connectedConnections[0].sessions[0].id
+
+      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-2')
+      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-3')
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
+      expect(conn?.sessions[0].splitPanels).toHaveLength(2)
+    })
+  })
+
+  describe('closeSplitPanel', () => {
+    it('should remove split panel', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const sessionId = state1.connectedConnections[0].sessions[0].id
+
+      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-2')
+
+      const state2 = useTerminalStore.getState()
+      const panelId = state2.connectedConnections[0].sessions[0].splitPanels?.[0].id
+
+      useTerminalStore.getState().closeSplitPanel('conn-1', sessionId, panelId!)
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
+      expect(conn?.sessions[0].splitPanels).toBeUndefined()
+    })
+  })
+
+  describe('disconnectedConnections', () => {
+    it('should mark connection as disconnected', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+
+      useTerminalStore.getState().markConnectionDisconnected('conn-1', 'server_close')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectedConnections).toHaveLength(0)
+      expect(state.disconnectedConnections).toHaveLength(1)
+      expect(state.disconnectedConnections[0].connectionId).toBe('conn-1')
+      expect(state.disconnectedConnections[0].reason).toBe('server_close')
+    })
+
+    it('should preserve sessions when disconnecting', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().addSession('conn-1', 'shell-2')
+
+      useTerminalStore.getState().markConnectionDisconnected('conn-1', 'channel_closed')
+
+      const state = useTerminalStore.getState()
+      expect(state.disconnectedConnections[0].sessions).toHaveLength(2)
+    })
+
+    it('should remove disconnected connection', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().markConnectionDisconnected('conn-1', 'unknown')
+
+      useTerminalStore.getState().removeDisconnectedConnection('conn-1')
+
+      expect(useTerminalStore.getState().disconnectedConnections).toHaveLength(0)
+    })
+
+    it('should clear all disconnected connections', () => {
+      const conn2: Connection = { ...mockConnection, id: 'conn-2' }
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().addConnection(conn2, 'shell-2')
+      useTerminalStore.getState().markConnectionDisconnected('conn-1', 'unknown')
+      useTerminalStore.getState().markConnectionDisconnected('conn-2', 'unknown')
+
+      useTerminalStore.getState().clearAllDisconnectedConnections()
+
+      expect(useTerminalStore.getState().disconnectedConnections).toHaveLength(0)
+    })
+  })
+
+  describe('reorderSessions', () => {
+    it('should reorder sessions within connection', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      vi.useFakeTimers()
+      vi.advanceTimersByTime(100)
+      useTerminalStore.getState().addSession('conn-1', 'shell-2')
+      vi.advanceTimersByTime(100)
+      useTerminalStore.getState().addSession('conn-1', 'shell-3')
+      vi.useRealTimers()
+
+      const stateBefore = useTerminalStore.getState()
+      const sessions = stateBefore.connectedConnections[0].sessions
+      const firstId = sessions[0].id
+      const secondId = sessions[1].id
+      const thirdId = sessions[2].id
+
+      useTerminalStore.getState().reorderSessions('conn-1', 0, 2)
+
+      const state = useTerminalStore.getState()
+      const reordered = state.connectedConnections[0].sessions
+      expect(reordered[0].id).toBe(secondId)
+      expect(reordered[1].id).toBe(thirdId)
+      expect(reordered[2].id).toBe(firstId)
+    })
+  })
+
+  describe('sidebarCollapsed', () => {
+    it('should toggle sidebar collapsed state', () => {
+      expect(useTerminalStore.getState().sidebarCollapsed).toBe(false)
+
+      useTerminalStore.getState().setSidebarCollapsed(true)
+      expect(useTerminalStore.getState().sidebarCollapsed).toBe(true)
+
+      useTerminalStore.getState().setSidebarCollapsed(false)
+      expect(useTerminalStore.getState().sidebarCollapsed).toBe(false)
     })
   })
 })

@@ -36,6 +36,8 @@ interface TransferState {
   loadFromStorage: () => void
   saveToStorage: () => void
   cancelRecord: (id: string) => void
+  pauseRecord: (id: string) => void
+  resumeRecord: (id: string) => void
 }
 
 const RECORDS_STORAGE_KEY = 'iterminal_transfer_records'
@@ -233,13 +235,13 @@ return {
       set((state) => {
         const record = state.records.find(r => r.id === id)
         if (!record || record.status !== 'transferring') return state
-        
+
         const newRecords = state.records.map(r =>
           r.id === id ? { ...r, status: 'cancelled' as const, endTime: Date.now() } : r
         )
         const newProgress = { ...state.progress }
         delete newProgress[id]
-        
+
         return {
           records: newRecords,
           progress: newProgress,
@@ -247,6 +249,28 @@ return {
         }
       })
       saveToStorage()
+    },
+
+    pauseRecord: (id: string) => {
+      set((state) => {
+        const newRecords = state.records.map(r =>
+          r.id === id && r.status === 'transferring' 
+            ? { ...r, status: 'paused' as const, paused: true } 
+            : r
+        )
+        return { records: newRecords }
+      })
+    },
+
+    resumeRecord: (id: string) => {
+      set((state) => {
+        const newRecords = state.records.map(r =>
+          r.id === id && r.status === 'paused' 
+            ? { ...r, status: 'transferring' as const, paused: false } 
+            : r
+        )
+        return { records: newRecords }
+      })
     }
   }
 })

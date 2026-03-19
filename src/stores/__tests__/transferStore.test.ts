@@ -193,11 +193,11 @@ describe('transferStore', () => {
         id: 'old-task',
         startTime: oneMonthAgo,
       }
-      
+
       useTransferStore.setState({ records: [oldRecord, mockRecord], retentionPeriod: '1month' })
-      
+
       useTransferStore.getState().cleanupExpiredRecords()
-      
+
       const state = useTransferStore.getState()
       expect(state.records).toHaveLength(1)
       expect(state.records[0].id).toBe('task-1')
@@ -210,12 +210,52 @@ describe('transferStore', () => {
         id: 'old-task',
         startTime: oneYearAgo,
       }
-      
+
       useTransferStore.setState({ records: [oldRecord, mockRecord], retentionPeriod: 'forever' })
-      
+
       useTransferStore.getState().cleanupExpiredRecords()
-      
+
       expect(useTransferStore.getState().records).toHaveLength(2)
+    })
+  })
+
+  describe('pauseRecord', () => {
+    it('should set status to paused', () => {
+      useTransferStore.getState().addRecord({ ...mockRecord, status: 'transferring' })
+
+      useTransferStore.getState().pauseRecord('task-1')
+
+      const state = useTransferStore.getState()
+      expect(state.records[0].status).toBe('paused')
+      expect(state.records[0].paused).toBe(true)
+    })
+
+    it('should not pause non-transferring record', () => {
+      useTransferStore.getState().addRecord(mockRecord)
+
+      useTransferStore.getState().pauseRecord('task-1')
+
+      expect(useTransferStore.getState().records[0].status).toBe('pending')
+    })
+  })
+
+  describe('resumeRecord', () => {
+    it('should set status back to transferring', () => {
+      useTransferStore.getState().addRecord({ ...mockRecord, status: 'paused', paused: true })
+
+      useTransferStore.getState().resumeRecord('task-1')
+
+      const state = useTransferStore.getState()
+      expect(state.records[0].status).toBe('transferring')
+      expect(state.records[0].paused).toBe(false)
+    })
+
+    it('should not resume non-paused record', () => {
+      useTransferStore.getState().addRecord(mockRecord)
+
+      useTransferStore.getState().resumeRecord('task-1')
+
+      expect(useTransferStore.getState().records[0].status).toBe('pending')
     })
   })
 })

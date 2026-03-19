@@ -35,6 +35,8 @@ fn main() {
             iterminal::commands::sftp::open_folder,
             iterminal::commands::sftp::open_file_location,
             iterminal::commands::sftp::cancel_transfer,
+            iterminal::commands::sftp::pause_transfer,
+            iterminal::commands::sftp::resume_transfer,
             iterminal::commands::sftp::is_directory,
             iterminal::commands::sftp::is_local_directory,
             iterminal::commands::system::get_system_fonts,

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { List, Button, Tag, Empty, Select, Tabs, Dropdown, Space, Progress, Tooltip, App } from 'antd'
 import {
   DownloadOutlined, UploadOutlined, SwapOutlined, FilterOutlined,
-  CloseCircleOutlined, ReloadOutlined
+  CloseCircleOutlined, ReloadOutlined, PauseOutlined, CaretRightOutlined
 } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -31,6 +31,7 @@ function Transfers() {
 
   const uploadingCount = records.filter(t => t.type === 'upload' && t.status === 'transferring').length
   const downloadingCount = records.filter(t => t.type === 'download' && t.status === 'transferring').length
+  const pausedCount = records.filter(t => t.status === 'paused').length
   const completedCount = records.filter(t => t.status === 'completed').length
   const failedCount = records.filter(t => t.status === 'failed' || t.status === 'cancelled').length
 
@@ -38,6 +39,7 @@ function Transfers() {
     const statusMap: { [key: string]: { color: string; text: string } } = {
       pending: { color: 'default', text: '等待中' },
       transferring: { color: 'processing', text: '传输中' },
+      paused: { color: 'warning', text: '已暂停' },
       completed: { color: 'success', text: '已完成' },
       failed: { color: 'error', text: '失败' },
       cancelled: { color: 'default', text: '已取消' },
@@ -137,6 +139,26 @@ function Transfers() {
     }
   }
 
+  const pauseTask = async (id: string) => {
+    try {
+      await invoke('pause_transfer', { taskId: id })
+      useTransferStore.getState().pauseRecord(id)
+      message.success('任务已暂停')
+    } catch (err) {
+      message.error(`暂停失败: ${err}`)
+    }
+  }
+
+  const resumeTask = async (id: string) => {
+    try {
+      await invoke('resume_transfer', { taskId: id })
+      useTransferStore.getState().resumeRecord(id)
+      message.success('任务已恢复')
+    } catch (err) {
+      message.error(`恢复失败: ${err}`)
+    }
+  }
+
   const retryTask = async (record: typeof records[0]) => {
     const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
     const now = Date.now()
@@ -211,6 +233,9 @@ function Transfers() {
             </span>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               下载中: <span style={{ color: 'var(--color-info)' }}>{downloadingCount}</span>
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+              已暂停: <span style={{ color: 'var(--color-warning)' }}>{pausedCount}</span>
             </span>
             <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
               已完成: <span style={{ color: 'var(--color-success)' }}>{completedCount}</span>
@@ -312,6 +337,32 @@ function Transfers() {
                 }}
                 actions={[
                   record.status === 'transferring' ? (
+                    <Tooltip key={`pause-${record.id}`} title="暂停任务">
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<PauseOutlined />}
+                        style={{ color: 'var(--color-warning)', padding: 0 }}
+                        onClick={() => pauseTask(record.id)}
+                      >
+                        暂停
+                      </Button>
+                    </Tooltip>
+                  ) : null,
+                  record.status === 'paused' ? (
+                    <Tooltip key={`resume-${record.id}`} title="恢复任务">
+                      <Button
+                        size="small"
+                        type="link"
+                        icon={<CaretRightOutlined />}
+                        style={{ color: 'var(--color-success)', padding: 0 }}
+                        onClick={() => resumeTask(record.id)}
+                      >
+                        恢复
+                      </Button>
+                    </Tooltip>
+                  ) : null,
+                  (record.status === 'transferring' || record.status === 'paused') ? (
                     <Tooltip key={`cancel-${record.id}`} title="取消任务">
                       <Button
                         size="small"

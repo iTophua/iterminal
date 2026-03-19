@@ -47,7 +47,7 @@ export interface ConnectedConnection {
 }
 
 // 传输任务状态
-export type TransferStatus = 'pending' | 'transferring' | 'completed' | 'failed' | 'cancelled'
+export type TransferStatus = 'pending' | 'transferring' | 'paused' | 'completed' | 'failed' | 'cancelled'
 
 // 传输任务类型
 export type TransferType = 'upload' | 'download'
@@ -63,6 +63,7 @@ export interface TransferTask {
   fileSize: number
   transferred: number
   status: TransferStatus
+  paused?: boolean
   error?: string
   startTime: number
   endTime?: number

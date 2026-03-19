@@ -522,3 +522,81 @@ pub async fn start_api_server_command(app_handle: AppHandle) -> Result<bool, Str
     
     Err("Failed to start API server".to_string())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_api_response_success() {
+        let response: ApiResponse<String> = ApiResponse::success("test data".to_string());
+        assert!(response.success);
+        assert_eq!(response.data, Some("test data".to_string()));
+        assert!(response.error.is_none());
+    }
+
+    #[test]
+    fn test_api_response_error() {
+        let response: ApiResponse<String> = ApiResponse::error("something went wrong");
+        assert!(!response.success);
+        assert!(response.data.is_none());
+        assert_eq!(response.error, Some("something went wrong".to_string()));
+    }
+
+    #[test]
+    fn test_connection_state() {
+        let state = ConnectionState {
+            id: "conn-1".to_string(),
+            host: "192.168.1.1".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            connected: true,
+        };
+        assert_eq!(state.id, "conn-1");
+        assert_eq!(state.host, "192.168.1.1");
+        assert!(state.connected);
+    }
+
+    #[test]
+    fn test_api_operation() {
+        let op = ApiOperation {
+            timestamp: "2024-01-01 12:00:00".to_string(),
+            operation: "connect".to_string(),
+            connection_id: Some("conn-1".to_string()),
+            details: "Connected to server".to_string(),
+            success: true,
+            error: None,
+        };
+        assert_eq!(op.operation, "connect");
+        assert!(op.success);
+    }
+
+    #[test]
+    fn test_connect_request() {
+        let req = ConnectRequest {
+            id: "conn-1".to_string(),
+            host: "192.168.1.1".to_string(),
+            port: Some(22),
+            username: "root".to_string(),
+            password: Some("secret".to_string()),
+        };
+        assert_eq!(req.id, "conn-1");
+        assert_eq!(req.port, Some(22));
+    }
+
+    #[test]
+    fn test_exec_request() {
+        let req = ExecRequest {
+            command: "ls -la".to_string(),
+        };
+        assert_eq!(req.command, "ls -la");
+    }
+
+    #[test]
+    fn test_path_request() {
+        let req = PathRequest {
+            path: "/home/user".to_string(),
+        };
+        assert_eq!(req.path, "/home/user");
+    }
+}

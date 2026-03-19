@@ -35,6 +35,9 @@ static SFTP_SESSIONS: Lazy<RwLock<HashMap<String, SftpSessionState>>> =
 static TRANSFER_CANCELLED: Lazy<RwLock<HashMap<String, bool>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+static TRANSFER_PAUSED: Lazy<RwLock<HashMap<String, bool>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
 async fn create_sftp_connection(connection: &super::ssh::SSHConnection) -> Result<Arc<SftpSession>, String> {
     use super::ssh::SshClientHandler;
     use std::net::ToSocketAddrs;
@@ -406,6 +409,7 @@ pub async fn upload_file(
         let mut buffer = vec![0u8; 65536];
         let mut transferred: u64 = 0;
         let mut cancelled = false;
+        let mut paused = false;
         let mut last_progress_update = std::time::Instant::now();
 
         loop {
@@ -418,6 +422,32 @@ pub async fn upload_file(
             {
                 cancelled = true;
                 break;
+            }
+
+            if TRANSFER_PAUSED
+                .read()
+                .await
+                .get(&task_id_clone)
+                .copied()
+                .unwrap_or(false)
+            {
+                if !paused {
+                    paused = true;
+                    let _ = app.emit(
+                        &format!("transfer-paused-{}", task_id_clone),
+                        serde_json::json!({ "paused": true }),
+                    );
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+
+            if paused {
+                paused = false;
+                let _ = app.emit(
+                    &format!("transfer-resumed-{}", task_id_clone),
+                    serde_json::json!({ "resumed": true }),
+                );
             }
 
             let n = match local_file.read(&mut buffer).await {
@@ -448,7 +478,8 @@ pub async fn upload_file(
                     serde_json::json!({
                         "transferred": transferred,
                         "total": total_size,
-                        "percentage": if total_size > 0 { (transferred * 100 / total_size) as u8 } else { 0 }
+                        "percentage": if total_size > 0 { (transferred * 100 / total_size) as u8 } else { 0 },
+                        "paused": paused
                     }),
                 );
                 last_progress_update = std::time::Instant::now();
@@ -459,6 +490,7 @@ pub async fn upload_file(
         let _ = remote_file.shutdown().await;
 
         TRANSFER_CANCELLED.write().await.remove(&task_id_clone);
+        TRANSFER_PAUSED.write().await.remove(&task_id_clone);
 
         let _ = app.emit(
             &format!("transfer-complete-{}", task_id_clone),
@@ -527,6 +559,7 @@ pub async fn download_file(
         let mut buffer = vec![0u8; 65536];
         let mut transferred: u64 = 0;
         let mut cancelled = false;
+        let mut paused = false;
         let mut last_progress_update = std::time::Instant::now();
 
         loop {
@@ -539,6 +572,32 @@ pub async fn download_file(
             {
                 cancelled = true;
                 break;
+            }
+
+            if TRANSFER_PAUSED
+                .read()
+                .await
+                .get(&task_id_clone)
+                .copied()
+                .unwrap_or(false)
+            {
+                if !paused {
+                    paused = true;
+                    let _ = app.emit(
+                        &format!("transfer-paused-{}", task_id_clone),
+                        serde_json::json!({ "paused": true }),
+                    );
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+
+            if paused {
+                paused = false;
+                let _ = app.emit(
+                    &format!("transfer-resumed-{}", task_id_clone),
+                    serde_json::json!({ "resumed": true }),
+                );
             }
 
             let n = match remote_file.read(&mut buffer).await {
@@ -569,7 +628,8 @@ pub async fn download_file(
                     serde_json::json!({
                         "transferred": transferred,
                         "total": total_size,
-                        "percentage": if total_size > 0 { (transferred * 100 / total_size) as u8 } else { 0 }
+                        "percentage": if total_size > 0 { (transferred * 100 / total_size) as u8 } else { 0 },
+                        "paused": paused
                     }),
                 );
                 last_progress_update = std::time::Instant::now();
@@ -580,6 +640,7 @@ pub async fn download_file(
         let _ = remote_file.shutdown().await;
 
         TRANSFER_CANCELLED.write().await.remove(&task_id_clone);
+        TRANSFER_PAUSED.write().await.remove(&task_id_clone);
 
         let _ = app.emit(
             &format!("transfer-complete-{}", task_id_clone),
@@ -856,6 +917,18 @@ pub async fn cancel_transfer(task_id: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+pub async fn pause_transfer(task_id: String) -> Result<bool, String> {
+    TRANSFER_PAUSED.write().await.insert(task_id, true);
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn resume_transfer(task_id: String) -> Result<bool, String> {
+    TRANSFER_PAUSED.write().await.remove(&task_id);
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn is_directory(connection_id: String, path: String) -> Result<bool, String> {
     let sftp = get_sftp_session(&connection_id).await?;
 
@@ -965,5 +1038,41 @@ mod tests {
         };
         assert!(content.truncated);
         assert_eq!(content.size, 10_000_000);
+    }
+
+    #[test]
+    fn test_transfer_result() {
+        let result = TransferResult {
+            success: true,
+            bytes_transferred: 1024,
+            error: None,
+            cancelled: false,
+        };
+        assert!(result.success);
+        assert_eq!(result.bytes_transferred, 1024);
+        assert!(!result.cancelled);
+    }
+
+    #[test]
+    fn test_transfer_result_failed() {
+        let result = TransferResult {
+            success: false,
+            bytes_transferred: 0,
+            error: Some("Connection failed".to_string()),
+            cancelled: false,
+        };
+        assert!(!result.success);
+        assert_eq!(result.error, Some("Connection failed".to_string()));
+    }
+
+    #[test]
+    fn test_transfer_result_cancelled() {
+        let result = TransferResult {
+            success: false,
+            bytes_transferred: 512,
+            error: None,
+            cancelled: true,
+        };
+        assert!(result.cancelled);
     }
 }
