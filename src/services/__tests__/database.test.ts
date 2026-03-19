@@ -147,6 +147,7 @@ describe('database service', () => {
           key_file: null,
           group_name: 'Production',
           tags: '["tag1"]',
+          last_connected_at: null,
           created_at: null,
           updated_at: null,
         },

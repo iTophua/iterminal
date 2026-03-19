@@ -17,7 +17,9 @@ import {
   exportConnections,
   importConnections,
   downloadExportFile,
-  readImportFile
+  readImportFile,
+  recordConnectionHistory,
+  getRecentConnections
 } from '../services/database'
 
 type TestResult = 'success' | 'failed' | null
@@ -39,6 +41,7 @@ function Connections() {
   const [isQuickImportOpen, setIsQuickImportOpen] = useState(false)
   const [quickImportText, setQuickImportText] = useState('')
   const [quickImportGroup, setQuickImportGroup] = useState<string>('默认')
+  const [recentConnections, setRecentConnections] = useState<Connection[]>([])
   
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const addConnection = useTerminalStore(state => state.addConnection)
@@ -72,6 +75,10 @@ function Connections() {
         // 从数据库加载连接
         const conns = await getConnections()
         setConnections(conns)
+        
+        // 加载最近连接
+        const recent = await getRecentConnections(5)
+        setRecentConnections(recent)
       } catch (error) {
         console.error('[Connections] Failed to load data:', error)
         message.error('加载数据失败')
@@ -354,6 +361,8 @@ function Connections() {
       ))
 
       addConnection(conn, shellId)
+      
+      recordConnectionHistory(conn.id).catch(console.error)
 
       message.success(`已连接到 ${conn.name}`)
       navigate('/terminal')
@@ -559,6 +568,34 @@ function Connections() {
           <Button icon={<UploadOutlined />}>导入文件</Button>
         </Upload>
       </div>
+
+      {recentConnections.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ 
+            fontSize: 13, 
+            color: 'var(--color-text-secondary)', 
+            marginBottom: 8,
+            fontWeight: 500
+          }}>
+            最近连接
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {recentConnections.map(conn => (
+              <Button
+                key={conn.id}
+                size="small"
+                onClick={() => handleConnect(conn)}
+                style={{
+                  background: 'var(--color-bg-elevated)',
+                  border: '1px solid var(--color-border)'
+                }}
+              >
+                {conn.name}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, overflow: 'auto' }}>
         {loading ? (

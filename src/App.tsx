@@ -52,6 +52,16 @@ function FontPreloader() {
   return null
 }
 
+function WindowStateRestorer() {
+  useEffect(() => {
+    invoke('restore_window_state').catch(err => {
+      console.error('Failed to restore window state:', err)
+    })
+  }, [])
+
+  return null
+}
+
 function SessionRestorer() {
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
   const [restoreModalVisible, setRestoreModalVisible] = useState(false)
@@ -162,6 +172,8 @@ function SessionSaver() {
         savedRef.current = true
       }
       
+      await invoke('save_window_state').catch(() => {})
+      
       for (const conn of connectedConnections) {
         await invoke('disconnect_ssh', { id: conn.connectionId }).catch(() => {})
       }
@@ -250,6 +262,7 @@ function App() {
   return (
     <BrowserRouter>
       <FontPreloader />
+      <WindowStateRestorer />
       <SessionRestorer />
       <SessionSaver />
       <Layout style={{ minHeight: '100vh', background: 'var(--color-bg-container)' }}>

@@ -12,6 +12,7 @@ interface ConnectionRecord {
   key_file: string | null
   group_name: string | null
   tags: string | null
+  last_connected_at: string | null
   created_at: string | null
   updated_at: string | null
 }
@@ -27,6 +28,7 @@ function recordToConnection(record: ConnectionRecord): Connection {
     keyFile: record.key_file || undefined,
     group: record.group_name || '默认',
     tags: record.tags ? JSON.parse(record.tags) : [],
+    lastConnectedAt: record.last_connected_at || undefined,
     status: 'offline'
   }
 }
@@ -42,6 +44,7 @@ function connectionToRecord(conn: Connection): ConnectionRecord {
     key_file: conn.keyFile || null,
     group_name: conn.group || null,
     tags: conn.tags.length > 0 ? JSON.stringify(conn.tags) : null,
+    last_connected_at: conn.lastConnectedAt || null,
     created_at: null,
     updated_at: null
   }
@@ -171,4 +174,15 @@ export async function readImportFile(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Failed to read file'))
     reader.readAsText(file)
   })
+}
+
+export async function recordConnectionHistory(id: string): Promise<void> {
+  await initDatabase()
+  await invoke('record_connection_history', { id })
+}
+
+export async function getRecentConnections(limit?: number): Promise<Connection[]> {
+  await initDatabase()
+  const records = await invoke<ConnectionRecord[]>('get_recent_connections', { limit: limit || 10 })
+  return records.map(recordToConnection)
 }

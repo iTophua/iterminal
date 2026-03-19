@@ -15,6 +15,7 @@ pub struct ConnectionRecord {
     pub key_file: Option<String>,
     pub group_name: Option<String>,
     pub tags: Option<String>,
+    pub last_connected_at: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
 }
@@ -107,6 +108,13 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // 迁移：添加 last_connected_at 字段
+    conn.execute(
+        "ALTER TABLE connections ADD COLUMN last_connected_at TEXT",
+        [],
+    )
+    .ok();
+
     Ok(true)
 }
 
@@ -115,7 +123,7 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
     let conn = get_db().map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at FROM connections ORDER BY name"
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at FROM connections ORDER BY name"
     ).map_err(|e| e.to_string())?;
 
     let connections = stmt
@@ -133,8 +141,9 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
                 key_file: row.get(6)?,
                 group_name: row.get(7)?,
                 tags: row.get(8)?,
-                created_at: row.get(9)?,
-                updated_at: row.get(10)?,
+                last_connected_at: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -326,6 +335,56 @@ pub fn migrate_from_localstorage(connections_json: String) -> Result<usize, Stri
     Ok(migrated_count)
 }
 
+#[tauri::command]
+pub fn record_connection_history(id: String) -> Result<(), String> {
+    let conn = get_db().map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "UPDATE connections SET last_connected_at = ? WHERE id = ?",
+        [&now, &id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionRecord>, String> {
+    let conn = get_db().map_err(|e| e.to_string())?;
+    let limit = limit.unwrap_or(10);
+
+    let mut stmt = conn.prepare(
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at FROM connections WHERE last_connected_at IS NOT NULL ORDER BY last_connected_at DESC LIMIT ?"
+    ).map_err(|e| e.to_string())?;
+
+    let connections = stmt
+        .query_map([limit as i32], |row| {
+            let password_encrypted: Option<String> = row.get(5)?;
+            let password = password_encrypted.and_then(|enc| decrypt_password(&enc));
+
+            Ok(ConnectionRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                host: row.get(2)?,
+                port: row.get(3)?,
+                username: row.get(4)?,
+                password,
+                key_file: row.get(6)?,
+                group_name: row.get(7)?,
+                tags: row.get(8)?,
+                last_connected_at: row.get(9)?,
+                created_at: row.get(10)?,
+                updated_at: row.get(11)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(connections)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,6 +475,7 @@ mod tests {
                     key_file: row.get(6)?,
                     group_name: row.get(7)?,
                     tags: row.get(8)?,
+                    last_connected_at: None,
                     created_at: row.get(9)?,
                     updated_at: row.get(10)?,
                 })
@@ -447,6 +507,7 @@ mod tests {
             key_file: None,
             group_name: Some("Production".to_string()),
             tags: Some(r#"["tag1","tag2"]"#.to_string()),
+            last_connected_at: None,
             created_at: None,
             updated_at: None,
         };
@@ -474,6 +535,7 @@ mod tests {
             key_file: None,
             group_name: None,
             tags: None,
+            last_connected_at: None,
             created_at: None,
             updated_at: None,
         };
@@ -498,6 +560,7 @@ mod tests {
             key_file: None,
             group_name: None,
             tags: None,
+            last_connected_at: None,
             created_at: None,
             updated_at: None,
         };
@@ -523,6 +586,7 @@ mod tests {
             key_file: None,
             group_name: None,
             tags: None,
+            last_connected_at: None,
             created_at: None,
             updated_at: None,
         };
@@ -539,6 +603,7 @@ mod tests {
             key_file: None,
             group_name: Some("Production".to_string()),
             tags: None,
+            last_connected_at: None,
             created_at: None,
             updated_at: None,
         };
@@ -606,6 +671,7 @@ mod tests {
                 key_file: None,
                 group_name: None,
                 tags: None,
+                last_connected_at: None,
                 created_at: None,
                 updated_at: None,
             };

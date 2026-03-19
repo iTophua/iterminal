@@ -1,5 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager,
+};
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -46,6 +52,8 @@ fn main() {
             iterminal::commands::sftp::extract_file,
             iterminal::commands::system::get_system_fonts,
             iterminal::commands::system::get_monospace_fonts,
+            iterminal::commands::system::save_window_state,
+            iterminal::commands::system::restore_window_state,
             iterminal::commands::api::is_api_server_running,
             iterminal::commands::api::stop_api_server,
             iterminal::commands::api::start_api_server_command,
@@ -54,7 +62,6 @@ fn main() {
             iterminal::commands::license::is_feature_available,
             iterminal::commands::license::check_connection_limit,
             iterminal::commands::license::clear_license,
-            // 数据库命令
             iterminal::commands::db::init_database,
             iterminal::commands::db::get_connections,
             iterminal::commands::db::save_connection,
@@ -66,8 +73,55 @@ fn main() {
             iterminal::commands::db::export_all_data,
             iterminal::commands::db::import_all_data,
             iterminal::commands::db::migrate_from_localstorage,
+            iterminal::commands::db::record_connection_history,
+            iterminal::commands::db::get_recent_connections,
         ])
-        .setup(|_app| Ok(()))
+        .setup(|app| {
+            let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
+            let hide_item = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+
+            let menu = Menu::with_items(app, &[&show_item, &hide_item, &quit_item])?;
+
+            let _tray = TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.webview_windows().get("main") {
+                            window.show().unwrap();
+                            window.set_focus().unwrap();
+                        }
+                    }
+                    "hide" => {
+                        if let Some(window) = app.webview_windows().get("main") {
+                            window.hide().unwrap();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.webview_windows().get("main") {
+                            window.show().unwrap();
+                            window.set_focus().unwrap();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

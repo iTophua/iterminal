@@ -15,6 +15,7 @@ export interface Connection {
   keyFile?: string
   group: string
   tags: string[]
+  lastConnectedAt?: string
   status: 'online' | 'offline' | 'connecting'
 }
 
