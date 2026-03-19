@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::ssh::{self, SSHConnection, CommandResult, MonitorData};
 use super::sftp::{self, FileEntry};
+use super::db::{self, ConnectionRecord};
 
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -131,6 +132,12 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
         .route("/api/connections/{id}/mkdir", post(create_directory_handler))
         .route("/api/connections/{id}/rm", post(delete_file_handler))
         .route("/api/connections/{id}/rename", post(rename_file_handler))
+        .route("/api/connections/{id}/read_file", post(read_file_handler))
+        .route("/api/connections/{id}/write_file", post(write_file_handler))
+        .route("/api/connections/{id}/upload", post(upload_file_handler))
+        .route("/api/connections/{id}/download", post(download_file_handler))
+        .route("/api/saved-connections", get(list_saved_connections))
+        .route("/api/saved-connections/{id}/connect", post(quick_connect_handler))
         .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
         .with_state(state)
 }
@@ -419,6 +426,228 @@ async fn rename_file_handler(
                 "rename",
                 Some(&id),
                 &format!("{} -> {}", old_path, new_path),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReadFileRequest {
+    pub path: String,
+    pub max_size: Option<u64>,
+}
+
+async fn read_file_handler(
+    Path(id): Path<String>,
+    Json(payload): Json<ReadFileRequest>,
+) -> Result<Json<ApiResponse<sftp::FileContent>>, (StatusCode, Json<ApiResponse<sftp::FileContent>>)> {
+    let max_size = payload.max_size.unwrap_or(1024 * 1024);
+    
+    match sftp::read_file_content(id.clone(), payload.path.clone(), Some(max_size)).await {
+        Ok(content) => Ok(Json(ApiResponse::success(content))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct WriteFileRequest {
+    pub path: String,
+    pub content: String,
+}
+
+async fn write_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<WriteFileRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::write_file_content(id.clone(), payload.path.clone(), payload.content.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "write_file",
+                Some(&id),
+                &payload.path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "write_file",
+                Some(&id),
+                &payload.path,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UploadRequest {
+    pub local_path: String,
+    pub remote_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TransferResult {
+    pub success: bool,
+    pub bytes_transferred: u64,
+    pub error: Option<String>,
+}
+
+async fn upload_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<UploadRequest>,
+) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
+    let task_id = format!("mcp-upload-{}", chrono::Utc::now().timestamp_millis());
+    
+    let result = sftp::upload_file_sync(
+        id.clone(),
+        task_id.clone(),
+        payload.local_path.clone(),
+        payload.remote_path.clone(),
+    ).await;
+    
+    let details = format!("{} -> {}", payload.local_path, payload.remote_path);
+    
+    match result {
+        Ok(bytes) => {
+            emit_operation(
+                &state.app_handle,
+                "upload",
+                Some(&id),
+                &details,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(TransferResult {
+                success: true,
+                bytes_transferred: bytes,
+                error: None,
+            })))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "upload",
+                Some(&id),
+                &details,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DownloadRequest {
+    pub remote_path: String,
+    pub local_path: String,
+}
+
+async fn download_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<DownloadRequest>,
+) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
+    let task_id = format!("mcp-download-{}", chrono::Utc::now().timestamp_millis());
+    
+    let result = sftp::download_file_sync(
+        id.clone(),
+        task_id.clone(),
+        payload.remote_path.clone(),
+        payload.local_path.clone(),
+    ).await;
+    
+    let details = format!("{} -> {}", payload.remote_path, payload.local_path);
+    
+    match result {
+        Ok(bytes) => {
+            emit_operation(
+                &state.app_handle,
+                "download",
+                Some(&id),
+                &details,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(TransferResult {
+                success: true,
+                bytes_transferred: bytes,
+                error: None,
+            })))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "download",
+                Some(&id),
+                &details,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn list_saved_connections() -> Json<ApiResponse<Vec<ConnectionRecord>>> {
+    match db::get_connections() {
+        Ok(connections) => Json(ApiResponse::success(connections)),
+        Err(e) => Json(ApiResponse::error(&e)),
+    }
+}
+
+async fn quick_connect_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
+    let connections = db::get_connections()
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
+    
+    let record = connections
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ApiResponse::error("连接未找到"))))?;
+    
+    let password = record.password.clone().unwrap_or_default();
+    let connection = SSHConnection {
+        host: record.host.clone(),
+        port: record.port,
+        username: record.username.clone(),
+        password: Some(password),
+        key_file: record.key_file.clone(),
+    };
+    
+    let details = format!("{}@{}:{}", record.username, record.host, record.port);
+    
+    match ssh::connect_ssh(id.clone(), connection).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "quick_connect",
+                Some(&id),
+                &details,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(id)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "quick_connect",
+                Some(&id),
+                &details,
                 false,
                 Some(&e),
             );

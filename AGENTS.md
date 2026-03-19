@@ -155,6 +155,10 @@
 | `resize_shell` | async fn | `ssh.rs` | 通过 mpsc channel resize |
 | `disconnect_ssh` | async fn | `ssh.rs` | 断开连接 |
 | `execute_command` | async fn | `ssh.rs` | 执行远程命令 |
+| `get_system_monitor` | async fn | `ssh.rs` | 获取系统监控数据 |
+| `get_network_stats` | async fn | `ssh.rs` | 获取网络接口统计 |
+| `list_processes` | async fn | `ssh.rs` | 列出进程列表 |
+| `kill_process` | async fn | `ssh.rs` | 终止进程 |
 | `SftpSessionState` | struct | `sftp.rs` | SFTP 会话 (Arc<SftpSession>) |
 | `create_sftp_connection` | async fn | `sftp.rs` | 创建独立 SFTP 连接 |
 | `upload_file` | async fn | `sftp.rs` | 后台上传 (tokio::spawn) |

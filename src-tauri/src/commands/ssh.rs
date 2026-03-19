@@ -590,3 +590,186 @@ echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
         disks,
     })
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkInterface {
+    pub name: String,
+    pub rx_bytes: u64,
+    pub rx_packets: u64,
+    pub rx_errors: u64,
+    pub tx_bytes: u64,
+    pub tx_packets: u64,
+    pub tx_errors: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct NetworkStats {
+    pub interfaces: Vec<NetworkInterface>,
+}
+
+#[tauri::command]
+pub async fn get_network_stats(id: String) -> Result<NetworkStats, String> {
+    let sessions = SESSIONS.read().await;
+    let session = sessions.get(&id).ok_or("Session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(sessions);
+
+    channel
+        .exec(true, "cat /proc/net/dev")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut output = Vec::new();
+    while let Some(msg) = channel.wait().await {
+        if let ChannelMsg::Data { data } = msg {
+            output.extend_from_slice(&data);
+        }
+    }
+
+    let output_str = String::from_utf8_lossy(&output).to_string();
+    let mut interfaces: Vec<NetworkInterface> = Vec::new();
+
+    for line in output_str.lines().skip(2) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 17 {
+            continue;
+        }
+
+        let name = parts[0].trim_end_matches(':').to_string();
+
+        if name == "lo" {
+            continue;
+        }
+
+        let rx_bytes = parts[1].parse().unwrap_or(0);
+        let rx_packets = parts[2].parse().unwrap_or(0);
+        let rx_errors = parts[3].parse().unwrap_or(0);
+        let tx_bytes = parts[9].parse().unwrap_or(0);
+        let tx_packets = parts[10].parse().unwrap_or(0);
+        let tx_errors = parts[11].parse().unwrap_or(0);
+
+        interfaces.push(NetworkInterface {
+            name,
+            rx_bytes,
+            rx_packets,
+            rx_errors,
+            tx_bytes,
+            tx_packets,
+            tx_errors,
+        });
+    }
+
+    Ok(NetworkStats { interfaces })
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub user: String,
+    pub cpu: f32,
+    pub mem: f32,
+    pub vsz: u64,
+    pub rss: u64,
+    pub command: String,
+}
+
+#[tauri::command]
+pub async fn list_processes(id: String) -> Result<Vec<ProcessInfo>, String> {
+    let sessions = SESSIONS.read().await;
+    let session = sessions.get(&id).ok_or("Session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(sessions);
+
+    channel
+        .exec(true, "ps aux --sort=-%mem | head -50")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut output = Vec::new();
+    while let Some(msg) = channel.wait().await {
+        if let ChannelMsg::Data { data } = msg {
+            output.extend_from_slice(&data);
+        }
+    }
+
+    let output_str = String::from_utf8_lossy(&output).to_string();
+    let mut processes: Vec<ProcessInfo> = Vec::new();
+
+    for line in output_str.lines().skip(1) {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 11 {
+            continue;
+        }
+
+        let pid = parts[1].parse().unwrap_or(0);
+        let user = parts[0].to_string();
+        let cpu = parts[2].parse().unwrap_or(0.0);
+        let mem = parts[3].parse().unwrap_or(0.0);
+        let vsz = parts[4].parse().unwrap_or(0);
+        let rss = parts[5].parse().unwrap_or(0);
+        let command = parts[10..].join(" ");
+
+        processes.push(ProcessInfo {
+            pid,
+            user,
+            cpu,
+            mem,
+            vsz,
+            rss,
+            command,
+        });
+    }
+
+    Ok(processes)
+}
+
+#[tauri::command]
+pub async fn kill_process(id: String, pid: u32, signal: Option<String>) -> Result<(), String> {
+    let sessions = SESSIONS.read().await;
+    let session = sessions.get(&id).ok_or("Session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(sessions);
+
+    let sig = signal.unwrap_or_else(|| "TERM".to_string());
+    let cmd = format!("kill -{} {}", sig, pid);
+
+    channel
+        .exec(true, cmd.as_str())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut exit_status: u32 = 0;
+    while let Some(msg) = channel.wait().await {
+        if let ChannelMsg::ExitStatus { exit_status: status } = msg {
+            exit_status = status;
+        }
+    }
+
+    if exit_status != 0 {
+        return Err(format!("kill command failed with exit code {}", exit_status));
+    }
+
+    Ok(())
+}

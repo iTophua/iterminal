@@ -8,7 +8,7 @@ UI components for iTerminal.
 |-----------|-------|------|
 | Sidebar.tsx | 270 | Navigation, group management, connection counts, settings trigger |
 | FileManagerPanel.tsx | 750 | SFTP file manager main component (orchestrates hooks and sub-components) |
-| MonitorPanel.tsx | 331 | System monitoring, CPU/memory/disk visualization, 3s auto-refresh |
+| MonitorPanel.tsx | 700 | System monitoring, CPU/memory/disk/network/process management, history charts, alerts, 4 tabs |
 | SettingsPanel.tsx | 680 | Settings modal with appearance, terminal, MCP, License categories |
 | ThemeProvider.tsx | 139 | Ant Design ConfigProvider with theme algorithm |
 | McpLogPanel.tsx | 269 | MCP operation logs, filter by status, download |

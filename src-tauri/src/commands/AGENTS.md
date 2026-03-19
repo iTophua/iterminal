@@ -32,6 +32,9 @@ commands/
 | `disconnect_ssh` | async fn | ssh.rs | Sends cancel signal, closes all |
 | `execute_command` | async fn | ssh.rs | Execute remote command |
 | `get_system_monitor` | async fn | ssh.rs | Get system stats (CPU, memory, disk) |
+| `get_network_stats` | async fn | ssh.rs | Get network interface stats |
+| `list_processes` | async fn | ssh.rs | List top 50 processes by memory |
+| `kill_process` | async fn | ssh.rs | Kill a process by PID |
 | `SftpSessionState` | struct | sftp.rs | SFTP 会话 (Arc<SftpSession>) |
 | `create_sftp_connection` | async fn | sftp.rs | 创建独立 SFTP SSH 连接 |
 | `get_sftp_session` | async fn | sftp.rs | 获取或创建 SFTP 会话 |

@@ -79,6 +79,19 @@ interface ApiOperation {
   error: string | null;
 }
 
+interface ConnectionRecord {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  group_name: string | null;
+  tags: string[];
+  key_file: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 async function apiCall<T>(
   method: string,
   path: string,
@@ -219,6 +232,74 @@ const tools: Tool[] = [
       required: ["id", "old_path", "new_path"],
     },
   },
+  {
+    name: "iter_read_file",
+    description: "读取远程文件内容。参数: id(连接标识), path(文件路径), max_size(最大字节数,默认1MB)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        path: { type: "string", description: "文件路径" },
+        max_size: { type: "number", description: "最大读取字节数,默认1048576(1MB)" },
+      },
+      required: ["id", "path"],
+    },
+  },
+  {
+    name: "iter_write_file",
+    description: "写入远程文件内容。参数: id(连接标识), path(文件路径), content(文件内容)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        path: { type: "string", description: "文件路径" },
+        content: { type: "string", description: "文件内容" },
+      },
+      required: ["id", "path", "content"],
+    },
+  },
+  {
+    name: "iter_upload_file",
+    description: "上传本地文件到远程服务器。参数: id(连接标识), local_path(本地文件路径), remote_path(远程目标路径)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        local_path: { type: "string", description: "本地文件路径" },
+        remote_path: { type: "string", description: "远程目标路径" },
+      },
+      required: ["id", "local_path", "remote_path"],
+    },
+  },
+  {
+    name: "iter_download_file",
+    description: "从远程服务器下载文件到本地。参数: id(连接标识), remote_path(远程文件路径), local_path(本地保存路径)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        remote_path: { type: "string", description: "远程文件路径" },
+        local_path: { type: "string", description: "本地保存路径" },
+      },
+      required: ["id", "remote_path", "local_path"],
+    },
+  },
+  {
+    name: "iter_list_saved_connections",
+    description: "列出数据库中保存的所有 SSH 连接配置（不包含密码）",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "iter_quick_connect",
+    description: "使用保存的连接配置快速建立 SSH 连接。参数: id(保存的连接ID)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "保存的连接ID" },
+      },
+      required: ["id"],
+    },
+  },
 ];
 
 const server = new Server(
@@ -312,6 +393,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           old_path: params.old_path,
           new_path: params.new_path,
         });
+        break;
+      }
+
+      case "iter_read_file": {
+        result = await apiCall<{ content: string; size: number; truncated: boolean; encoding: string }>(
+          "POST",
+          `/api/connections/${params.id}/read_file`,
+          {
+            path: params.path,
+            max_size: params.max_size || 1048576,
+          }
+        );
+        break;
+      }
+
+      case "iter_write_file": {
+        result = await apiCall<boolean>("POST", `/api/connections/${params.id}/write_file`, {
+          path: params.path,
+          content: params.content,
+        });
+        break;
+      }
+
+      case "iter_upload_file": {
+        result = await apiCall<{ success: boolean; bytes_transferred: number; error?: string }>(
+          "POST",
+          `/api/connections/${params.id}/upload`,
+          {
+            local_path: params.local_path,
+            remote_path: params.remote_path,
+          }
+        );
+        break;
+      }
+
+      case "iter_download_file": {
+        result = await apiCall<{ success: boolean; bytes_transferred: number; error?: string }>(
+          "POST",
+          `/api/connections/${params.id}/download`,
+          {
+            remote_path: params.remote_path,
+            local_path: params.local_path,
+          }
+        );
+        break;
+      }
+
+      case "iter_list_saved_connections": {
+        result = await apiCall<ConnectionRecord[]>("GET", "/api/saved-connections");
+        break;
+      }
+
+      case "iter_quick_connect": {
+        result = await apiCall<string>("POST", `/api/saved-connections/${params.id}/connect`);
         break;
       }
 

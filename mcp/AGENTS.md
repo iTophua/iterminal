@@ -1,6 +1,6 @@
 # iTerminal MCP Server
 
-**Generated:** 2026-03-16
+**Generated:** 2026-03-19
 **Domain:** SSH Connection Bridge
 
 ## OVERVIEW
@@ -17,10 +17,15 @@ MCP bridge exposing iTerminal's SSH capabilities via stdio transport. Proxies to
 | `iter_monitor` | tool | Get CPU/memory/disk metrics |
 | `iter_list_dir` | tool | List remote directory contents |
 | `iter_mkdir/rm/rename` | tools | File operations |
+| `iter_read_file/write_file` | tools | File content operations |
+| `iter_upload_file/download_file` | tools | File transfer operations |
+| `iter_list_saved_connections` | tool | List saved connections from database |
+| `iter_quick_connect` | tool | Quick connect using saved config |
 | `iter_status` | tool | Check API service health |
-| `tools[]` | const | Tool definitions with Zod schemas |
+| `tools[]` | const | Tool definitions with JSON schemas |
 | `ApiResponse<T>` | interface | Standard API response wrapper |
 | `Connection` | interface | SSH connection metadata |
+| `ConnectionRecord` | interface | Saved connection from database |
 | `CommandResult` | interface | Command execution output |
 | `MonitorData` | interface | System metrics structure |
 | `FileEntry` | interface | Remote file metadata |
@@ -32,9 +37,12 @@ All tools prefixed with `iter_` to avoid collisions.
 | Pattern | Example |
 |---------|---------|
 | Connection mgmt | `iter_connect`, `iter_disconnect`, `iter_list_connections` |
+| Saved connections | `iter_list_saved_connections`, `iter_quick_connect` |
 | Command exec | `iter_exec` |
 | Monitoring | `iter_monitor` |
 | File ops | `iter_list_dir`, `iter_mkdir`, `iter_rm`, `iter_rename` |
+| File content | `iter_read_file`, `iter_write_file` |
+| File transfer | `iter_upload_file`, `iter_download_file` |
 | Health check | `iter_status` |
 
 ## API PATTERNS
@@ -52,6 +60,12 @@ All tools prefixed with `iter_` to avoid collisions.
 | Mkdir | POST | `/api/connections/{id}/mkdir` | Body: {path} |
 | Remove | POST | `/api/connections/{id}/rm` | Body: {path} |
 | Rename | POST | `/api/connections/{id}/rename` | Body: {old_path, new_path} |
+| Read file | POST | `/api/connections/{id}/read_file` | Body: {path, max_size} |
+| Write file | POST | `/api/connections/{id}/write_file` | Body: {path, content} |
+| Upload file | POST | `/api/connections/{id}/upload` | Body: {local_path, remote_path} |
+| Download file | POST | `/api/connections/{id}/download` | Body: {remote_path, local_path} |
+| List saved | GET | `/api/saved-connections` | Returns ConnectionRecord[] |
+| Quick connect | POST | `/api/saved-connections/{id}/connect` | Returns connection id |
 
 **Response format:** `{ success: boolean, data?: T, error?: string }`
 

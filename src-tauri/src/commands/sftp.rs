@@ -979,6 +979,146 @@ pub async fn open_file_location(path: String) -> Result<bool, String> {
     Ok(true)
 }
 
+async fn ensure_remote_directory(sftp: &russh_sftp::client::SftpSession, path: &str) -> Result<(), String> {
+    if path.is_empty() || path == "/" {
+        return Ok(());
+    }
+    
+    let mut current = String::new();
+    for part in path.split('/') {
+        if part.is_empty() {
+            continue;
+        }
+        current.push('/');
+        current.push_str(part);
+        
+        match sftp.create_dir(&current).await {
+            Ok(_) => {}
+            Err(e) => {
+                if !e.to_string().contains("exists") && !e.to_string().contains("Failure") {
+                    return Err(format!("创建目录失败: {}", e));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn upload_file_sync(
+    connection_id: String,
+    task_id: String,
+    local_path: String,
+    remote_path: String,
+) -> Result<u64, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+    
+    let mut local_file = tokio::fs::File::open(&local_path)
+        .await
+        .map_err(|e| format!("无法打开本地文件: {}", e))?;
+    
+    let metadata = local_file.metadata()
+        .await
+        .map_err(|e| format!("无法获取文件信息: {}", e))?;
+    let _total_size = metadata.len();
+    
+    let remote_parent = remote_path.rfind('/').map(|i| &remote_path[..i]).unwrap_or("/");
+    ensure_remote_directory(&sftp, remote_parent).await?;
+    
+    let mut remote_file = sftp
+        .open(&remote_path)
+        .await
+        .map_err(|e| format!("无法创建远程文件: {}", e))?;
+    
+    let mut buffer = vec![0u8; 65536];
+    let mut transferred: u64 = 0;
+    
+    loop {
+        if TRANSFER_CANCELLED.read().await.contains_key(&task_id) {
+            return Err("传输已取消".to_string());
+        }
+        
+        while TRANSFER_PAUSED.read().await.contains_key(&task_id) {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+        
+        let n = local_file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| format!("读取失败: {}", e))?;
+        
+        if n == 0 {
+            break;
+        }
+        
+        remote_file
+            .write_all(&buffer[..n])
+            .await
+            .map_err(|e| format!("写入失败: {}", e))?;
+        
+        transferred += n as u64;
+    }
+    
+    Ok(transferred)
+}
+
+pub async fn download_file_sync(
+    connection_id: String,
+    task_id: String,
+    remote_path: String,
+    local_path: String,
+) -> Result<u64, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+    
+    let mut remote_file = sftp
+        .open(&remote_path)
+        .await
+        .map_err(|e| format!("无法打开远程文件: {}", e))?;
+    
+    let local_parent = std::path::Path::new(&local_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::path::PathBuf::from("/"));
+    
+    tokio::fs::create_dir_all(&local_parent)
+        .await
+        .ok();
+    
+    let mut local_file = tokio::fs::File::create(&local_path)
+        .await
+        .map_err(|e| format!("无法创建本地文件: {}", e))?;
+    
+    let mut buffer = vec![0u8; 65536];
+    let mut transferred: u64 = 0;
+    
+    loop {
+        if TRANSFER_CANCELLED.read().await.contains_key(&task_id) {
+            return Err("传输已取消".to_string());
+        }
+        
+        while TRANSFER_PAUSED.read().await.contains_key(&task_id) {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+        
+        let n = remote_file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| format!("读取失败: {}", e))?;
+        
+        if n == 0 {
+            break;
+        }
+        
+        local_file
+            .write_all(&buffer[..n])
+            .await
+            .map_err(|e| format!("写入失败: {}", e))?;
+        
+        transferred += n as u64;
+    }
+    
+    Ok(transferred)
+}
+
 #[tauri::command]
 pub async fn cancel_transfer(task_id: String) -> Result<bool, String> {
     TRANSFER_CANCELLED.write().await.insert(task_id, true);
