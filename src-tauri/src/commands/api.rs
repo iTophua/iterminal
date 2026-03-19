@@ -1,6 +1,6 @@
 use axum::{
     extract::Path,
-    http::StatusCode,
+    http::{Method, StatusCode},
     response::Json,
     routing::{delete, get, post},
     Router,
@@ -8,7 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tokio_util::sync::CancellationToken;
 
 use super::ssh::{self, SSHConnection, CommandResult, MonitorData};
@@ -138,7 +138,17 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
         .route("/api/connections/{id}/download", post(download_file_handler))
         .route("/api/saved-connections", get(list_saved_connections))
         .route("/api/saved-connections/{id}/connect", post(quick_connect_handler))
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
+        .layer(
+            CorsLayer::new()
+                .allow_origin([
+                    "http://localhost:1430".parse().unwrap(),
+                    "http://127.0.0.1:1430".parse().unwrap(),
+                    "http://localhost:27149".parse().unwrap(),
+                    "http://127.0.0.1:27149".parse().unwrap(),
+                ])
+                .allow_methods([Method::GET, Method::POST, Method::DELETE])
+                .allow_headers(tower_http::cors::Any)
+        )
         .with_state(state)
 }
 

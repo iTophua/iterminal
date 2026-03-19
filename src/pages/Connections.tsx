@@ -248,7 +248,7 @@ function Connections() {
       onOk: async () => {
         try {
           await deleteConnectionFromDb(id)
-          setConnections(connections.filter(c => c.id !== id))
+          setConnections(prev => prev.filter(c => c.id !== id))
           message.success('连接已删除')
         } catch (error) {
           message.error(`删除失败: ${error}`)
@@ -264,7 +264,7 @@ function Connections() {
       if (editingConnection) {
         const updated = { ...editingConnection, ...values, port }
         await saveConnection(updated)
-        setConnections(connections.map(c => c.id === editingConnection.id ? updated : c))
+        setConnections(prev => prev.map(c => c.id === editingConnection.id ? updated : c))
         message.success('连接已更新')
       } else {
         const newConn: Connection = {
@@ -279,7 +279,7 @@ function Connections() {
           status: 'offline'
         }
         await saveConnection(newConn)
-        setConnections([...connections, newConn])
+        setConnections(prev => [...prev, newConn])
         message.success('连接已添加')
       }
       setIsModalOpen(false)
@@ -682,7 +682,7 @@ function Connections() {
                       type="text"
                       size="small"
                       icon={<KeyOutlined />}
-                      onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
+                      onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password ? '******' : '无'}`, '信息')}
                       style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}
                     >
                       复制信息

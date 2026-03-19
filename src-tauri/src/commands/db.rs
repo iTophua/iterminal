@@ -86,8 +86,11 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    conn.execute("ALTER TABLE connections ADD COLUMN key_file TEXT", [])
-        .ok();
+    if let Err(e) = conn.execute("ALTER TABLE connections ADD COLUMN key_file TEXT", []) {
+        if !e.to_string().contains("duplicate column") {
+            eprintln!("Warning: Failed to add key_file column: {}", e);
+        }
+    }
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS settings (
@@ -108,12 +111,14 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
-    // 迁移：添加 last_connected_at 字段
-    conn.execute(
+    if let Err(e) = conn.execute(
         "ALTER TABLE connections ADD COLUMN last_connected_at TEXT",
         [],
-    )
-    .ok();
+    ) {
+        if !e.to_string().contains("duplicate column") {
+            eprintln!("Warning: Failed to add last_connected_at column: {}", e);
+        }
+    }
 
     Ok(true)
 }

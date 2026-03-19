@@ -195,9 +195,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     [sortField, sortOrder]
   )
 
-  if (!visible) return null
-
-  return (
+  const content = (
     <div
       ref={panelRef}
       className="file-manager-panel"
@@ -737,4 +735,8 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
       </Modal>
     </div>
   )
+
+  if (!visible) return null
+
+  return content
 }

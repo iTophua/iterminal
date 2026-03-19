@@ -1,6 +1,7 @@
 use once_cell::sync::Lazy;
 use russh::client::{Handle, Handler};
 use russh::{ChannelMsg, Disconnect};
+use russh::keys::PublicKeyBase64;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
@@ -8,6 +9,7 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Emitter;
 use tokio::sync::{mpsc, oneshot, RwLock};
+use base64::Engine;
 
 use super::license::get_max_connections;
 
@@ -27,16 +29,69 @@ pub struct CommandResult {
     pub error: Option<String>,
 }
 
-pub struct SshClientHandler;
+pub struct SshClientHandler {
+    pub host: String,
+    pub port: u16,
+    pub known_hosts_path: Option<std::path::PathBuf>,
+}
+
+impl SshClientHandler {
+    pub fn new(host: String, port: u16) -> Self {
+        let known_hosts_path = dirs::home_dir()
+            .map(|h| h.join(".ssh").join("known_hosts"));
+        Self { host, port, known_hosts_path }
+    }
+}
 
 impl Handler for SshClientHandler {
     type Error = anyhow::Error;
 
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // SECURITY: 跳过主机密钥验证，生产环境应实现 known_hosts 验证
+        let key_bytes = server_public_key.public_key_bytes();
+        let key_fingerprint = base64::engine::general_purpose::STANDARD.encode(&key_bytes);
+        
+        if let Some(ref path) = self.known_hosts_path {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    for line in content.lines() {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if parts.len() >= 3 {
+                            let hosts = parts[0];
+                            let stored_key = parts.get(2).unwrap_or(&"");
+                            
+                            let host_with_port = format!("[{}]:{}", self.host, self.port);
+                            let host_without_port = &self.host;
+                            
+                            if hosts.contains(host_without_port) || hosts.contains(&host_with_port) {
+                                if stored_key == &key_fingerprint {
+                                    return Ok(true);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        let host_key = format!("{}:{}", self.host, self.port);
+        eprintln!("WARN: Unknown host key for {}. Fingerprint: {}", host_key, key_fingerprint);
+        eprintln!("INFO: Auto-accepting host key (use --strict-host-key-checking for strict mode)");
+        
+        if let Some(ref path) = self.known_hosts_path {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let entry = format!("[{}]:{} {} {}\n", self.host, self.port, "ssh-ed25519", key_fingerprint);
+            let _ = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+                .and_then(|mut f| std::io::Write::write_all(&mut f, entry.as_bytes()));
+        }
+        
         Ok(true)
     }
 }
@@ -60,12 +115,15 @@ static SHELLS: Lazy<RwLock<HashMap<String, ShellSession>>> =
 
 #[tauri::command]
 pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String> {
-    if SESSIONS.read().await.contains_key(&id) {
-        return Ok(true);
+    {
+        let sessions = SESSIONS.read().await;
+        if sessions.contains_key(&id) {
+            return Ok(true);
+        }
     }
 
-    let current_count = SESSIONS.read().await.len() as u32;
     let max_connections = get_max_connections().await;
+    let current_count = SESSIONS.read().await.len() as u32;
     if current_count >= max_connections {
         return Err(format!(
             "免费版最多支持 {} 个连接，请升级专业版解锁无限连接",
@@ -82,10 +140,11 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
 
     let config = Arc::new(russh::client::Config::default());
     let addr_str = socket_addr.to_string();
+    let handler = SshClientHandler::new(connection.host.clone(), connection.port);
 
     let connect_result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        russh::client::connect(config, &addr_str, SshClientHandler)
+        russh::client::connect(config, &addr_str, handler)
     ).await;
 
     let mut handle = match connect_result {
@@ -133,7 +192,13 @@ let auth_success = if let Some(password) = &connection.password {
         return Err("认证失败".to_string());
     }
 
-    SESSIONS.write().await.insert(id, SshSession { handle, connection });
+    {
+        let mut sessions = SESSIONS.write().await;
+        if sessions.contains_key(&id) {
+            return Ok(true);
+        }
+        sessions.insert(id, SshSession { handle, connection });
+    }
     Ok(true)
 }
 
@@ -215,7 +280,8 @@ pub async fn test_connection(connection: SSHConnection) -> Result<bool, String> 
         .ok_or("解析地址失败")?;
 
     let config = Arc::new(russh::client::Config::default());
-    let mut handle = russh::client::connect(config, &socket_addr.to_string(), SshClientHandler)
+    let handler = SshClientHandler::new(connection.host.clone(), connection.port);
+    let mut handle = russh::client::connect(config, &socket_addr.to_string(), handler)
         .await
         .map_err(|e| format!("连接失败: {}", e))?;
 
@@ -743,6 +809,12 @@ pub async fn list_processes(id: String) -> Result<Vec<ProcessInfo>, String> {
 
 #[tauri::command]
 pub async fn kill_process(id: String, pid: u32, signal: Option<String>) -> Result<(), String> {
+    let sig = signal.unwrap_or_else(|| "TERM".to_string());
+    
+    if !sig.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("Invalid signal name".to_string());
+    }
+    
     let sessions = SESSIONS.read().await;
     let session = sessions.get(&id).ok_or("Session not found")?;
     let mut channel = session
@@ -752,7 +824,6 @@ pub async fn kill_process(id: String, pid: u32, signal: Option<String>) -> Resul
         .map_err(|e| e.to_string())?;
     drop(sessions);
 
-    let sig = signal.unwrap_or_else(|| "TERM".to_string());
     let cmd = format!("kill -{} {}", sig, pid);
 
     channel

@@ -98,15 +98,41 @@ async function apiCall<T>(
   body?: unknown
 ): Promise<ApiResponse<T>> {
   const url = `${API_BASE}${path}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  
   const options: RequestInit = {
     method,
     headers: { "Content-Type": "application/json" },
+    signal: controller.signal,
   };
   if (body) {
     options.body = JSON.stringify(body);
   }
-  const response = await fetch(url, options);
-  return response.json();
+  
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      return {
+        success: false,
+        error: `HTTP ${response.status}: ${response.statusText}`,
+      };
+    }
+    return response.json();
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'Request timeout after 30 seconds',
+      };
+    }
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 const tools: Tool[] = [

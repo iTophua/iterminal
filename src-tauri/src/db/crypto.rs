@@ -4,11 +4,45 @@ use aes_gcm::{
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
 use rand::Rng;
+use std::collections::hash_map::DefaultHasher;
+use std::env;
+use std::hash::{Hash, Hasher};
 
-const ENCRYPTION_KEY: &[u8; 32] = b"iterminal_32byte_encryption_key!";
+fn derive_encryption_key() -> [u8; 32] {
+    let mut hasher = DefaultHasher::new();
+
+    if let Ok(home) = env::var("HOME") {
+        home.hash(&mut hasher);
+    }
+
+    if let Ok(user) = env::var("USER") {
+        user.hash(&mut hasher);
+    }
+
+    if let Ok(path) = env::var("PATH") {
+        path.hash(&mut hasher);
+    }
+
+    let hash1 = hasher.finish();
+
+    let mut hasher2 = DefaultHasher::new();
+    format!("{}-{}", hash1, "iterminal-salt").hash(&mut hasher2);
+    let hash2 = hasher2.finish();
+
+    let mut key = [0u8; 32];
+    key[0..8].copy_from_slice(&hash1.to_le_bytes());
+    key[8..16].copy_from_slice(&hash2.to_le_bytes());
+    key[16..24].copy_from_slice(&hash1.to_be_bytes());
+    key[24..32].copy_from_slice(&hash2.to_be_bytes());
+
+    key
+}
+
+static ENCRYPTION_KEY: once_cell::sync::Lazy<[u8; 32]> =
+    once_cell::sync::Lazy::new(derive_encryption_key);
 
 pub fn encrypt_password(password: &str) -> String {
-    let cipher = Aes256Gcm::new(ENCRYPTION_KEY.into());
+    let cipher = Aes256Gcm::new_from_slice(&*ENCRYPTION_KEY).expect("Invalid key");
     let mut rng = rand::thread_rng();
     let mut nonce_bytes = [0u8; 12];
     rng.fill(&mut nonce_bytes);
@@ -31,7 +65,7 @@ pub fn decrypt_password(encrypted: &str) -> Option<String> {
     }
 
     let (nonce_bytes, ciphertext) = combined.split_at(12);
-    let cipher = Aes256Gcm::new(ENCRYPTION_KEY.into());
+    let cipher = Aes256Gcm::new_from_slice(&*ENCRYPTION_KEY).expect("Invalid key");
     let nonce = Nonce::from_slice(nonce_bytes);
 
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;

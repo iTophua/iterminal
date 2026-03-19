@@ -7,6 +7,36 @@ use tauri::Emitter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::RwLock;
 
+fn validate_path(path: &str) -> Result<String, String> {
+    let path = path.trim();
+    
+    if path.is_empty() {
+        return Err("路径不能为空".to_string());
+    }
+    
+    if path.contains('\0') {
+        return Err("路径包含非法字符".to_string());
+    }
+    
+    let normalized = path.replace('\\', "/");
+    
+    let suspicious_patterns = ["../", "/..", "//..", "~/"];
+    for pattern in suspicious_patterns {
+        if normalized.contains(pattern) {
+            return Err("路径包含非法序列".to_string());
+        }
+    }
+    
+    let dangerous_starts = ["/etc/passwd", "/etc/shadow", "/root/.ssh"];
+    for dangerous in dangerous_starts {
+        if normalized.starts_with(dangerous) || normalized.starts_with(&format!("/{}", dangerous)) {
+            return Err("禁止访问系统敏感目录".to_string());
+        }
+    }
+    
+    Ok(normalized)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FileEntry {
     pub name: String,
@@ -51,8 +81,9 @@ async fn create_sftp_connection(connection: &super::ssh::SSHConnection) -> Resul
 
     let config = Arc::new(russh::client::Config::default());
     let addr_str = socket_addr.to_string();
+    let handler = SshClientHandler::new(connection.host.clone(), connection.port);
 
-    let mut handle = russh::client::connect(config, &addr_str, SshClientHandler)
+    let mut handle = russh::client::connect(config, &addr_str, handler)
         .await
         .map_err(|e| format!("SFTP连接失败: {}", e))?;
 
@@ -126,6 +157,7 @@ async fn get_sftp_session(connection_id: &str) -> Result<Arc<SftpSession>, Strin
 
 #[tauri::command]
 pub async fn list_directory(connection_id: String, path: String) -> Result<Vec<FileEntry>, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     let entries = sftp
@@ -183,6 +215,7 @@ pub async fn create_file(
     path: String,
     content: Option<String>,
 ) -> Result<bool, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     use russh_sftp::protocol::OpenFlags;
@@ -225,6 +258,8 @@ pub async fn rename_file(
     old_path: String,
     new_path: String,
 ) -> Result<bool, String> {
+    let old_path = validate_path(&old_path)?;
+    let new_path = validate_path(&new_path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     sftp.rename(&old_path, &new_path)
@@ -236,6 +271,7 @@ pub async fn rename_file(
 
 #[tauri::command]
 pub async fn delete_file(connection_id: String, path: String) -> Result<bool, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     sftp.remove_file(&path)
@@ -247,6 +283,7 @@ pub async fn delete_file(connection_id: String, path: String) -> Result<bool, St
 
 #[tauri::command]
 pub async fn delete_directory(connection_id: String, path: String) -> Result<bool, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     sftp.remove_dir(&path)
@@ -258,6 +295,7 @@ pub async fn delete_directory(connection_id: String, path: String) -> Result<boo
 
 #[tauri::command]
 pub async fn chmod_file(connection_id: String, path: String, mode: i32) -> Result<bool, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     use russh_sftp::protocol::FileAttributes;
@@ -276,6 +314,7 @@ pub async fn chmod_file(connection_id: String, path: String, mode: i32) -> Resul
 
 #[tauri::command]
 pub async fn file_exists(connection_id: String, path: String) -> Result<bool, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     match sftp.metadata(&path).await {
@@ -298,6 +337,7 @@ pub async fn read_file_content(
     path: String,
     max_size: Option<u64>,
 ) -> Result<FileContent, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     let metadata = sftp.metadata(&path).await.map_err(|e| format!("获取文件信息失败: {}", e))?;
@@ -346,6 +386,7 @@ pub async fn write_file_content(
     path: String,
     content: String,
 ) -> Result<bool, String> {
+    let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
     let mut file = sftp.create(&path).await.map_err(|e| format!("创建文件失败: {}", e))?;
@@ -363,6 +404,7 @@ pub async fn upload_file(
     task_id: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let remote_path = validate_path(&remote_path)?;
     let sftp = get_sftp_session(&connection_id).await?;
     let task_id_clone = task_id.clone();
 
@@ -513,6 +555,7 @@ pub async fn download_file(
     task_id: String,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
+    let remote_path = validate_path(&remote_path)?;
     let sftp = get_sftp_session(&connection_id).await?;
     let task_id_clone = task_id.clone();
 

@@ -486,6 +486,15 @@ function Terminal() {
   const disconnectListenersRef = useRef<{ [key: string]: UnlistenFn }>({})
 
   useEffect(() => {
+    const currentIds = new Set(connectedConnections.map(c => c.connectionId))
+    
+    Object.keys(disconnectListenersRef.current).forEach(id => {
+      if (!currentIds.has(id)) {
+        disconnectListenersRef.current[id]()
+        delete disconnectListenersRef.current[id]
+      }
+    })
+    
     connectedConnections.forEach(conn => {
       const eventName = `connection-disconnected-${conn.connectionId}`
       if (!disconnectListenersRef.current[conn.connectionId]) {
@@ -503,7 +512,7 @@ function Terminal() {
       Object.values(disconnectListenersRef.current).forEach(unlisten => unlisten())
       disconnectListenersRef.current = {}
     }
-  }, [connectedConnections.map(c => c.connectionId).join(','), markConnectionDisconnected, message])
+  }, [connectedConnections, markConnectionDisconnected, message])
 
   const handleReconnect = useCallback(async (disconnectedConn: DisconnectedConnection) => {
     try {
