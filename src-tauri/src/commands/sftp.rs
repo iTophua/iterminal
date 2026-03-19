@@ -281,6 +281,84 @@ pub async fn file_exists(connection_id: String, path: String) -> Result<bool, St
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileContent {
+    pub content: String,
+    pub size: u64,
+    pub truncated: bool,
+    pub encoding: String,
+}
+
+#[tauri::command]
+pub async fn read_file_content(
+    connection_id: String,
+    path: String,
+    max_size: Option<u64>,
+) -> Result<FileContent, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    let metadata = sftp.metadata(&path).await.map_err(|e| format!("获取文件信息失败: {}", e))?;
+    let file_size = metadata.size.unwrap_or(0);
+
+    let max = max_size.unwrap_or(1024 * 1024);
+    let truncated = file_size > max;
+
+    use russh_sftp::protocol::OpenFlags;
+    let mut file = sftp.open(&path, OpenFlags::READ, 0)
+        .await
+        .map_err(|e| format!("打开文件失败: {}", e))?;
+
+    let read_size = if truncated { max as usize } else { file_size as usize };
+    let mut buffer = vec![0u8; read_size];
+    let bytes_read = file.read(&mut buffer).await.map_err(|e| format!("读取文件失败: {}", e))?;
+    buffer.truncate(bytes_read);
+
+    let (content, encoding) = if is_binary(&buffer) {
+        (hex_encode(&buffer), "binary".to_string())
+    } else {
+        (String::from_utf8_lossy(&buffer).to_string(), "text".to_string())
+    };
+
+    Ok(FileContent {
+        content,
+        size: file_size,
+        truncated,
+        encoding,
+    })
+}
+
+fn is_binary(data: &[u8]) -> bool {
+    if data.is_empty() {
+        return false;
+    }
+    let sample_len = std::cmp::min(data.len(), 8192);
+    let sample = &data[..sample_len];
+    let null_count = sample.iter().filter(|&&b| b == 0).count();
+    null_count > sample_len / 10
+}
+
+fn hex_encode(data: &[u8]) -> String {
+    data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
+}
+
+#[tauri::command]
+pub async fn write_file_content(
+    connection_id: String,
+    path: String,
+    content: String,
+) -> Result<bool, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    use russh_sftp::protocol::OpenFlags;
+    let mut file = sftp.create(&path, OpenFlags::WRITE | OpenFlags::TRUNCATE, 0)
+        .await
+        .map_err(|e| format!("创建文件失败: {}", e))?;
+
+    file.write_all(content.as_bytes()).await.map_err(|e| format!("写入文件失败: {}", e))?;
+
+    Ok(true)
+}
+
 #[tauri::command]
 pub async fn upload_file(
     connection_id: String,

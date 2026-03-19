@@ -15,11 +15,18 @@ export interface Connection {
 }
 
 // 会话信息
+export interface SplitPanel {
+  id: string
+  shellId: string
+}
+
 export interface Session {
   id: string
   connectionId: string
   shellId: string
   title: string
+  splitDirection?: 'horizontal' | 'vertical'
+  splitPanels?: SplitPanel[]
 }
 
 export interface DisconnectedConnection {
@@ -166,6 +173,10 @@ interface TerminalState {
   reorderConnections: (oldIndex: number, newIndex: number) => void
   // 重排会话顺序
   reorderSessions: (connectionId: string, oldIndex: number, newIndex: number) => void
+
+  // 分屏终端
+  splitSession: (connectionId: string, sessionId: string, direction: 'horizontal' | 'vertical', shellId: string) => void
+  closeSplitPanel: (connectionId: string, sessionId: string, panelId: string) => void
 
   // 文件管理面板控制
   setFileManagerVisible: (connectionId: string, visible: boolean) => void
@@ -432,6 +443,52 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         connectedConnections: state.connectedConnections.map(c =>
           c.connectionId === connectionId ? { ...c, sessions } : c
         ),
+      }
+    })
+  },
+
+  splitSession: (connectionId: string, sessionId: string, direction: 'horizontal' | 'vertical', shellId: string) => {
+    set((state) => {
+      return {
+        connectedConnections: state.connectedConnections.map(conn => {
+          if (conn.connectionId !== connectionId) return conn
+          return {
+            ...conn,
+            sessions: conn.sessions.map(session => {
+              if (session.id !== sessionId) return session
+              const panelId = Date.now().toString()
+              const newPanel: SplitPanel = { id: panelId, shellId }
+              const existingPanels = session.splitPanels || []
+              return {
+                ...session,
+                splitDirection: direction,
+                splitPanels: [...existingPanels, newPanel],
+              }
+            }),
+          }
+        }),
+      }
+    })
+  },
+
+  closeSplitPanel: (connectionId: string, sessionId: string, panelId: string) => {
+    set((state) => {
+      return {
+        connectedConnections: state.connectedConnections.map(conn => {
+          if (conn.connectionId !== connectionId) return conn
+          return {
+            ...conn,
+            sessions: conn.sessions.map(session => {
+              if (session.id !== sessionId) return session
+              const newPanels = (session.splitPanels || []).filter(p => p.id !== panelId)
+              return {
+                ...session,
+                splitPanels: newPanels.length > 0 ? newPanels : undefined,
+                splitDirection: newPanels.length > 0 ? session.splitDirection : undefined,
+              }
+            }),
+          }
+        }),
       }
     })
   },

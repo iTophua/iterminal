@@ -1,15 +1,35 @@
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { Layout } from 'antd'
+import { Layout, Modal, Button, Space, message } from 'antd'
 import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
 import Transfers from './pages/Transfers'
-import { useTerminalStore } from './stores/terminalStore'
+import { useTerminalStore, type ConnectedConnection } from './stores/terminalStore'
 import { invoke } from '@tauri-apps/api/core'
-import { useEffect } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import './styles/global.css'
 
 const { Content } = Layout
+
+const SESSION_STORAGE_KEY = 'iterminal_saved_sessions'
+
+interface SavedSession {
+  connectionId: string
+  connection: {
+    id: string
+    name: string
+    host: string
+    port: number
+    username: string
+    password?: string
+    keyFile?: string
+    group: string
+    tags: string[]
+  }
+  sessionCount: number
+  savedAt: number
+}
 
 function FontPreloader() {
   const setAvailableFonts = useTerminalStore(s => s.setAvailableFonts)
@@ -28,6 +48,131 @@ function FontPreloader() {
         .finally(() => setFontsLoading(false))
     }
   }, [availableFonts.length, setAvailableFonts, setFontsLoading])
+
+  return null
+}
+
+function SessionRestorer() {
+  const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
+  const [restoreModalVisible, setRestoreModalVisible] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const addConnection = useTerminalStore(s => s.addConnection)
+  const setActiveConnection = useTerminalStore(s => s.setActiveConnection)
+
+  useEffect(() => {
+    const saved = localStorage.getItem(SESSION_STORAGE_KEY)
+    if (saved) {
+      try {
+        const sessions: SavedSession[] = JSON.parse(saved)
+        const recentSessions = sessions.filter(s => Date.now() - s.savedAt < 24 * 60 * 60 * 1000)
+        if (recentSessions.length > 0) {
+          setSavedSessions(recentSessions)
+          setRestoreModalVisible(true)
+        }
+      } catch {
+        localStorage.removeItem(SESSION_STORAGE_KEY)
+      }
+    }
+  }, [])
+
+  const handleRestore = async () => {
+    setRestoring(true)
+    let restored = 0
+    for (const session of savedSessions) {
+      try {
+        await invoke('connect_ssh', {
+          id: session.connectionId,
+          connection: {
+            host: session.connection.host,
+            port: session.connection.port,
+            username: session.connection.username,
+            password: session.connection.password,
+            key_file: session.connection.keyFile,
+          }
+        })
+        const shellId = await invoke<string>('get_shell', { id: session.connectionId })
+        addConnection({
+          ...session.connection,
+          status: 'online',
+        }, shellId)
+        restored++
+      } catch (err) {
+        console.error(`恢复连接 ${session.connection.name} 失败:`, err)
+      }
+    }
+    setRestoring(false)
+    setRestoreModalVisible(false)
+    localStorage.removeItem(SESSION_STORAGE_KEY)
+    if (restored > 0) {
+      message.success(`已恢复 ${restored} 个连接`)
+    }
+  }
+
+  const handleSkip = () => {
+    setRestoreModalVisible(false)
+    localStorage.removeItem(SESSION_STORAGE_KEY)
+  }
+
+  if (!restoreModalVisible) return null
+
+  return (
+    <Modal
+      open={restoreModalVisible}
+      title="恢复上次会话"
+      onCancel={handleSkip}
+      footer={
+        <Space>
+          <Button onClick={handleSkip}>跳过</Button>
+          <Button type="primary" loading={restoring} onClick={handleRestore}>
+            恢复连接
+          </Button>
+        </Space>
+      }
+      width={500}
+    >
+      <p style={{ marginBottom: 16 }}>检测到上次未关闭的连接，是否重新连接？</p>
+      <div style={{ maxHeight: 300, overflow: 'auto' }}>
+        {savedSessions.map(s => (
+          <div key={s.connectionId} style={{ padding: '8px 12px', background: 'var(--color-bg-container)', borderRadius: 4, marginBottom: 8 }}>
+            <div style={{ fontWeight: 500 }}>{s.connection.name}</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+              {s.connection.username}@{s.connection.host}:{s.connection.port}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+function SessionSaver() {
+  const connectedConnections = useTerminalStore(s => s.connectedConnections)
+  const savedRef = useRef(false)
+
+  useEffect(() => {
+    const unlisten = listen('tauri://close-requested', async () => {
+      if (connectedConnections.length > 0 && !savedRef.current) {
+        const sessions: SavedSession[] = connectedConnections.map(conn => ({
+          connectionId: conn.connectionId,
+          connection: conn.connection,
+          sessionCount: conn.sessions.length,
+          savedAt: Date.now(),
+        }))
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))
+        savedRef.current = true
+      }
+      
+      for (const conn of connectedConnections) {
+        await invoke('disconnect_ssh', { id: conn.connectionId }).catch(() => {})
+      }
+      
+      window.close()
+    })
+
+    return () => {
+      unlisten.then(fn => fn())
+    }
+  }, [connectedConnections])
 
   return null
 }
@@ -105,6 +250,8 @@ function App() {
   return (
     <BrowserRouter>
       <FontPreloader />
+      <SessionRestorer />
+      <SessionSaver />
       <Layout style={{ minHeight: '100vh', background: 'var(--color-bg-container)' }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>

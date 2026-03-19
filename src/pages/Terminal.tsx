@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, Tooltip, Input, Button, App, Badge } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined, HolderOutlined, ExportOutlined, ClearOutlined, ReloadOutlined, DisconnectOutlined } from '@ant-design/icons'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined, HolderOutlined, ExportOutlined, ClearOutlined, ReloadOutlined, DisconnectOutlined, SplitCellsOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -11,8 +11,9 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
 import 'xterm/css/xterm.css'
-import { useTerminalStore, DisconnectedConnection, type ShortcutSettings } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectedConnection, type ShortcutSettings, type SplitPanel } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
@@ -59,6 +60,8 @@ function Terminal() {
   const markConnectionDisconnected = useTerminalStore(state => state.markConnectionDisconnected)
   const removeDisconnectedConnection = useTerminalStore(state => state.removeDisconnectedConnection)
   const addConnection = useTerminalStore(state => state.addConnection)
+  const splitSession = useTerminalStore(state => state.splitSession)
+  const closeSplitPanel = useTerminalStore(state => state.closeSplitPanel)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
@@ -396,6 +399,89 @@ function Terminal() {
       }
     }
   }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message])
+
+  useEffect(() => {
+    if (!activeSession?.splitPanels) return
+
+    activeSession.splitPanels.forEach(panel => {
+      const key = `${activeSession.connectionId}_${panel.id}`
+      
+      if (initializedRef.current.has(key)) {
+        const addon = fitAddons.current[key]
+        if (addon) requestAnimationFrame(() => { try { addon.fit() } catch {} })
+        return
+      }
+
+      const container = terminalRefs.current[key]
+      if (!container) return
+
+      const initPanel = async () => {
+        const terminal = new XTerm({
+          cursorBlink: terminalSettings.cursorBlink,
+          cursorStyle: terminalSettings.cursorStyle,
+          fontSize: terminalSettings.fontSize,
+          fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
+          theme: resolveTerminalTheme(appTheme, terminalThemeKey),
+          convertEol: true,
+          disableStdin: false,
+          scrollback: terminalSettings.scrollback,
+        })
+
+        const fitAddon = new FitAddon()
+        terminal.loadAddon(fitAddon)
+        container.innerHTML = ''
+        terminal.open(container)
+
+        terminal.onData(data => {
+          invoke('write_shell', { id: panel.shellId, data }).catch(err => {
+            console.error('写入终端失败:', err)
+          })
+        })
+
+        terminal.onResize(({ cols, rows }) => {
+          invoke('resize_shell', { id: panel.shellId, cols, rows }).catch(err => {
+            console.error('调整终端大小失败:', err)
+          })
+        })
+
+        terminalInstances.current[key] = terminal
+        fitAddons.current[key] = fitAddon
+
+        const searchAddon = new SearchAddon()
+        terminal.loadAddon(searchAddon)
+        searchAddons.current[key] = searchAddon
+
+        const eventName = `shell-output-${panel.shellId}`
+        const unlisten = await listen<string>(eventName, (event) => {
+          const term = terminalInstances.current[key]
+          if (term && event.payload) {
+            if (typeof event.payload === 'object' && (event.payload as any).eof) return
+            term.write(event.payload)
+          }
+        })
+        unlistenersRef.current[key] = unlisten
+
+        const resizeObserver = new ResizeObserver(() => {
+          requestAnimationFrame(() => {
+            try { fitAddon.fit() } catch {}
+          })
+        })
+        resizeObserver.observe(container)
+        resizeObserversRef.current[key] = resizeObserver
+
+        requestAnimationFrame(() => {
+          try { fitAddon.fit() } catch {}
+          try { terminal.focus() } catch {}
+        })
+
+        initializedRef.current.add(key)
+      }
+
+      initPanel().catch(err => {
+        console.error('分屏终端初始化失败:', err)
+      })
+    })
+  }, [activeSession?.splitPanels, terminalSettings, appTheme, terminalThemeKey])
 
   const disconnectListenersRef = useRef<{ [key: string]: UnlistenFn }>({})
 
@@ -907,6 +993,21 @@ function Terminal() {
                   <FullscreenOutlined />
                 </span>
               </Tooltip>
+              <Tooltip title="水平分屏">
+                <span
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  onClick={async () => {
+                    try {
+                      const shellId = await invoke<string>('get_shell', { id: conn.connectionId })
+                      splitSession(conn.connectionId, s.id, 'horizontal', shellId)
+                    } catch (err) {
+                      message.error(`分屏失败: ${err}`)
+                    }
+                  }}
+                >
+                  <SplitCellsOutlined />
+                </span>
+              </Tooltip>
               <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 4px' }} />
               <Tooltip title="系统监控">
                 <span
@@ -1042,12 +1143,54 @@ function Terminal() {
               </Tooltip>
             </div>
           )}
-          
-          <div
-            ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
-            style={{ flex: 1, width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
-            onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
-          />
+
+          {s.splitPanels && s.splitPanels.length > 0 ? (
+            <PanelGroup direction={s.splitDirection === 'vertical' ? 'vertical' : 'horizontal'} style={{ flex: 1 }}>
+              <Panel defaultSize={50} minSize={20}>
+                <div
+                  ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
+                  style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
+                  onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
+                />
+              </Panel>
+              <PanelResizeHandle style={{ width: 4, background: 'var(--color-border)', cursor: 'col-resize' }} />
+              {s.splitPanels.map((panel, idx) => (
+                <Panel key={panel.id} defaultSize={50 / (s.splitPanels?.length || 1)} minSize={20}>
+                  <div
+                    ref={el => { terminalRefs.current[`${conn.connectionId}_${panel.id}`] = el }}
+                    style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box', position: 'relative' }}
+                    onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${panel.id}`)}
+                  >
+                    <Tooltip title="关闭分屏">
+                      <span
+                        style={{ position: 'absolute', top: 4, right: 4, zIndex: 10, color: 'var(--color-text-tertiary)', cursor: 'pointer', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: 4 }}
+                        onClick={async () => {
+                          await invoke('close_shell', { id: panel.shellId }).catch(() => {})
+                          const key = `${conn.connectionId}_${panel.id}`
+                          if (terminalInstances.current[key]) {
+                            terminalInstances.current[key].dispose()
+                            delete terminalInstances.current[key]
+                          }
+                          delete fitAddons.current[key]
+                          delete searchAddons.current[key]
+                          initializedRef.current.delete(key)
+                          closeSplitPanel(conn.connectionId, s.id, panel.id)
+                        }}
+                      >
+                        <CloseOutlined style={{ fontSize: 10 }} />
+                      </span>
+                    </Tooltip>
+                  </div>
+                </Panel>
+              ))}
+            </PanelGroup>
+          ) : (
+            <div
+              ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
+              style={{ flex: 1, width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
+              onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
+            />
+          )}
         </div>
       ),
     }))
