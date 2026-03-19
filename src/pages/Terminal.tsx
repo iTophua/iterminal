@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Tabs, Tooltip, Input, Button, App } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined, HolderOutlined } from '@ant-design/icons'
+import { Tabs, Tooltip, Input, Button, App, Badge } from 'antd'
+import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined, HolderOutlined, ExportOutlined, ClearOutlined, ReloadOutlined, DisconnectOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
@@ -12,7 +12,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import 'xterm/css/xterm.css'
-import { useTerminalStore } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectedConnection, type ShortcutSettings } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
@@ -49,16 +49,21 @@ function SortableTab({ id, label }: SortableTabProps) {
 function Terminal() {
   const { message } = App.useApp()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
+  const disconnectedConnections = useTerminalStore(state => state.disconnectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
   const setActiveSession = useTerminalStore(state => state.setActiveSession)
   const addSession = useTerminalStore(state => state.addSession)
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
+  const markConnectionDisconnected = useTerminalStore(state => state.markConnectionDisconnected)
+  const removeDisconnectedConnection = useTerminalStore(state => state.removeDisconnectedConnection)
+  const addConnection = useTerminalStore(state => state.addConnection)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
+  const shortcutSettings = useTerminalStore(state => state.shortcutSettings)
   const reorderConnections = useTerminalStore(state => state.reorderConnections)
   const terminalThemeKey = useThemeStore(state => state.terminalTheme)
   const appTheme = useThemeStore(state => state.appTheme)
@@ -226,9 +231,37 @@ function Terminal() {
         }, true)
       }
 
-      // 拦截 Ctrl+V，手动粘贴
+      const matchShortcut = (event: KeyboardEvent, shortcut: string): boolean => {
+        const parts = shortcut.toUpperCase().split('+')
+        const hasCtrl = parts.includes('CTRL')
+        const hasShift = parts.includes('SHIFT')
+        const hasAlt = parts.includes('ALT')
+        const hasMeta = parts.includes('META')
+        const keyPart = parts.find(p => !['CTRL', 'SHIFT', 'ALT', 'META'].includes(p))
+        
+        const ctrlMatch = hasCtrl ? (event.ctrlKey || event.metaKey) : (!event.ctrlKey || event.metaKey)
+        const shiftMatch = hasShift ? event.shiftKey : !event.shiftKey
+        const altMatch = hasAlt ? event.altKey : !event.altKey
+        const metaMatch = hasMeta ? event.metaKey : true
+        const keyMatch = keyPart ? event.key.toUpperCase() === keyPart : false
+        
+        return ctrlMatch && shiftMatch && altMatch && metaMatch && keyMatch
+      }
+
       terminal.attachCustomKeyEventHandler(event => {
-        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'v' && event.type === 'keydown') {
+        if (event.type !== 'keydown') return true
+        
+        if (matchShortcut(event, shortcutSettings.clearScreen)) {
+          terminal.clear()
+          return false
+        }
+        
+        if (matchShortcut(event, shortcutSettings.search)) {
+          setSearchVisible(prev => !prev)
+          return false
+        }
+        
+        if (matchShortcut(event, shortcutSettings.paste)) {
           terminal.clearSelection()
           readText().then(text => {
             if (text) {
@@ -242,6 +275,7 @@ function Terminal() {
           })
           return false
         }
+        
         return true
       })
 
@@ -361,7 +395,58 @@ function Terminal() {
         delete resizeObserversRef.current[key]
       }
     }
-  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, terminalSettings, appTheme, terminalThemeKey, message])
+  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message])
+
+  const disconnectListenersRef = useRef<{ [key: string]: UnlistenFn }>({})
+
+  useEffect(() => {
+    connectedConnections.forEach(conn => {
+      const eventName = `connection-disconnected-${conn.connectionId}`
+      if (!disconnectListenersRef.current[conn.connectionId]) {
+        listen<{ reason: string; shell_id: string }>(eventName, (event) => {
+          const reason = event.payload.reason as DisconnectedConnection['reason']
+          markConnectionDisconnected(conn.connectionId, reason)
+          message.warning(`连接 ${conn.connection.name} 已断开`)
+        }).then(unlisten => {
+          disconnectListenersRef.current[conn.connectionId] = unlisten
+        })
+      }
+    })
+
+    return () => {
+      Object.values(disconnectListenersRef.current).forEach(unlisten => unlisten())
+      disconnectListenersRef.current = {}
+    }
+  }, [connectedConnections.map(c => c.connectionId).join(','), markConnectionDisconnected, message])
+
+  const handleReconnect = useCallback(async (disconnectedConn: DisconnectedConnection) => {
+    try {
+      await invoke('connect_ssh', {
+        id: disconnectedConn.connectionId,
+        connection: {
+          host: disconnectedConn.connection.host,
+          port: disconnectedConn.connection.port,
+          username: disconnectedConn.connection.username,
+          password: disconnectedConn.connection.password,
+          key_file: disconnectedConn.connection.keyFile,
+        }
+      })
+
+      const shellId = await invoke<string>('get_shell', { id: disconnectedConn.connectionId })
+      
+      removeDisconnectedConnection(disconnectedConn.connectionId)
+      
+      addConnection(disconnectedConn.connection, shellId)
+      
+      message.success('重连成功')
+    } catch (err) {
+      message.error(`重连失败: ${err}`)
+    }
+  }, [addConnection, removeDisconnectedConnection, message])
+
+  const handleRemoveDisconnected = useCallback((connectionId: string) => {
+    removeDisconnectedConnection(connectionId)
+  }, [removeDisconnectedConnection])
 
 
   // 新建会话
@@ -653,7 +738,7 @@ function Terminal() {
     }
   }, [rightPanelWidth])
 
-  if (connectedConnections.length === 0) {
+  if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
         <p style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }}>没有活动的会话</p>
@@ -661,6 +746,37 @@ function Terminal() {
       </div>
     )
   }
+
+  const disconnectedItems = disconnectedConnections.map(dc => ({
+    key: dc.connectionId,
+    label: (
+      <span style={{ color: 'var(--color-error)' }}>
+        <DisconnectOutlined style={{ marginRight: 4 }} />
+        {dc.connection.name}
+        <CloseOutlined style={{ marginLeft: 6, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleRemoveDisconnected(dc.connectionId) }} />
+      </span>
+    ),
+    children: (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--color-bg-container)' }}>
+        <DisconnectOutlined style={{ fontSize: 48, color: 'var(--color-error)' }} />
+        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }}>连接已断开</p>
+        <p style={{ color: 'var(--color-text-quaternary)', fontSize: 14 }}>
+          {dc.reason === 'write_failed' && '写入失败，可能是网络中断'}
+          {dc.reason === 'channel_closed' && 'SSH Channel 被关闭'}
+          {dc.reason === 'server_close' && '服务器主动关闭连接'}
+          {dc.reason === 'unknown' && '原因未知'}
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Button type="primary" icon={<ReloadOutlined />} onClick={() => handleReconnect(dc)}>
+            重新连接
+          </Button>
+          <Button onClick={() => handleRemoveDisconnected(dc.connectionId)}>
+            关闭
+          </Button>
+        </div>
+      </div>
+    ),
+  }))
 
   const connectionItems = connectedConnections.map(conn => {
     const sessionItems = conn.sessions.map((s, idx) => ({
@@ -708,6 +824,68 @@ function Terminal() {
                   }}
                 >
                   <ScissorOutlined />
+                </span>
+              </Tooltip>
+              <Tooltip title="导出终端输出">
+                <span
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  onClick={async () => {
+                    const key = `${conn.connectionId}_${s.id}`
+                    const term = terminalInstances.current[key]
+                    if (term) {
+                      const content = term.getSelection() || ''
+                      if (!content) {
+                        const buffer = term.buffer.active
+                        const lines: string[] = []
+                        for (let i = 0; i < buffer.length; i++) {
+                          lines.push(buffer.getLine(i)?.translateToString(true) || '')
+                        }
+                        const fullContent = lines.join('\n')
+                        if (fullContent.trim()) {
+                          const blob = new Blob([fullContent], { type: 'text/plain' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `terminal-${conn.connection.name}-${new Date().toISOString().slice(0, 10)}.txt`
+                          document.body.appendChild(a)
+                          a.click()
+                          document.body.removeChild(a)
+                          URL.revokeObjectURL(url)
+                          message.success('已导出终端输出')
+                        } else {
+                          message.info('终端无内容可导出')
+                        }
+                      } else {
+                        const blob = new Blob([content], { type: 'text/plain' })
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `terminal-selection-${conn.connection.name}.txt`
+                        document.body.appendChild(a)
+                        a.click()
+                        document.body.removeChild(a)
+                        URL.revokeObjectURL(url)
+                        message.success('已导出选中内容')
+                      }
+                    }
+                  }}
+                >
+                  <ExportOutlined />
+                </span>
+              </Tooltip>
+              <Tooltip title="清屏 (Ctrl+L)">
+                <span
+                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                  onClick={() => {
+                    const key = `${conn.connectionId}_${s.id}`
+                    const term = terminalInstances.current[key]
+                    if (term) {
+                      term.clear()
+                      message.success('已清屏')
+                    }
+                  }}
+                >
+                  <ClearOutlined />
                 </span>
               </Tooltip>
               <Tooltip title="搜索">
@@ -930,7 +1108,7 @@ function Terminal() {
             <Tabs
               activeKey={activeConnectionId || undefined}
               onChange={setActiveConnection}
-              items={connectionItems}
+              items={[...connectionItems, ...disconnectedItems]}
               style={{ height: '100%' }}
               tabBarStyle={{ margin: 0, padding: '0 12px', background: 'var(--color-bg-elevated)' }}
               destroyInactiveTabPane={false}

@@ -22,6 +22,15 @@ export interface Session {
   title: string
 }
 
+export interface DisconnectedConnection {
+  connectionId: string
+  connection: Connection
+  sessions: Session[]
+  lastActiveSessionId: string | null
+  disconnectedAt: number
+  reason: 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
+}
+
 // 已连接的连接信息（包含多个会话）
 export interface ConnectedConnection {
   connectionId: string
@@ -82,10 +91,37 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   cursorBlink: true,
 }
 
+export interface ShortcutSettings {
+  clearScreen: string
+  search: string
+  copy: string
+  paste: string
+  newSession: string
+  closeSession: string
+  fullscreen: string
+  splitHorizontal: string
+  splitVertical: string
+  nextSession: string
+  prevSession: string
+}
+
+export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = {
+  clearScreen: 'Ctrl+L',
+  search: 'Ctrl+F',
+  copy: 'Ctrl+Shift+C',
+  paste: 'Ctrl+Shift+V',
+  newSession: 'Ctrl+Shift+T',
+  closeSession: 'Ctrl+Shift+W',
+  fullscreen: 'F11',
+  splitHorizontal: 'Ctrl+Shift+E',
+  splitVertical: 'Ctrl+Shift+O',
+  nextSession: 'Ctrl+Tab',
+  prevSession: 'Ctrl+Shift+Tab',
+}
+
 interface TerminalState {
-  // 已连接的连接列表
   connectedConnections: ConnectedConnection[]
-  // 当前激活的连接 ID
+  disconnectedConnections: DisconnectedConnection[]
   activeConnectionId: string | null
   // 侧边栏折叠状态
   sidebarCollapsed: boolean
@@ -101,6 +137,8 @@ interface TerminalState {
   expandedKeys: { [connectionId: string]: string[] }
   // 终端设置
   terminalSettings: TerminalSettings
+  // 快捷键设置
+  shortcutSettings: ShortcutSettings
   // 设置面板显示状态
   settingsVisible: boolean
   // 可用字体列表（应用启动时预加载）
@@ -147,16 +185,25 @@ interface TerminalState {
   setExpandedKeys: (connectionId: string, keys: string[]) => void
   // 更新终端设置
   updateTerminalSettings: (settings: Partial<TerminalSettings>) => void
+  // 更新快捷键设置
+  updateShortcutSettings: (settings: Partial<ShortcutSettings>) => void
+  // 重置快捷键设置
+  resetShortcutSettings: () => void
   // 设置面板显示/隐藏
   setSettingsVisible: (visible: boolean) => void
   // 设置可用字体列表
   setAvailableFonts: (fonts: string[]) => void
   // 设置字体加载状态
   setFontsLoading: (loading: boolean) => void
+
+  markConnectionDisconnected: (connectionId: string, reason: DisconnectedConnection['reason']) => void
+  removeDisconnectedConnection: (connectionId: string) => void
+  clearAllDisconnectedConnections: () => void
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   connectedConnections: [],
+  disconnectedConnections: [],
   activeConnectionId: null,
   sidebarCollapsed: false,
   fileManagerVisible: {},
@@ -179,6 +226,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
     }
     return DEFAULT_TERMINAL_SETTINGS
+  })(),
+  shortcutSettings: (() => {
+    const saved = localStorage.getItem('iterminal_shortcut_settings')
+    if (saved) {
+      try {
+        return { ...DEFAULT_SHORTCUT_SETTINGS, ...JSON.parse(saved) }
+      } catch {
+        return DEFAULT_SHORTCUT_SETTINGS
+      }
+    }
+    return DEFAULT_SHORTCUT_SETTINGS
   })(),
   settingsVisible: false,
   availableFonts: [],
@@ -472,6 +530,19 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     })
   },
 
+  updateShortcutSettings: (settings: Partial<ShortcutSettings>) => {
+    set((state) => {
+      const newSettings = { ...state.shortcutSettings, ...settings }
+      localStorage.setItem('iterminal_shortcut_settings', JSON.stringify(newSettings))
+      return { shortcutSettings: newSettings }
+    })
+  },
+
+  resetShortcutSettings: () => {
+    localStorage.setItem('iterminal_shortcut_settings', JSON.stringify(DEFAULT_SHORTCUT_SETTINGS))
+    set({ shortcutSettings: DEFAULT_SHORTCUT_SETTINGS })
+  },
+
   setSettingsVisible: (visible: boolean) => {
     set({ settingsVisible: visible })
   },
@@ -482,5 +553,57 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setFontsLoading: (loading: boolean) => {
     set({ fontsLoading: loading })
+  },
+
+  markConnectionDisconnected: (connectionId: string, reason: DisconnectedConnection['reason']) => {
+    set((state) => {
+      const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+      if (!conn) return state
+
+      const disconnected: DisconnectedConnection = {
+        connectionId,
+        connection: conn.connection,
+        sessions: conn.sessions,
+        lastActiveSessionId: conn.activeSessionId,
+        disconnectedAt: Date.now(),
+        reason,
+      }
+
+      const newTransferTasks = { ...state.transferTasks }
+      delete newTransferTasks[connectionId]
+      const newFileManagerVisible = { ...state.fileManagerVisible }
+      delete newFileManagerVisible[connectionId]
+      const newTransferManagerVisible = { ...state.transferManagerVisible }
+      delete newTransferManagerVisible[connectionId]
+      const newCurrentPaths = { ...state.currentPaths }
+      delete newCurrentPaths[connectionId]
+      const newExpandedKeys = { ...state.expandedKeys }
+      delete newExpandedKeys[connectionId]
+
+      return {
+        connectedConnections: state.connectedConnections.filter(c => c.connectionId !== connectionId),
+        disconnectedConnections: [...state.disconnectedConnections.filter(c => c.connectionId !== connectionId), disconnected],
+        activeConnectionId: state.activeConnectionId === connectionId
+          ? (state.connectedConnections.length > 1
+            ? state.connectedConnections.find(c => c.connectionId !== connectionId)?.connectionId || null
+            : null)
+          : state.activeConnectionId,
+        transferTasks: newTransferTasks,
+        fileManagerVisible: newFileManagerVisible,
+        transferManagerVisible: newTransferManagerVisible,
+        currentPaths: newCurrentPaths,
+        expandedKeys: newExpandedKeys,
+      }
+    })
+  },
+
+  removeDisconnectedConnection: (connectionId: string) => {
+    set((state) => ({
+      disconnectedConnections: state.disconnectedConnections.filter(c => c.connectionId !== connectionId),
+    }))
+  },
+
+  clearAllDisconnectedConnections: () => {
+    set({ disconnectedConnections: [] })
   },
 }))

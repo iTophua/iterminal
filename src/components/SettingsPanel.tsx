@@ -1,5 +1,5 @@
-import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, Switch, message, Input, Tag, Space } from 'antd'
-import { useTerminalStore, type TerminalSettings } from '../stores/terminalStore'
+import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, Switch, message, Input, Tag, Space, Tooltip } from 'antd'
+import { useTerminalStore, type TerminalSettings, type ShortcutSettings, DEFAULT_SHORTCUT_SETTINGS } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
 import { useState, useEffect } from 'react'
@@ -31,13 +31,16 @@ const SETTING_CATEGORIES = [
   { key: 'terminal', label: '终端', icon: <CodeOutlined /> },
   { key: 'mcp', label: 'MCP', icon: <ApiOutlined /> },
   { key: 'license', label: 'License', icon: <CrownOutlined /> },
-  { key: 'shortcuts', label: '快捷键', icon: <KeyOutlined />, disabled: true },
+  { key: 'shortcuts', label: '快捷键', icon: <KeyOutlined /> },
   { key: 'about', label: '关于', icon: <InfoCircleOutlined /> },
 ]
 
 export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) {
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
   const updateTerminalSettings = useTerminalStore(state => state.updateTerminalSettings)
+  const shortcutSettings = useTerminalStore(state => state.shortcutSettings)
+  const updateShortcutSettings = useTerminalStore(state => state.updateShortcutSettings)
+  const resetShortcutSettings = useTerminalStore(state => state.resetShortcutSettings)
   const availableFonts = useTerminalStore(state => state.availableFonts)
   const fontsLoading = useTerminalStore(state => state.fontsLoading)
   
@@ -690,6 +693,109 @@ ${claudeConfig}`}
     )
   }
 
+  const renderShortcutsSettings = () => {
+    const shortcuts: { key: keyof ShortcutSettings; label: string; description: string }[] = [
+      { key: 'clearScreen', label: '清屏', description: '清除终端内容' },
+      { key: 'search', label: '搜索', description: '在终端中搜索文本' },
+      { key: 'copy', label: '复制', description: '复制选中内容' },
+      { key: 'paste', label: '粘贴', description: '粘贴剪贴板内容' },
+      { key: 'newSession', label: '新建会话', description: '创建新的终端会话' },
+      { key: 'closeSession', label: '关闭会话', description: '关闭当前会话' },
+      { key: 'fullscreen', label: '全屏', description: '切换全屏模式' },
+      { key: 'nextSession', label: '下一会话', description: '切换到下一个会话' },
+      { key: 'prevSession', label: '上一会话', description: '切换到上一个会话' },
+    ]
+
+    const [editingKey, setEditingKey] = useState<string | null>(null)
+    const [tempKey, setTempKey] = useState<string>('')
+
+    const handleKeyDown = (e: React.KeyboardEvent, key: keyof ShortcutSettings) => {
+      e.preventDefault()
+      
+      const parts: string[] = []
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.shiftKey) parts.push('Shift')
+      if (e.altKey) parts.push('Alt')
+      if (e.metaKey) parts.push('Meta')
+      
+      const keyName = e.key.toUpperCase()
+      if (!['CONTROL', 'SHIFT', 'ALT', 'META'].includes(keyName)) {
+        parts.push(keyName === ' ' ? 'Space' : keyName)
+      }
+      
+      if (parts.length > 1 || (parts.length === 1 && !['CTRL', 'SHIFT', 'ALT', 'META'].includes(parts[0]))) {
+        const shortcut = parts.join('+')
+        setTempKey(shortcut)
+        updateShortcutSettings({ [key]: shortcut })
+        setEditingKey(null)
+      }
+    }
+
+    return (
+      <div style={{ padding: '0 16px' }}>
+        <div style={{ marginBottom: 16 }}>
+          <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 8 }}>
+            终端快捷键
+          </Text>
+          <Text type="secondary" style={{ fontSize: 13 }}>
+            点击快捷键输入框，然后按下新的组合键来修改
+          </Text>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {shortcuts.map(({ key, label, description }) => (
+            <div key={key} style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between',
+              padding: '8px 12px',
+              background: 'var(--color-bg-container)',
+              borderRadius: 6,
+            }}>
+              <div>
+                <Text style={{ color: 'var(--color-text)', fontWeight: 500 }}>{label}</Text>
+                <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>{description}</Text>
+              </div>
+              {editingKey === key ? (
+                <Input
+                  autoFocus
+                  style={{ width: 120, textAlign: 'center' }}
+                  value={tempKey}
+                  onKeyDown={(e) => handleKeyDown(e, key)}
+                  onBlur={() => setEditingKey(null)}
+                  placeholder="按下组合键"
+                />
+              ) : (
+                <Tooltip title="点击修改">
+                  <Button
+                    style={{ minWidth: 120, fontFamily: 'monospace' }}
+                    onClick={() => {
+                      setEditingKey(key)
+                      setTempKey(shortcutSettings[key])
+                    }}
+                  >
+                    {shortcutSettings[key]}
+                  </Button>
+                </Tooltip>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Divider style={{ margin: '24px 0', borderColor: 'var(--color-border)' }} />
+
+        <Button 
+          onClick={() => {
+            resetShortcutSettings()
+            message.success('已恢复默认快捷键')
+          }}
+        >
+          恢复默认设置
+        </Button>
+      </div>
+    )
+  }
+
   const renderContent = () => {
     switch (activeCategory) {
       case 'appearance':
@@ -700,6 +806,8 @@ ${claudeConfig}`}
         return renderMcpSettings()
       case 'license':
         return renderLicenseSettings()
+      case 'shortcuts':
+        return renderShortcutsSettings()
       case 'about':
         return (
           <div style={{ padding: '0 16px' }}>

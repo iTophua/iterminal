@@ -283,6 +283,7 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
 
     let shell_id_clone = shell_id.clone();
     let app_handle = app.clone();
+    let connection_id = id.clone();
 
     tokio::spawn(async move {
         loop {
@@ -298,6 +299,10 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
                 Some(data) = write_rx.recv() => {
                     if let Err(e) = channel.data(&data[..]).await {
                         eprintln!("Write error for {}: {}", shell_id_clone, e);
+                        let _ = app_handle.emit(
+                            &format!("connection-disconnected-{}", connection_id),
+                            serde_json::json!({ "reason": "write_failed", "shell_id": shell_id_clone })
+                        );
                         break;
                     }
                 }
@@ -309,9 +314,23 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
                             let event_name = format!("shell-output-{}", shell_id_clone);
                             let _ = app_handle.emit(&event_name, &data_str);
                         }
-                        Some(ChannelMsg::Eof) | None => {
+                        Some(ChannelMsg::Eof) => {
                             let event_name = format!("shell-output-{}", shell_id_clone);
                             let _ = app_handle.emit(&event_name, serde_json::json!({"eof": true}));
+                            break;
+                        }
+                        None => {
+                            let _ = app_handle.emit(
+                                &format!("connection-disconnected-{}", connection_id),
+                                serde_json::json!({ "reason": "channel_closed", "shell_id": shell_id_clone })
+                            );
+                            break;
+                        }
+                        Some(ChannelMsg::Close) => {
+                            let _ = app_handle.emit(
+                                &format!("connection-disconnected-{}", connection_id),
+                                serde_json::json!({ "reason": "server_close", "shell_id": shell_id_clone })
+                            );
                             break;
                         }
                         _ => {}
