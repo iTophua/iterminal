@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import {
-  Tree, Input, Button, Tooltip, Empty, Spin, App
+  Tree, Input, Button, Tooltip, Empty, Spin, App, Modal
 } from 'antd'
 const { DirectoryTree } = Tree
+const { TextArea } = Input
 import {
   HomeOutlined, ReloadOutlined,
   UploadOutlined, DownloadOutlined, DeleteOutlined, EditOutlined,
@@ -85,6 +86,19 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
   const [conflictModalVisible, setConflictModalVisible] = useState(false)
   const [conflictFile, setConflictFile] = useState<ConflictFile | null>(null)
   const conflictResolvePromiseRef = useRef<{ resolve: (action: 'overwrite' | 'skip' | 'rename') => void } | null>(null)
+
+  const [previewVisible, setPreviewVisible] = useState(false)
+  const [previewContent, setPreviewContent] = useState<string>('')
+  const [previewFile, setPreviewFile] = useState<{ name: string; path: string } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewTruncated, setPreviewTruncated] = useState(false)
+  const [previewSize, setPreviewSize] = useState(0)
+
+  const [editVisible, setEditVisible] = useState(false)
+  const [editContent, setEditContent] = useState<string>('')
+  const [editFile, setEditFile] = useState<{ name: string; path: string } | null>(null)
+  const [editLoading, setEditLoading] = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
 
   useEffect(() => {
     dragTargetPathRef.current = dragTargetPath
@@ -867,6 +881,67 @@ const renderTreeNode = (node: TreeNode) => (
     }
   }
 
+  const handlePreview = async () => {
+    if (!selectedNode || selectedNode.isDirectory) return
+    setPreviewLoading(true)
+    setPreviewFile({ name: selectedNode.title, path: selectedNode.path })
+    try {
+      const result = await invoke<{ content: string; size: number; truncated: boolean; encoding: string }>('read_file_content', {
+        connectionId,
+        path: selectedNode.path,
+        maxSize: 1024 * 1024
+      })
+      setPreviewContent(result.content)
+      setPreviewSize(result.size)
+      setPreviewTruncated(result.truncated)
+      setPreviewVisible(true)
+    } catch (err) {
+      message.error(`预览失败: ${err}`)
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const handleEdit = async () => {
+    if (!selectedNode || selectedNode.isDirectory) return
+    setEditLoading(true)
+    setEditFile({ name: selectedNode.title, path: selectedNode.path })
+    try {
+      const result = await invoke<{ content: string; size: number; truncated: boolean; encoding: string }>('read_file_content', {
+        connectionId,
+        path: selectedNode.path,
+        maxSize: 10 * 1024 * 1024
+      })
+      if (result.truncated) {
+        message.warning('文件较大，仅加载前 10MB 内容')
+      }
+      setEditContent(result.content)
+      setEditVisible(true)
+    } catch (err) {
+      message.error(`读取文件失败: ${err}`)
+    } finally {
+      setEditLoading(false)
+    }
+  }
+
+  const handleSaveEdit = async () => {
+    if (!editFile) return
+    setEditSaving(true)
+    try {
+      await invoke('write_file_content', {
+        connectionId,
+        path: editFile.path,
+        content: editContent
+      })
+      message.success('保存成功')
+      setEditVisible(false)
+    } catch (err) {
+      message.error(`保存失败: ${err}`)
+    } finally {
+      setEditSaving(false)
+    }
+  }
+
   const copyFileName = async () => {
     if (selectedNode) {
       try {
@@ -896,6 +971,8 @@ const renderTreeNode = (node: TreeNode) => (
     { key: 'newFile', label: '新建文件', icon: <FileAddOutlined />, onClick: () => { setNewFileVisible(true); setContextMenuVisible(false) } },
     { key: 'newFolder', label: '新建文件夹', icon: <FolderAddOutlined />, onClick: () => { setNewFolderVisible(true); setContextMenuVisible(false) } },
     { type: 'divider' as const },
+    { key: 'preview', label: '预览', icon: <EyeOutlined />, onClick: () => { handlePreview(); setContextMenuVisible(false) }, disabled: selectedNode?.isDirectory },
+    { key: 'edit', label: '编辑', icon: <EditOutlined />, onClick: () => { handleEdit(); setContextMenuVisible(false) }, disabled: selectedNode?.isDirectory },
     { key: 'rename', label: '重命名', icon: <EditOutlined />, onClick: () => { setRenameValue(selectedNode?.title || ''); setRenameVisible(true); setContextMenuVisible(false) } },
     { key: 'chmod', label: '修改权限', icon: <EyeOutlined />, onClick: () => { setChmodValue(selectedNode?.permissions || '644'); setChmodVisible(true); setContextMenuVisible(false) } },
     { type: 'divider' as const },
@@ -1403,6 +1480,75 @@ const renderTreeNode = (node: TreeNode) => (
         onSkip={() => resolveConflictDialog('skip')}
         onRename={() => resolveConflictDialog('rename')}
       />
+
+      <Modal
+        open={previewVisible}
+        title={previewFile?.name || '文件预览'}
+        onCancel={() => setPreviewVisible(false)}
+        footer={null}
+        width={800}
+        styles={{ body: { maxHeight: '60vh', overflow: 'auto' } }}
+      >
+        {previewLoading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <Spin />
+          </div>
+        ) : (
+          <>
+            {previewTruncated && (
+              <div style={{ marginBottom: 8, color: '#faad14', fontSize: 12 }}>
+                文件较大，仅显示前 1MB 内容
+              </div>
+            )}
+            <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+              大小: {formatSize(previewSize)}
+            </div>
+            <pre style={{
+              background: 'var(--color-bg-container)',
+              padding: 12,
+              borderRadius: 4,
+              overflow: 'auto',
+              fontSize: 12,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              margin: 0,
+            }}>
+              {previewContent}
+            </pre>
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        open={editVisible}
+        title={`编辑: ${editFile?.name || ''}`}
+        onCancel={() => setEditVisible(false)}
+        onOk={handleSaveEdit}
+        okText="保存"
+        cancelText="取消"
+        confirmLoading={editSaving}
+        width={900}
+        styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
+      >
+        {editLoading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}>
+            <Spin />
+          </div>
+        ) : (
+          <TextArea
+            value={editContent}
+            onChange={(e) => setEditContent(e.target.value)}
+            rows={20}
+            style={{
+              fontFamily: 'monospace',
+              fontSize: 12,
+              background: 'var(--color-bg-container)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text)',
+            }}
+          />
+        )}
+      </Modal>
     </div>
   )
 }

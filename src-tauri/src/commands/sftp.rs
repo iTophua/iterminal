@@ -303,13 +303,9 @@ pub async fn read_file_content(
     let max = max_size.unwrap_or(1024 * 1024);
     let truncated = file_size > max;
 
-    use russh_sftp::protocol::OpenFlags;
-    let mut file = sftp.open(&path, OpenFlags::READ, 0)
-        .await
-        .map_err(|e| format!("打开文件失败: {}", e))?;
-
     let read_size = if truncated { max as usize } else { file_size as usize };
     let mut buffer = vec![0u8; read_size];
+    let mut file = sftp.open(&path).await.map_err(|e| format!("打开文件失败: {}", e))?;
     let bytes_read = file.read(&mut buffer).await.map_err(|e| format!("读取文件失败: {}", e))?;
     buffer.truncate(bytes_read);
 
@@ -349,10 +345,7 @@ pub async fn write_file_content(
 ) -> Result<bool, String> {
     let sftp = get_sftp_session(&connection_id).await?;
 
-    use russh_sftp::protocol::OpenFlags;
-    let mut file = sftp.create(&path, OpenFlags::WRITE | OpenFlags::TRUNCATE, 0)
-        .await
-        .map_err(|e| format!("创建文件失败: {}", e))?;
+    let mut file = sftp.create(&path).await.map_err(|e| format!("创建文件失败: {}", e))?;
 
     file.write_all(content.as_bytes()).await.map_err(|e| format!("写入文件失败: {}", e))?;
 
@@ -885,4 +878,92 @@ pub async fn is_local_directory(path: String) -> Result<bool, String> {
 
 pub async fn close_sftp_session(connection_id: &str) {
     SFTP_SESSIONS.write().await.remove(connection_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_binary_detects_binary() {
+        let binary_data = vec![0u8, 1, 2, 3, 0, 5, 6, 0, 8, 9, 0, 11, 12];
+        assert!(is_binary(&binary_data));
+    }
+
+    #[test]
+    fn test_is_binary_detects_text() {
+        let text_data = b"Hello, World! This is a text file with normal content.".to_vec();
+        assert!(!is_binary(&text_data));
+    }
+
+    #[test]
+    fn test_is_binary_empty_data() {
+        let empty_data: Vec<u8> = vec![];
+        assert!(!is_binary(&empty_data));
+    }
+
+    #[test]
+    fn test_is_binary_small_null_ratio() {
+        let mut data = vec![0u8; 100];
+        for i in 0..95 {
+            data[i] = b'a';
+        }
+        assert!(!is_binary(&data));
+    }
+
+    #[test]
+    fn test_is_binary_high_null_ratio() {
+        let mut data = vec![b'a'; 100];
+        for i in 0..15 {
+            data[i] = 0;
+        }
+        assert!(is_binary(&data));
+    }
+
+    #[test]
+    fn test_hex_encode_basic() {
+        let data = vec![0x48, 0x65, 0x6c, 0x6c, 0x6f];
+        let result = hex_encode(&data);
+        assert_eq!(result, "48 65 6c 6c 6f");
+    }
+
+    #[test]
+    fn test_hex_encode_empty() {
+        let data: Vec<u8> = vec![];
+        let result = hex_encode(&data);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_hex_encode_all_zeros() {
+        let data = vec![0u8, 0, 0];
+        let result = hex_encode(&data);
+        assert_eq!(result, "00 00 00");
+    }
+
+    #[test]
+    fn test_file_content_struct() {
+        let content = FileContent {
+            content: "test content".to_string(),
+            size: 100,
+            truncated: false,
+            encoding: "text".to_string(),
+        };
+        assert_eq!(content.content, "test content");
+        assert_eq!(content.size, 100);
+        assert!(!content.truncated);
+        assert_eq!(content.encoding, "text");
+    }
+
+    #[test]
+    fn test_file_content_truncated() {
+        let content = FileContent {
+            content: "partial".to_string(),
+            size: 10_000_000,
+            truncated: true,
+            encoding: "text".to_string(),
+        };
+        assert!(content.truncated);
+        assert_eq!(content.size, 10_000_000);
+    }
 }
