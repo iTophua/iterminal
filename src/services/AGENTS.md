@@ -6,7 +6,8 @@
 
 ```
 services/
-└── database.ts    # 数据库服务层
+├── database.ts    # 数据库服务层
+└── sftp.ts        # SFTP 服务层
 ```
 
 ## database.ts
@@ -95,3 +96,47 @@ await deleteConnection('conn-1')
 - 所有函数返回 Promise
 - 错误通过 `Result` 类型返回，不抛异常
 - 密码在后端自动加密/解密，前端无需处理
+
+## sftp.ts
+
+封装 SFTP 文件操作，调用后端 `sftp.rs` 命令。
+
+### 导出函数
+
+| 函数 | 说明 | 调用命令 |
+|------|------|----------|
+| `readFileContent(id, path, maxSize?)` | 读取文件内容 | `read_file_content` |
+| `writeFileContent(id, path, content)` | 写入文件内容 | `write_file_content` |
+| `listDirectory(id, path)` | 列出目录内容 | `list_directory` |
+| `fileExists(id, path)` | 检查文件是否存在 | `file_exists` |
+| `searchFiles(id, path, pattern, maxResults?)` | 搜索文件 | `search_files` |
+| `extractFile(id, filePath, targetDir)` | 解压文件 | `extract_file` |
+| `formatSize(bytes)` | 格式化文件大小 | - |
+
+### 类型定义
+
+```typescript
+interface FileContent {
+  content: string      // 文件内容 (文本或 hex 编码)
+  size: number         // 原始文件大小
+  truncated: boolean   // 是否被截断
+  encoding: string     // 'text' 或 'binary'
+}
+
+interface FileInfo {
+  name: string
+  path: string
+  is_directory: boolean
+  size: number
+  modified: string
+  permissions: string
+}
+
+interface SearchResult {
+  name: string
+  path: string
+  is_directory: boolean
+  size: number
+  modified: string
+}
+```

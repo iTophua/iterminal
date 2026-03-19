@@ -63,3 +63,34 @@ export interface FileItemActionsProps {
   onCompress: () => void
   onCopyPath: () => void
 }
+
+export interface FileOperationState {
+  newFileVisible: boolean
+  newFileName: string
+  newFolderVisible: boolean
+  newFolderName: string
+  renameVisible: boolean
+  renameValue: string
+  deleteVisible: boolean
+  chmodVisible: boolean
+  chmodValue: string
+  compressVisible: boolean
+  compressName: string
+  previewVisible: boolean
+  previewContent: string
+  previewFile: { name: string; path: string } | null
+  previewLoading: boolean
+  previewTruncated: boolean
+  previewSize: number
+  editVisible: boolean
+  editContent: string
+  editFile: { name: string; path: string } | null
+  editLoading: boolean
+  editSaving: boolean
+  searchVisible: boolean
+  searchQuery: string
+  searchResults: TreeNode[]
+  searchLoading: boolean
+  extractVisible: boolean
+  extractLoading: boolean
+}

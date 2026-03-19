@@ -8,7 +8,7 @@ Tauri command handlers for SSH operations (russh 0.50 + russh-sftp 2.1).
 commands/
 ├── mod.rs      # Module exports
 ├── ssh.rs      # SSH connection, shell, command execution (~540 lines)
-├── sftp.rs     # SFTP file operations (~630 lines)
+├── sftp.rs     # SFTP file operations (~1250 lines)
 ├── db.rs       # Database CRUD, encrypted storage (~200 lines)
 ├── license.rs  # License validation (~260 lines)
 ├── api.rs      # HTTP API server for MCP (~200 lines)
@@ -37,7 +37,15 @@ commands/
 | `get_sftp_session` | async fn | sftp.rs | 获取或创建 SFTP 会话 |
 | `upload_file` | async fn | sftp.rs | 后台上传 (tokio::spawn + Events) |
 | `download_file` | async fn | sftp.rs | 后台下载 (tokio::spawn + Events) |
+| `upload_folder` | async fn | sftp.rs | 后台上传文件夹 |
 | `compress_file` | async fn | sftp.rs | 远程压缩 (tar -czf) |
+| `extract_file` | async fn | sftp.rs | 远程解压 (tar/unzip/gzip) |
+| `search_files` | async fn | sftp.rs | 文件搜索 (find 命令) |
+| `read_file_content` | async fn | sftp.rs | 文件预览 (支持二进制) |
+| `write_file_content` | async fn | sftp.rs | 文件编辑 |
+| `pause_transfer` | async fn | sftp.rs | 暂停传输 |
+| `resume_transfer` | async fn | sftp.rs | 恢复传输 |
+| `cancel_transfer` | async fn | sftp.rs | 取消传输 |
 | `list_directory` | async fn | sftp.rs | 列出目录内容 |
 | `is_directory` | async fn | sftp.rs | 检查远程路径是否为目录 |
 | `is_local_directory` | async fn | sftp.rs | 检查本地路径是否为目录 |
@@ -210,6 +218,17 @@ ShellSession {
 - Uses existing SSH session from SESSIONS
 - Executes `tar -czf` command remotely
 - Waits for command completion
+
+### extract_file
+- Uses existing SSH session from SESSIONS
+- Supports: tar.gz, tar.bz2, tar.xz, tar, zip, gz, bz2, xz
+- Creates target directory with `mkdir -p`
+- Waits for command completion
+
+### search_files
+- Uses existing SSH session from SESSIONS
+- Executes `find` command with `-printf` formatting
+- Returns structured SearchResult array
 
 ## Anti-Patterns
 

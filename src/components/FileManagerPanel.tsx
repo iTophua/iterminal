@@ -1,27 +1,39 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { Input, Button, Tooltip, Modal, Spin } from 'antd'
 import {
-  Tree, Input, Button, Tooltip, Empty, Spin, App, Modal
-} from 'antd'
-const { DirectoryTree } = Tree
-const { TextArea } = Input
-import {
-  HomeOutlined, ReloadOutlined,
-  UploadOutlined, DownloadOutlined, DeleteOutlined, EditOutlined,
-  FolderAddOutlined, FileAddOutlined, ScissorOutlined,
-  CopyOutlined, CompressOutlined, EyeOutlined, EyeInvisibleOutlined,
-  ArrowLeftOutlined, ArrowRightOutlined, CloudUploadOutlined,
-  UnorderedListOutlined, PartitionOutlined,
-  ArrowUpOutlined, ArrowDownOutlined, FolderOutlined, FileOutlined, SearchOutlined, CloseOutlined
+  HomeOutlined,
+  ReloadOutlined,
+  UploadOutlined,
+  DownloadOutlined,
+  EyeOutlined,
+  EyeInvisibleOutlined,
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
+  CloudUploadOutlined,
+  FolderAddOutlined,
+  SearchOutlined,
+  CloseOutlined,
+  UnorderedListOutlined,
+  PartitionOutlined,
 } from '@ant-design/icons'
-import { invoke } from '@tauri-apps/api/core'
-import { open, save } from '@tauri-apps/plugin-dialog'
 import { useTerminalStore } from '../stores/terminalStore'
-import { listen } from '@tauri-apps/api/event'
-import { getCurrentWebview } from '@tauri-apps/api/webview'
-import { useTransferStore } from '../stores/transferStore'
-import { TreeNode, ConflictFile } from './fileManager/types'
-import { NewFileModal, NewFolderModal, RenameModal, DeleteModal, ChmodModal, CompressModal, ConflictModal } from './fileManager/Modals'
+import { TreeNode } from './fileManager/types'
+import {
+  NewFileModal,
+  NewFolderModal,
+  RenameModal,
+  DeleteModal,
+  ChmodModal,
+  CompressModal,
+  ConflictModal,
+} from './fileManager/Modals'
+import { ContextMenu } from './fileManager/ContextMenu'
+import { FileList } from './fileManager/FileList'
+import { useFileManager } from './fileManager/hooks/useFileManager'
+import { useFileOperations } from './fileManager/hooks/useFileOperations'
+import { useTransfer } from './fileManager/hooks/useTransfer'
+import { useDragDrop } from './fileManager/hooks/useDragDrop'
+import { formatSize } from './fileManager/utils'
 
 interface FileManagerPanelProps {
   connectionId: string
@@ -30,182 +42,77 @@ interface FileManagerPanelProps {
 }
 
 export default function FileManagerPanel({ connectionId, visible, onClose }: FileManagerPanelProps) {
-  const { message } = App.useApp()
   const store = useTerminalStore()
-  const connection = store.connectedConnections.find(c => c.connectionId === connectionId)?.connection
-  const currentPath = store.currentPaths[connectionId] || '/'
-  const expandedKeys = store.expandedKeys[connectionId] || []
 
-  const [treeData, setTreeData] = useState<TreeNode[]>([])
-  const treeDataRef = useRef<TreeNode[]>([])
-  const [loading, setLoading] = useState(false)
-  const loadingPathsRef = useRef<Set<string>>(new Set())
-  
-  useEffect(() => {
-    treeDataRef.current = treeData
-  }, [treeData])
-  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
-  const [selectedNode, setSelectedNode] = useState<TreeNode | null>(null)
-  const selectedNodeRef = useRef<TreeNode | null>(null)
-  useEffect(() => {
-    selectedNodeRef.current = selectedNode
-  }, [selectedNode])
   const [contextMenuVisible, setContextMenuVisible] = useState(false)
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 })
-  const [pathInput, setPathInput] = useState(currentPath)
   const [showHidden, setShowHidden] = useState(false)
-
-  const [newFileVisible, setNewFileVisible] = useState(false)
-  const [newFileName, setNewFileName] = useState('')
-  const [newFolderVisible, setNewFolderVisible] = useState(false)
-  const [newFolderName, setNewFolderName] = useState('')
-  const [renameVisible, setRenameVisible] = useState(false)
-  const [renameValue, setRenameValue] = useState('')
-  const [deleteVisible, setDeleteVisible] = useState(false)
-  const [chmodVisible, setChmodVisible] = useState(false)
-  const [chmodValue, setChmodValue] = useState('644')
-  const [compressVisible, setCompressVisible] = useState(false)
-  const [compressName, setCompressName] = useState('')
-  const [isDragOver, setIsDragOver] = useState(false)
-  const [dragTargetPath, setDragTargetPath] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'tree' | 'list'>(() => {
     const saved = localStorage.getItem('iterminal_file_view_mode')
-    return (saved === 'list' || saved === 'tree') ? saved : 'tree'
+    return saved === 'list' || saved === 'tree' ? saved : 'tree'
   })
   const [sortField, setSortField] = useState<'name' | 'size' | 'modified' | null>(null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+
   const treeContainerRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const dragTargetPathRef = useRef<string | null>(null)
-  const viewModeRef = useRef(viewMode)
 
-  useEffect(() => {
-    viewModeRef.current = viewMode
-  }, [viewMode])
+  const fileManager = useFileManager({
+    connectionId,
+    visible,
+    viewMode,
+    showHidden,
+  })
 
-  const [conflictModalVisible, setConflictModalVisible] = useState(false)
-  const [conflictFile, setConflictFile] = useState<ConflictFile | null>(null)
-  const conflictResolvePromiseRef = useRef<{ resolve: (action: 'overwrite' | 'skip' | 'rename') => void } | null>(null)
+  const {
+    treeData,
+    treeDataRef,
+    loading,
+    selectedKeys,
+    setSelectedKeys,
+    selectedNode,
+    selectedNodeRef,
+    expandedKeys,
+    currentPath,
+    pathInput,
+    setPathInput,
+    loadDirectory,
+    refreshCurrent,
+    refreshDirectory,
+    goHome,
+    onExpand,
+    onSelect,
+    findNodeByPath,
+  } = fileManager
 
-  const [previewVisible, setPreviewVisible] = useState(false)
-  const [previewContent, setPreviewContent] = useState<string>('')
-  const [previewFile, setPreviewFile] = useState<{ name: string; path: string } | null>(null)
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [previewTruncated, setPreviewTruncated] = useState(false)
-  const [previewSize, setPreviewSize] = useState(0)
+  const fileOps = useFileOperations({
+    connectionId,
+    currentPath,
+    selectedNode,
+    selectedNodeRef,
+    refreshCurrent,
+    loadDirectory,
+    viewMode,
+  })
 
-  const [editVisible, setEditVisible] = useState(false)
-  const [editContent, setEditContent] = useState<string>('')
-  const [editFile, setEditFile] = useState<{ name: string; path: string } | null>(null)
-  const [editLoading, setEditLoading] = useState(false)
-  const [editSaving, setEditSaving] = useState(false)
+  const transfer = useTransfer({
+    connectionId,
+    currentPath,
+    selectedNode,
+    refreshDirectory,
+  })
 
-  const [searchVisible, setSearchVisible] = useState(false)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState<TreeNode[]>([])
-  const [searchLoading, setSearchLoading] = useState(false)
-
-  const [extractVisible, setExtractVisible] = useState(false)
-  const [extractLoading, setExtractLoading] = useState(false)
-
-  useEffect(() => {
-    dragTargetPathRef.current = dragTargetPath
-  }, [dragTargetPath])
-
-  const uploadFileRef = useRef<typeof uploadFile | null>(null)
-  const uploadFolderRef = useRef<typeof uploadFolder | null>(null)
-  const refreshCurrentRef = useRef<typeof refreshCurrent | null>(null)
-  const refreshDirectoryRef = useRef<((dirPath: string) => void) | null>(null)
-
-  const mapFilesToNodes = useCallback((files: any[]): TreeNode[] => {
-    const filteredFiles = showHidden ? files : files.filter(f => !f.name.startsWith('.'))
-    return filteredFiles.map(file => ({
-      key: file.path,
-      title: file.name,
-      isDirectory: file.is_directory,
-      path: file.path,
-      size: file.size,
-      modified: file.modified,
-      permissions: file.permissions,
-      isLeaf: !file.is_directory,
-    }))
-  }, [showHidden])
-
-  const updateTreeData = useCallback((list: TreeNode[], parentPath: string, children: TreeNode[]): TreeNode[] => {
-    return list.map(node => {
-      if (node.path === parentPath) {
-        return { ...node, children }
-      }
-      if (node.children) {
-        return { ...node, children: updateTreeData(node.children, parentPath, children) }
-      }
-      return node
-    })
-  }, [])
-
-  const loadDirectory = useCallback(async (path: string, isRoot = false) => {
-    if (!connectionId) return
-    if (loadingPathsRef.current.has(path)) return
-    loadingPathsRef.current.add(path)
-
-    if (isRoot && viewMode === 'list') {
-      setLoading(true)
-    }
-    try {
-      const files: any[] = await invoke('list_directory', { connectionId, path })
-      const nodes = mapFilesToNodes(files)
-      if (viewMode === 'list') {
-        setTreeData(nodes)
-      } else {
-        if (isRoot) {
-          // 树视图下根路径导航：创建新的根节点
-          const rootNode: TreeNode = {
-            key: path,
-            title: path === '/' ? '/' : path.split('/').pop() || path,
-            isDirectory: true,
-            path: path,
-            isLeaf: false,
-            children: nodes,
-          }
-          setTreeData([rootNode])
-          store.setExpandedKeys(connectionId, [path])
-          setSelectedKeys([path])
-        } else {
-          setTreeData(prev => updateTreeData(prev, path, nodes))
-        }
-      }
-      loadingPathsRef.current.delete(path)
-    } catch (err) {
-      message.error(`加载目录失败: ${err}`)
-      loadingPathsRef.current.delete(path)
-    } finally {
-      if (isRoot && viewMode === 'list') {
-        setLoading(false)
-      }
-    }
-  }, [connectionId, mapFilesToNodes, message, store, updateTreeData, viewMode])
-
-  const loadDirectoryRef = useRef(loadDirectory)
-  const currentPathRef = useRef(currentPath)
-  useEffect(() => {
-    loadDirectoryRef.current = loadDirectory
-    currentPathRef.current = currentPath
-  }, [loadDirectory, currentPath])
-
-  useEffect(() => {
-    if (visible && connectionId) {
-      const path = currentPathRef.current
-      loadDirectoryRef.current(path, true)
-      setPathInput(path)
-      setSelectedKeys([path])
-    }
-  }, [visible, connectionId])
-
-  useEffect(() => {
-    if (visible && connectionId) {
-      setPathInput(store.currentPaths[connectionId] || '/')
-    }
-  }, [visible, connectionId, store.currentPaths])
+  const dragDrop = useDragDrop({
+    visible,
+    connectionId,
+    currentPath,
+    selectedNode,
+    viewMode,
+    uploadFile: transfer.uploadFile,
+    uploadFolder: transfer.uploadFolder,
+    panelRef,
+    treeContainerRef,
+  })
 
   useEffect(() => {
     const handleClickOutside = () => {
@@ -221,855 +128,72 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     }
   }, [contextMenuVisible])
 
-  const findNodeByPath = (nodes: TreeNode[], path: string): TreeNode | null => {
-    for (const node of nodes) {
-      if (node.path === path) return node
-      if (node.children) {
-        const found = findNodeByPath(node.children, path)
-        if (found) return found
-      }
-    }
-    return null
-  }
-
-  const onExpand: any = (keys: React.Key[], info: any) => {
-    store.setExpandedKeys(connectionId, keys as string[])
-    if (info.expanded && info.node && !info.node.isLeaf) {
-      const node = findNodeByPath(treeDataRef.current, info.node.key as string)
-      if (node && !node.children) {
-        loadDirectory(node.path, false)
-      }
-    }
-  }
-
-  const onSelect = (keys: React.Key[]) => {
-    setSelectedKeys(keys as string[])
-    if (keys.length > 0) {
-      const nodePath = keys[0] as string
-      const node = findNodeByPath(treeDataRef.current, nodePath)
-      if (node) {
-        setSelectedNode(node)
-      }
-    }
-  }
-
-  const onPathInputPressEnter = () => {
+  const onPathInputPressEnter = useCallback(() => {
     const newPath = pathInput.trim()
     if (newPath) {
       loadDirectory(newPath, true)
     }
-  }
+  }, [loadDirectory, pathInput])
 
-  const goHome = () => {
-    const homePath = '/home/' + (connection?.username || '')
-    store.setCurrentPath(connectionId, homePath)
-    loadDirectory(homePath, true)
-  }
-
-  const refreshCurrent = async () => {
-    const targetPath = viewMode === 'list' 
-      ? currentPath 
-      : (selectedNode 
-          ? (selectedNode.isDirectory 
-              ? selectedNode.path 
-              : selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/')
-          : currentPath)
-    try {
-      const files: any[] = await invoke('list_directory', { connectionId, path: targetPath })
-      const nodes = mapFilesToNodes(files)
-      if (viewMode === 'list') {
-        setTreeData(nodes)
-      } else {
-        const isRootPath = targetPath === currentPath && !treeData.some(n => n.path === targetPath)
-        if (isRootPath) {
-          setTreeData(prev => prev.map(node => 
-            node.path === targetPath ? { ...node, children: nodes } : node
-          ))
-        } else {
-          setTreeData(prev => updateTreeData(prev, targetPath, nodes))
-        }
-      }
-    } catch (err) {
-      message.error(`刷新失败: ${err}`)
-    }
-  }
-  refreshCurrentRef.current = refreshCurrent
-
-  const refreshDirectory = async (dirPath: string, isTreeView: boolean) => {
-    try {
-      const files: any[] = await invoke('list_directory', { connectionId, path: dirPath })
-      const nodes = mapFilesToNodes(files)
-      if (!isTreeView) {
-        if (dirPath === currentPath) {
-          setTreeData(nodes)
-        }
-      } else {
-        setTreeData(prev => updateTreeData(prev, dirPath, nodes))
-      }
-    } catch (err) {
-      message.error(`刷新失败: ${err}`)
-    }
-  }
-  refreshDirectoryRef.current = (dirPath: string) => refreshDirectory(dirPath, viewModeRef.current === 'tree')
-
-  const onTreeRightClick = (info: { event: React.MouseEvent; node: any }) => {
-    const { event, node } = info
-    event.preventDefault()
-    event.stopPropagation()
-    const nodePath = node.key as string
-    const fileName = nodePath.split('/').pop() || nodePath
-    const fullNode = findNodeByPath(treeDataRef.current, nodePath)
-    const nodeData: TreeNode = fullNode ? {
-      ...fullNode,
-      title: fullNode.title || fileName,
-    } : {
-      key: nodePath,
-      title: fileName,
-      path: nodePath,
-      isDirectory: !node.isLeaf,
-      isLeaf: node.isLeaf,
-    }
-    setSelectedNode(nodeData)
-    setSelectedKeys([nodePath])
-    setContextMenuPos({ x: event.clientX, y: event.clientY })
-    setContextMenuVisible(true)
-  }
-
-const renderTreeNode = (node: TreeNode) => (
-    <span
-      data-dir-path={node.isDirectory ? node.path : undefined}
-      style={{
-        userSelect: 'none',
-        WebkitUserSelect: 'none',
-        color: node.isDirectory ? 'var(--color-primary)' : 'var(--color-text)',
-      }}
-    >
-      {node.title}
-      {!node.isDirectory && node.size !== undefined && node.size > 0 && (
-        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
-          {formatSize(node.size)}
-        </span>
-      )}
-    </span>
+  const onTreeRightClick = useCallback(
+    (info: { event: React.MouseEvent; node: any }) => {
+      const { event, node } = info
+      event.preventDefault()
+      event.stopPropagation()
+      const nodePath = node.key as string
+      const fileName = nodePath.split('/').pop() || nodePath
+      const fullNode = findNodeByPath(treeDataRef.current, nodePath)
+      const nodeData: TreeNode = fullNode
+        ? {
+            ...fullNode,
+            title: fullNode.title || fileName,
+          }
+        : {
+            key: nodePath,
+            title: fileName,
+            path: nodePath,
+            isDirectory: !node.isLeaf,
+            isLeaf: node.isLeaf,
+          }
+      fileOps.setRenameValue(nodeData.title as string)
+      setSelectedNodeState(nodeData)
+      setSelectedKeys([nodePath])
+      setContextMenuPos({ x: event.clientX, y: event.clientY })
+      setContextMenuVisible(true)
+    },
+    [findNodeByPath, treeDataRef]
   )
 
-  useEffect(() => {
-    const container = treeContainerRef.current
-    if (!container) return
+  const setSelectedNodeState = useCallback((node: TreeNode | null) => {
+    selectedNodeRef.current = node
+    fileOps.setRenameValue(node?.title as string || '')
+  }, [selectedNodeRef, fileOps])
 
-    container.querySelectorAll('.ant-tree-treenode').forEach((node) => {
-      node.classList.remove('drop-target')
-    })
-
-    if (isDragOver && dragTargetPath) {
-      const targetNode = container.querySelector(`[data-dir-path="${dragTargetPath}"]`)
-      if (targetNode) {
-        const treeNode = targetNode.closest('.ant-tree-treenode')
-        if (treeNode) {
-          treeNode.classList.add('drop-target')
-        }
-      }
-    }
-  }, [isDragOver, dragTargetPath])
-
-  const formatSize = (bytes: number) => {
-    if (bytes === 0) return '-'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const checkFileConflict = async (remotePath: string): Promise<boolean> => {
-    try {
-      return await invoke('file_exists', { connectionId, path: remotePath })
-    } catch (err) {
-      console.error('检查文件是否存在失败:', err)
-      return false
-    }
-  }
-
-  const generateUniqueFileName = async (baseName: string, extension: string, targetDir: string): Promise<string> => {
-    let counter = 1
-    const maxAttempts = 100
-    while (counter <= maxAttempts) {
-      const newName = `${baseName}_${counter}${extension}`
-      const remotePath = targetDir + '/' + newName
-      const exists = await checkFileConflict(remotePath)
-      if (!exists) {
-        return newName
-      }
-      counter++
-    }
-    return `${baseName}_${Date.now()}${extension}`
-  }
-
-  const showConflictDialog = async (fileInfo: ConflictFile): Promise<'overwrite' | 'skip' | 'rename'> => {
-    return new Promise((resolve) => {
-      setConflictFile(fileInfo)
-      conflictResolvePromiseRef.current = { resolve }
-      setConflictModalVisible(true)
-    })
-  }
-
-  const resolveConflictDialog = (action: 'overwrite' | 'skip' | 'rename') => {
-    setConflictModalVisible(false)
-    if (conflictResolvePromiseRef.current) {
-      conflictResolvePromiseRef.current.resolve(action)
-      conflictResolvePromiseRef.current = null
-    }
-  }
-
-  const handleUploadFile = async () => {
-    try {
-      const selected = await open({
-        multiple: true,
-        title: '选择要上传的文件',
-      })
-      if (selected && Array.isArray(selected) && selected.length > 0) {
-        const targetDir = (selectedNode?.isDirectory && selectedNode?.path) || currentPath
-        for (const filePath of selected) {
-          const fileName = filePath.split('/').pop() || 'file'
-          const remotePath = targetDir + '/' + fileName
-          await uploadFile(filePath, remotePath, fileName)
-        }
-        refreshCurrent()
-      }
-    } catch (err) {
-      console.error('上传失败:', err)
-    }
-  }
-
-  const handleUploadFolder = async () => {
-    try {
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: '选择要上传的文件夹',
-      })
-      if (selected) {
-        const targetDir = (selectedNode?.isDirectory && selectedNode?.path) || currentPath
-        const folderName = selected.split('/').pop() || 'folder'
-        let remotePath = targetDir + '/' + folderName
-
-        const exists = await checkFileConflict(remotePath)
-        if (exists) {
-          const action = await showConflictDialog({
-            localPath: selected,
-            remotePath,
-            fileName: folderName,
-            targetDir
-          })
-
-          if (action === 'skip') {
-            return
-          } else if (action === 'rename') {
-            const newFolderName = await generateUniqueFileName(folderName, '', targetDir)
-            remotePath = targetDir + '/' + newFolderName
-            await uploadFolder(selected, remotePath, newFolderName)
-            refreshCurrent()
-            return
-          }
-        }
-
-        await uploadFolder(selected, remotePath, folderName)
-        refreshCurrent()
-      }
-    } catch (err) {
-      console.error('上传文件夹失败:', err)
-    }
-  }
-
-  const uploadFile = async (localPath: string, remotePath: string, fileName: string, targetDir?: string) => {
-    const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
-
-    const exists = await checkFileConflict(remotePath)
-    if (exists) {
-      const action = await showConflictDialog({
-        localPath,
-        remotePath,
-        fileName,
-        targetDir: dir
-      })
-
-      if (action === 'skip') {
-        return
-      } else if (action === 'rename') {
-        const lastDotIndex = fileName.lastIndexOf('.')
-        let baseName = fileName
-        let extension = ''
-        if (lastDotIndex > 0) {
-          baseName = fileName.substring(0, lastDotIndex)
-          extension = fileName.substring(lastDotIndex)
-        }
-        const newFileName = await generateUniqueFileName(baseName, extension, dir)
-        const newRemotePath = dir + '/' + newFileName
-        performUpload(localPath, newRemotePath, newFileName, dir)
-        return
-      }
-    }
-
-    performUpload(localPath, remotePath, fileName, dir)
-  }
-
-  const performUpload = async (localPath: string, remotePath: string, fileName: string, targetDir: string) => {
-    const taskId = Date.now().toString() + Math.random().toString(36).substring(2, 11)
-    const now = Date.now()
-    const conn = connection
-
-    useTransferStore.getState().addRecord({
-      id: taskId,
-      connectionId,
-      connectionName: conn?.name || 'Unknown',
-      connectionHost: conn?.host || '',
-      type: 'upload',
-      localPath,
-      remotePath,
-      fileName,
-      fileSize: 0,
-      transferred: 0,
-      status: 'pending',
-      startTime: now,
-    })
-
-    useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
-
-    listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
-      `transfer-progress-${taskId}`,
-      (event) => {
-        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total, event.payload.totalFiles, event.payload.completedFiles)
-      }
-    ).then((unlistenProgress) => {
-      listen<{ success: boolean; cancelled: boolean; error?: string }>(
-        `transfer-complete-${taskId}`,
-        (event) => {
-          unlistenProgress()
-          const result = event.payload
-          if (result.cancelled) {
-            useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-          } else if (result.success) {
-            useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-            message.success(`上传完成: ${fileName}`)
-            refreshDirectoryRef.current?.(targetDir)
-          } else {
-            useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: result.error || 'Unknown error' })
-            message.error(`上传失败: ${result.error}`)
-          }
-        }
-      ).then((unlistenComplete) => {
-        invoke('upload_file', { taskId, connectionId, localPath, remotePath }).catch((err) => {
-          unlistenProgress()
-          unlistenComplete()
-          useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
-          message.error(`上传失败: ${err}`)
-        })
-      })
-    })
-  }
-  uploadFileRef.current = uploadFile
-
-  const uploadFolder = async (localPath: string, remotePath: string, folderName: string, targetDir?: string) => {
-    const taskId = Date.now().toString() + Math.random().toString(36).substring(2, 11)
-    const now = Date.now()
-    const conn = connection
-    const dir = targetDir || remotePath.substring(0, remotePath.lastIndexOf('/'))
-
-    useTransferStore.getState().addRecord({
-      id: taskId,
-      connectionId,
-      connectionName: conn?.name || 'Unknown',
-      connectionHost: conn?.host || '',
-      type: 'upload',
-      localPath,
-      remotePath,
-      fileName: folderName,
-      fileSize: 0,
-      transferred: 0,
-      status: 'pending',
-      startTime: now,
-    })
-
-    useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
-
-    listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
-      `transfer-progress-${taskId}`,
-      (event) => {
-        useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total, event.payload.totalFiles, event.payload.completedFiles)
-      }
-    ).then((unlisten) => {
-      invoke<{ success: boolean; cancelled: boolean }>('upload_folder', { taskId, connectionId, localPath, remotePath })
-        .then((result) => {
-          if (result.cancelled) {
-            useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-          } else {
-            useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-            message.success(`上传完成: ${folderName}`)
-            refreshDirectoryRef.current?.(dir)
-          }
-        })
-        .catch((err) => {
-          useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
-          message.error(`上传失败: ${err}`)
-        })
-        .finally(() => unlisten())
-    })
-  }
-  uploadFolderRef.current = uploadFolder
-
-  useEffect(() => {
-    if (!visible || !connectionId) return
-
-    let unlisten: (() => void) | null = null
-
-    const handleDrop = async (paths: string[]) => {
-      const targetDir = dragTargetPathRef.current || ((selectedNode?.isDirectory && selectedNode?.path) || currentPath)
-
-      for (const localPath of paths) {
-        try {
-          const isDir = await invoke<boolean>('is_local_directory', { path: localPath })
-          const fileName = localPath.split('/').pop() || 'file'
-          const remotePath = targetDir + '/' + fileName
-
-          if (isDir) {
-            uploadFolderRef.current?.(localPath, remotePath, fileName)
-          } else {
-            uploadFileRef.current?.(localPath, remotePath, fileName)
-          }
-        } catch (err) {
-          message.error(`上传失败: ${err}`)
-        }
-      }
-      setDragTargetPath(null)
-    }
-
-    const setupListeners = async () => {
-      unlisten = await getCurrentWebview().onDragDropEvent((event) => {
-        const panel = panelRef.current
-        const checkInPanel = (x: number, y: number) => {
-          if (!panel) return false
-          const panelRect = panel.getBoundingClientRect()
-          return x >= panelRect.left && x <= panelRect.right && y >= panelRect.top && y <= panelRect.bottom
-        }
-
-        if (event.payload.type === 'enter') {
-          const { position } = event.payload
-          if (checkInPanel(position.x, position.y - 24)) {
-            setIsDragOver(true)
-          }
-        } else if (event.payload.type === 'leave') {
-          setIsDragOver(false)
-          setDragTargetPath(null)
-        } else if (event.payload.type === 'over') {
-          const { position } = event.payload
-          const x = position.x
-          const y = position.y - 24
-
-          const container = treeContainerRef.current
-          if (!panel || !container || !checkInPanel(x, y)) {
-            setDragTargetPath(null)
-            setIsDragOver(false)
-            return
-          }
-
-          setIsDragOver(true)
-
-          const allNodes = viewMode === 'list'
-            ? container.querySelectorAll('.file-list-item')
-            : container.querySelectorAll('.ant-tree-treenode')
-          let foundPath: string | null = null
-
-          allNodes.forEach((node) => {
-            const rect = node.getBoundingClientRect()
-            const inRow = y >= rect.top && y <= rect.bottom
-            if (inRow) {
-              if (viewMode === 'list') {
-                foundPath = node.getAttribute('data-dir-path')
-              } else {
-                const dirElement = node.querySelector('[data-dir-path]')
-                if (dirElement) {
-                  foundPath = dirElement.getAttribute('data-dir-path')
-                }
-              }
-            }
-          })
-
-          setDragTargetPath(foundPath)
-        } else if (event.payload.type === 'drop') {
-          setIsDragOver(false)
-          const { paths, position } = event.payload
-
-          if (!paths || paths.length === 0) {
-            setDragTargetPath(null)
-            return
-          }
-
-          if (!checkInPanel(position.x, position.y - 24)) {
-            setDragTargetPath(null)
-            return
-          }
-
-          handleDrop(paths)
-        }
-      })
-    }
-
-    setupListeners()
-
-    return () => {
-      unlisten?.()
-    }
-  }, [visible, connectionId, currentPath, selectedNode, message, viewMode])
-
-  const handleDownload = async (remotePath: string, fileName: string) => {
-    try {
-      const savePath = await save({
-        defaultPath: fileName,
-        title: '保存文件',
-      })
-      if (savePath) {
-        const taskId = Date.now().toString() + Math.random().toString(36).substring(2, 11)
-        const now = Date.now()
-        const conn = connection
-
-        useTransferStore.getState().addRecord({
-          id: taskId,
-          connectionId,
-          connectionName: conn?.name || 'Unknown',
-          connectionHost: conn?.host || '',
-          type: 'download',
-          localPath: savePath,
-          remotePath,
-          fileName,
-          fileSize: 0,
-          transferred: 0,
-          status: 'pending',
-          startTime: now,
-        })
-
-        useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
-
-        listen<{ transferred: number; total: number }>(
-          `transfer-progress-${taskId}`,
-          (event) => {
-            useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
-          }
-        ).then((unlistenProgress) => {
-          listen<{ success: boolean; cancelled: boolean; error?: string }>(
-            `transfer-complete-${taskId}`,
-            (event) => {
-              unlistenProgress()
-              const result = event.payload
-              if (result.cancelled) {
-                useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-              } else if (result.success) {
-                useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-                message.success(`下载完成: ${fileName}`)
-              } else {
-                useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: result.error || 'Unknown error' })
-                message.error(`下载失败: ${result.error}`)
-              }
-            }
-          ).then((unlistenComplete) => {
-            invoke('download_file', { taskId, connectionId, remotePath, localPath: savePath }).catch((err) => {
-              unlistenProgress()
-              unlistenComplete()
-              useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
-              message.error(`下载失败: ${err}`)
-            })
-          })
-        })
-      }
-    } catch (err) {
-      console.error('保存对话框取消:', err)
-    }
-  }
-
-  const handleDownloadSelected = () => {
-    if (!selectedNode) {
-      message.warning('请先选择要下载的文件')
-      return
-    }
-    if (selectedNode.isDirectory) {
-      message.warning('暂不支持下载文件夹，请选择文件')
-      return
-    }
-    handleDownload(selectedNode.path, selectedNode.title)
-  }
-
-  const handleCreateFile = async () => {
-    if (!newFileName.trim()) return
-    try {
-      const remotePath = currentPath + '/' + newFileName.trim()
-      await invoke('create_file', { connectionId, path: remotePath })
-      message.success('文件创建成功')
-      setNewFileVisible(false)
-      setNewFileName('')
-      refreshCurrent()
-    } catch (err) {
-      message.error(`创建失败: ${err}`)
-    }
-  }
-
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) return
-    try {
-      const remotePath = currentPath + '/' + newFolderName.trim()
-      await invoke('create_directory', { connectionId, path: remotePath })
-      message.success('文件夹创建成功')
-      setNewFolderVisible(false)
-      setNewFolderName('')
-      refreshCurrent()
-    } catch (err) {
-      message.error(`创建失败: ${err}`)
-    }
-  }
-
-  const handleRename = async () => {
-    if (!renameValue.trim() || !selectedNode) return
-    try {
-      const newPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) + '/' + renameValue.trim()
-      await invoke('rename_file', { connectionId, oldPath: selectedNode.path, newPath })
-      message.success('重命名成功')
-      setRenameVisible(false)
-      setRenameValue('')
-      refreshCurrent()
-    } catch (err) {
-      message.error(`重命名失败: ${err}`)
-    }
-  }
-
-  const handleDelete = async () => {
-    const node = selectedNodeRef.current
-    if (!node || !node.path) {
-      message.error('未选择文件')
-      return
-    }
-    try {
-      if (node.isDirectory) {
-        await invoke('delete_directory', { connectionId, path: node.path })
-      } else {
-        await invoke('delete_file', { connectionId, path: node.path })
-      }
-      message.success('删除成功')
-      setDeleteVisible(false)
-      if (viewMode === 'list') {
-        loadDirectory(currentPath, true)
-      } else {
-        const parentPath = node.path.substring(0, node.path.lastIndexOf('/')) || '/'
-        refreshDirectoryRef.current?.(parentPath)
-      }
-    } catch (err) {
-      message.error(`删除失败: ${err}`)
-    }
-  }
-
-  const handleChmod = async () => {
-    if (!selectedNode || !chmodValue.trim()) return
-    try {
-      await invoke('chmod_file', { connectionId, path: selectedNode.path, mode: parseInt(chmodValue.trim(), 8) })
-      message.success('权限修改成功')
-      setChmodVisible(false)
-      refreshCurrent()
-    } catch (err) {
-      message.error(`修改权限失败: ${err}`)
-    }
-  }
-
-  const handleCompress = async () => {
-    if (!selectedNode || !compressName.trim()) return
-    try {
-      const outputPath = currentPath + '/' + compressName.trim()
-      await invoke('compress_file', { connectionId, sourcePath: selectedNode.path, outputPath })
-      message.success('压缩成功')
-      setCompressVisible(false)
-      setCompressName('')
-      refreshCurrent()
-    } catch (err) {
-      message.error(`压缩失败: ${err}`)
-    }
-  }
-
-  const handlePreview = async () => {
-    if (!selectedNode || selectedNode.isDirectory) return
-    setPreviewLoading(true)
-    setPreviewFile({ name: selectedNode.title, path: selectedNode.path })
-    try {
-      const result = await invoke<{ content: string; size: number; truncated: boolean; encoding: string }>('read_file_content', {
-        connectionId,
-        path: selectedNode.path,
-        maxSize: 1024 * 1024
-      })
-      setPreviewContent(result.content)
-      setPreviewSize(result.size)
-      setPreviewTruncated(result.truncated)
-      setPreviewVisible(true)
-    } catch (err) {
-      message.error(`预览失败: ${err}`)
-    } finally {
-      setPreviewLoading(false)
-    }
-  }
-
-  const handleEdit = async () => {
-    if (!selectedNode || selectedNode.isDirectory) return
-    setEditLoading(true)
-    setEditFile({ name: selectedNode.title, path: selectedNode.path })
-    try {
-      const result = await invoke<{ content: string; size: number; truncated: boolean; encoding: string }>('read_file_content', {
-        connectionId,
-        path: selectedNode.path,
-        maxSize: 10 * 1024 * 1024
-      })
-      if (result.truncated) {
-        message.warning('文件较大，仅加载前 10MB 内容')
-      }
-      setEditContent(result.content)
-      setEditVisible(true)
-    } catch (err) {
-      message.error(`读取文件失败: ${err}`)
-    } finally {
-      setEditLoading(false)
-    }
-  }
-
-  const handleSaveEdit = async () => {
-    if (!editFile) return
-    setEditSaving(true)
-    try {
-      await invoke('write_file_content', {
-        connectionId,
-        path: editFile.path,
-        content: editContent
-      })
-      message.success('保存成功')
-      setEditVisible(false)
-    } catch (err) {
-      message.error(`保存失败: ${err}`)
-    } finally {
-      setEditSaving(false)
-    }
-  }
-
-  const isCompressedFile = (fileName: string): boolean => {
-    const lowerName = fileName.toLowerCase()
-    return lowerName.endsWith('.tar.gz') || lowerName.endsWith('.tgz') ||
-           lowerName.endsWith('.tar.bz2') || lowerName.endsWith('.tbz2') ||
-           lowerName.endsWith('.tar.xz') || lowerName.endsWith('.txz') ||
-           lowerName.endsWith('.tar') ||
-           lowerName.endsWith('.zip') ||
-           lowerName.endsWith('.gz') ||
-           lowerName.endsWith('.bz2') ||
-           lowerName.endsWith('.xz')
-  }
-
-  const handleExtract = async () => {
-    if (!selectedNode || selectedNode.isDirectory) return
-    setExtractLoading(true)
-    try {
-      const parentPath = selectedNode.path.substring(0, selectedNode.path.lastIndexOf('/')) || '/'
-      const targetDir = parentPath
-      await invoke('extract_file', {
-        connectionId,
-        filePath: selectedNode.path,
-        targetDir
-      })
-      message.success('解压成功')
-      setExtractVisible(false)
-      refreshCurrent()
-    } catch (err) {
-      message.error(`解压失败: ${err}`)
-    } finally {
-      setExtractLoading(false)
-    }
-  }
-
-  const handleSearch = async () => {
-    if (!searchQuery.trim()) return
-    setSearchLoading(true)
-    try {
-      const results = await invoke<{ name: string; path: string; is_directory: boolean; size: number; modified: string }[]>('search_files', {
-        connectionId,
-        path: currentPath,
-        pattern: searchQuery.trim(),
-        maxResults: 100
-      })
-      const nodes: TreeNode[] = results.map(r => ({
-        key: r.path,
-        title: r.name,
-        isDirectory: r.is_directory,
-        path: r.path,
-        size: r.size,
-        modified: r.modified,
-        isLeaf: !r.is_directory,
-      }))
-      setSearchResults(nodes)
-      setSearchVisible(true)
-    } catch (err) {
-      message.error(`搜索失败: ${err}`)
-    } finally {
-      setSearchLoading(false)
-    }
-  }
-
-  const handleSearchSelect = (node: TreeNode) => {
-    if (node.isDirectory) {
-      store.setCurrentPath(connectionId, node.path.substring(0, node.path.lastIndexOf('/')) || '/')
-      loadDirectory(node.path.substring(0, node.path.lastIndexOf('/')) || '/', true)
-    } else {
+  const handleSearchSelect = useCallback(
+    (node: TreeNode) => {
       const parentPath = node.path.substring(0, node.path.lastIndexOf('/')) || '/'
       store.setCurrentPath(connectionId, parentPath)
       loadDirectory(parentPath, true)
-    }
-    setSearchVisible(false)
-    setSearchQuery('')
-    setSearchResults([])
-  }
+      fileOps.setSearchVisible(false)
+      fileOps.setSearchQuery('')
+      fileOps.setSearchResults([])
+    },
+    [connectionId, loadDirectory, store, fileOps]
+  )
 
-  const copyFileName = async () => {
-    if (selectedNode) {
-      try {
-        await navigator.clipboard.writeText(selectedNode.title)
-        message.success('文件名已复制')
-      } catch {
-        message.error('复制失败')
+  const handleSortChange = useCallback(
+    (field: 'name' | 'size' | 'modified') => {
+      if (sortField !== field) {
+        setSortField(field)
+        setSortOrder('asc')
+      } else if (sortOrder === 'asc') {
+        setSortOrder('desc')
+      } else {
+        setSortField(null)
       }
-    }
-    setContextMenuVisible(false)
-  }
-
-  const copyFullPath = async () => {
-    if (selectedNode) {
-      try {
-        await navigator.clipboard.writeText(selectedNode.path)
-        message.success('路径已复制')
-      } catch {
-        message.error('复制失败')
-      }
-    }
-    setContextMenuVisible(false)
-  }
-
-  const contextMenuItems = [
-    { key: 'refresh', label: '刷新', icon: <ReloadOutlined />, onClick: () => { refreshCurrent(); setContextMenuVisible(false) } },
-    { key: 'newFile', label: '新建文件', icon: <FileAddOutlined />, onClick: () => { setNewFileVisible(true); setContextMenuVisible(false) } },
-    { key: 'newFolder', label: '新建文件夹', icon: <FolderAddOutlined />, onClick: () => { setNewFolderVisible(true); setContextMenuVisible(false) } },
-    { type: 'divider' as const },
-    { key: 'preview', label: '预览', icon: <EyeOutlined />, onClick: () => { handlePreview(); setContextMenuVisible(false) }, disabled: selectedNode?.isDirectory },
-    { key: 'edit', label: '编辑', icon: <EditOutlined />, onClick: () => { handleEdit(); setContextMenuVisible(false) }, disabled: selectedNode?.isDirectory },
-    { key: 'rename', label: '重命名', icon: <EditOutlined />, onClick: () => { setRenameValue(selectedNode?.title || ''); setRenameVisible(true); setContextMenuVisible(false) } },
-    { key: 'chmod', label: '修改权限', icon: <EyeOutlined />, onClick: () => { setChmodValue(selectedNode?.permissions || '644'); setChmodVisible(true); setContextMenuVisible(false) } },
-    { type: 'divider' as const },
-    { key: 'download', label: '下载', icon: <DownloadOutlined />, onClick: () => { if (selectedNode && !selectedNode.isDirectory) handleDownload(selectedNode.path, selectedNode.title); setContextMenuVisible(false) } },
-    { key: 'upload', label: '上传文件', icon: <UploadOutlined />, onClick: () => { handleUploadFile(); setContextMenuVisible(false) } },
-    { key: 'uploadFolder', label: '上传文件夹', icon: <FolderAddOutlined />, onClick: () => { handleUploadFolder(); setContextMenuVisible(false) } },
-    { type: 'divider' as const },
-    { key: 'copyName', label: '复制文件名', icon: <CopyOutlined />, onClick: copyFileName },
-    { key: 'copyPath', label: '复制绝对路径', icon: <ScissorOutlined />, onClick: copyFullPath },
-    { type: 'divider' as const },
-    { key: 'compress', label: '压缩', icon: <CompressOutlined />, onClick: () => { setCompressName((selectedNode?.title || '') + '.tar.gz'); setCompressVisible(true); setContextMenuVisible(false) } },
-    { key: 'extract', label: '解压', icon: <CompressOutlined />, onClick: () => { setExtractVisible(true); setContextMenuVisible(false) }, disabled: !selectedNode || selectedNode.isDirectory || !isCompressedFile(selectedNode.title || '') },
-    { key: 'delete', label: '删除', icon: <DeleteOutlined />, danger: true, onClick: () => { setDeleteVisible(true); setContextMenuVisible(false) } },
-  ]
+    },
+    [sortField, sortOrder]
+  )
 
   if (!visible) return null
 
@@ -1081,13 +205,13 @@ const renderTreeNode = (node: TreeNode) => (
         const target = e.target as HTMLElement
         if (target.closest('button, input, .ant-tree, .file-list-item, .ant-tooltip, .ant-modal')) return
         setSelectedKeys([])
-        setSelectedNode(null)
+        setSelectedNodeState(null)
       }}
       onContextMenu={(e) => {
         const target = e.target as HTMLElement
         if (target.closest('button, input, .ant-tree, .file-list-item, .ant-tooltip, .ant-modal')) return
         e.preventDefault()
-        setSelectedNode(null)
+        setSelectedNodeState(null)
         setSelectedKeys([])
         setContextMenuPos({ x: e.clientX, y: e.clientY })
         setContextMenuVisible(true)
@@ -1098,8 +222,8 @@ const renderTreeNode = (node: TreeNode) => (
         right: 0,
         bottom: 32,
         width: 360,
-        background: isDragOver ? 'rgba(0, 185, 107, 0.05)' : 'var(--color-bg-elevated)',
-        borderLeft: isDragOver ? '3px solid var(--color-primary)' : '1px solid var(--color-border)',
+        background: dragDrop.isDragOver ? 'rgba(0, 185, 107, 0.05)' : 'var(--color-bg-elevated)',
+        borderLeft: dragDrop.isDragOver ? '3px solid var(--color-primary)' : '1px solid var(--color-border)',
         zIndex: 100,
         display: 'flex',
         flexDirection: 'column',
@@ -1107,33 +231,40 @@ const renderTreeNode = (node: TreeNode) => (
         transition: 'background 0.2s, border-color 0.2s',
       }}
     >
-      {isDragOver && (
-        <div style={{
-          position: 'absolute',
-          top: 8,
-          left: 8,
-          right: 8,
-          padding: '12px 16px',
-          background: 'rgba(0, 185, 107, 0.15)',
-          borderRadius: 6,
-          border: '2px dashed var(--color-primary)',
-          zIndex: 10,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backdropFilter: 'blur(4px)',
-        }}>
+      {dragDrop.isDragOver && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: 8,
+            right: 8,
+            padding: '12px 16px',
+            background: 'rgba(0, 185, 107, 0.15)',
+            borderRadius: 6,
+            border: '2px dashed var(--color-primary)',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backdropFilter: 'blur(4px)',
+          }}
+        >
           <CloudUploadOutlined style={{ color: 'var(--color-primary)', fontSize: 18, marginRight: 8 }} />
-          <span style={{ color: 'var(--color-primary)', fontSize: 14, fontWeight: 500 }}>释放以上传文件到当前目录</span>
+          <span style={{ color: 'var(--color-primary)', fontSize: 14, fontWeight: 500 }}>
+            释放以上传文件到当前目录
+          </span>
         </div>
       )}
-      <div style={{
-        padding: '12px 16px',
-        borderBottom: '1px solid var(--color-border)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-      }}>
+
+      <div
+        style={{
+          padding: '12px 16px',
+          borderBottom: '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: 'var(--color-text)', fontSize: 14, fontWeight: 500 }}>文件管理</span>
           <Tooltip title={viewMode === 'tree' ? '切换到列表视图' : '切换到树形视图'}>
@@ -1145,7 +276,11 @@ const renderTreeNode = (node: TreeNode) => (
                 setViewMode(newMode)
                 localStorage.setItem('iterminal_file_view_mode', newMode)
               }}
-              style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-tertiary)',
+              }}
             />
           </Tooltip>
         </div>
@@ -1157,13 +292,15 @@ const renderTreeNode = (node: TreeNode) => (
         />
       </div>
 
-      <div style={{
-        padding: '8px 12px',
-        borderBottom: '1px solid var(--color-border)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-      }}>
+      <div
+        style={{
+          padding: '8px 12px',
+          borderBottom: '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
         <Input
           size="small"
           value={pathInput}
@@ -1179,19 +316,25 @@ const renderTreeNode = (node: TreeNode) => (
         />
       </div>
 
-      <div style={{
-        padding: '8px 12px',
-        borderBottom: '1px solid var(--color-border)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 4,
-      }}>
+      <div
+        style={{
+          padding: '8px 12px',
+          borderBottom: '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+        }}
+      >
         <Tooltip title="Home目录">
           <Button
             size="small"
             icon={<HomeOutlined />}
             onClick={goHome}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="返回上级">
@@ -1203,7 +346,11 @@ const renderTreeNode = (node: TreeNode) => (
               store.setCurrentPath(connectionId, parent)
               loadDirectory(parent, true)
             }}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="刷新当前文件夹">
@@ -1211,7 +358,11 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={<ReloadOutlined />}
             onClick={refreshCurrent}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <div style={{ flex: 1 }} />
@@ -1220,65 +371,91 @@ const renderTreeNode = (node: TreeNode) => (
             size="small"
             icon={showHidden ? <EyeOutlined /> : <EyeInvisibleOutlined />}
             onClick={() => setShowHidden(!showHidden)}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="上传文件">
           <Button
             size="small"
             icon={<UploadOutlined />}
-            onClick={handleUploadFile}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            onClick={transfer.handleUploadFile}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="上传文件夹">
           <Button
             size="small"
             icon={<CloudUploadOutlined />}
-            onClick={handleUploadFolder}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            onClick={transfer.handleUploadFolder}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="下载选中文件">
           <Button
             size="small"
             icon={<DownloadOutlined />}
-            onClick={handleDownloadSelected}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            onClick={transfer.handleDownloadSelected}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="新建文件夹">
           <Button
             size="small"
             icon={<FolderAddOutlined />}
-            onClick={() => setNewFolderVisible(true)}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            onClick={() => fileOps.setNewFolderVisible(true)}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
         <Tooltip title="搜索文件">
           <Button
             size="small"
             icon={<SearchOutlined />}
-            onClick={() => setSearchVisible(!searchVisible)}
-            style={{ background: searchVisible ? 'rgba(0, 185, 107, 0.15)' : 'transparent', border: '1px solid var(--color-border)', color: searchVisible ? 'var(--color-primary)' : 'var(--color-text-tertiary)' }}
+            onClick={() => fileOps.setSearchVisible(!fileOps.searchVisible)}
+            style={{
+              background: fileOps.searchVisible ? 'rgba(0, 185, 107, 0.15)' : 'transparent',
+              border: '1px solid var(--color-border)',
+              color: fileOps.searchVisible ? 'var(--color-primary)' : 'var(--color-text-tertiary)',
+            }}
           />
         </Tooltip>
       </div>
 
-      {searchVisible && (
-        <div style={{
-          padding: '8px 12px',
-          borderBottom: '1px solid var(--color-border)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          background: 'var(--color-bg-container)',
-        }}>
+      {fileOps.searchVisible && (
+        <div
+          style={{
+            padding: '8px 12px',
+            borderBottom: '1px solid var(--color-border)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            background: 'var(--color-bg-container)',
+          }}
+        >
           <Input
             size="small"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            onPressEnter={handleSearch}
+            value={fileOps.searchQuery}
+            onChange={(e) => fileOps.setSearchQuery(e.target.value)}
+            onPressEnter={fileOps.handleSearch}
             placeholder="输入文件名搜索..."
             style={{
               flex: 1,
@@ -1287,447 +464,251 @@ const renderTreeNode = (node: TreeNode) => (
               color: 'var(--color-text)',
             }}
           />
-          <Button
-            size="small"
-            type="primary"
-            loading={searchLoading}
-            onClick={handleSearch}
-          >
+          <Button size="small" type="primary" loading={fileOps.searchLoading} onClick={fileOps.handleSearch}>
             搜索
           </Button>
           <Button
             size="small"
             icon={<CloseOutlined />}
             onClick={() => {
-              setSearchVisible(false)
-              setSearchQuery('')
-              setSearchResults([])
+              fileOps.setSearchVisible(false)
+              fileOps.setSearchQuery('')
+              fileOps.setSearchResults([])
             }}
-            style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-tertiary)' }}
+            style={{
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-tertiary)',
+            }}
           />
         </div>
       )}
 
-      <div
-        ref={treeContainerRef}
-        style={{
-          flex: 1,
-          overflow: 'auto',
-          padding: 8,
-          background: 'var(--color-bg-elevated)',
-          userSelect: 'none',
-          WebkitUserSelect: 'none',
-        }}
-      >
-        {searchResults.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginBottom: 8, padding: '0 4px' }}>
-              找到 {searchResults.length} 个结果
-            </div>
-            {searchResults.map((item) => (
-              <div
-                key={item.key}
-                onClick={() => handleSearchSelect(item)}
-                onDoubleClick={() => handleSearchSelect(item)}
-                style={{
-                  padding: '8px 12px',
-                  background: 'var(--color-bg-container)',
-                  borderRadius: 4,
-                  cursor: 'pointer',
-                  transition: 'background 0.15s',
-                  border: '1px solid var(--color-border)',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = 'rgba(0, 185, 107, 0.1)'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = 'var(--color-bg-container)'
-                }}
-              >
-                <div style={{
-                  fontSize: 13,
-                  marginBottom: 4,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 6,
-                }}>
-                  {item.isDirectory ? <FolderOutlined style={{ color: 'var(--color-primary)' }} /> : <FileOutlined style={{ color: 'var(--color-text-tertiary)' }} />}
-                  <span style={{
-                    color: item.isDirectory ? 'var(--color-primary)' : 'var(--color-text)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap'
-                  }}>{item.title}</span>
-                </div>
-                <div style={{
-                  color: 'var(--color-text-quaternary)',
-                  fontSize: 11,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {item.path}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : loading ? (
-          <div style={{ textAlign: 'center', padding: 40 }}>
-            <Spin />
-          </div>
-        ) : treeData.length === 0 ? (
-          <Empty
-            image={Empty.PRESENTED_IMAGE_SIMPLE}
-            description={<span style={{ color: 'var(--color-text-quaternary)' }}>空目录</span>}
-          />
-        ) : viewMode === 'tree' ? (
-          <DirectoryTree
-            treeData={treeData}
-            expandedKeys={expandedKeys}
-            selectedKeys={selectedKeys}
-            onSelect={onSelect}
-            onExpand={onExpand}
-            expandAction="doubleClick"
-            titleRender={renderTreeNode}
-            onRightClick={onTreeRightClick}
-          />
-        ) : (
-          <>
-            <div style={{ 
-              display: 'flex', 
-              gap: 8, 
-              padding: '4px 8px', 
-              borderBottom: '1px solid var(--color-border)',
-              marginBottom: 4,
-            }}>
-              <span
-                onClick={() => {
-                  if (sortField !== 'name') {
-                    setSortField('name')
-                    setSortOrder('asc')
-                  } else if (sortOrder === 'asc') {
-                    setSortOrder('desc')
-                  } else {
-                    setSortField(null)
-                  }
-                }}
-                style={{ 
-                  color: sortField === 'name' ? 'var(--color-primary)' : 'var(--color-text-quaternary)', 
-                  fontSize: 11, 
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  userSelect: 'none',
-                  WebkitUserSelect: 'none',
-                }}
-              >
-                名称 {sortField === 'name' && (sortOrder === 'asc' ? <ArrowUpOutlined style={{ fontSize: 10 }} /> : <ArrowDownOutlined style={{ fontSize: 10 }} />)}
-              </span>
-              <span
-                onClick={() => {
-                  if (sortField !== 'size') {
-                    setSortField('size')
-                    setSortOrder('asc')
-                  } else if (sortOrder === 'asc') {
-                    setSortOrder('desc')
-                  } else {
-                    setSortField(null)
-                  }
-                }}
-                style={{ 
-                  color: sortField === 'size' ? 'var(--color-primary)' : 'var(--color-text-quaternary)', 
-                  fontSize: 11, 
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  userSelect: 'none',
-                  WebkitUserSelect: 'none',
-                }}
-              >
-                大小 {sortField === 'size' && (sortOrder === 'asc' ? <ArrowUpOutlined style={{ fontSize: 10 }} /> : <ArrowDownOutlined style={{ fontSize: 10 }} />)}
-              </span>
-              <span
-                onClick={() => {
-                  if (sortField !== 'modified') {
-                    setSortField('modified')
-                    setSortOrder('asc')
-                  } else if (sortOrder === 'asc') {
-                    setSortOrder('desc')
-                  } else {
-                    setSortField(null)
-                  }
-                }}
-                style={{ 
-                  color: sortField === 'modified' ? 'var(--color-primary)' : 'var(--color-text-quaternary)', 
-                  fontSize: 11, 
-                  cursor: 'pointer',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 2,
-                  userSelect: 'none',
-                  WebkitUserSelect: 'none',
-                }}
-              >
-                修改时间 {sortField === 'modified' && (sortOrder === 'asc' ? <ArrowUpOutlined style={{ fontSize: 10 }} /> : <ArrowDownOutlined style={{ fontSize: 10 }} />)}
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-              {(sortField ? [...treeData].sort((a, b) => {
-                if (a.isDirectory !== b.isDirectory) {
-                  return a.isDirectory ? -1 : 1
-                }
-                let cmp = 0
-                if (sortField === 'name') {
-                  cmp = (a.title || '').localeCompare(b.title || '')
-                } else if (sortField === 'size') {
-                  cmp = (a.size || 0) - (b.size || 0)
-                } else if (sortField === 'modified') {
-                  cmp = (a.modified || '').localeCompare(b.modified || '')
-                }
-                return sortOrder === 'asc' ? cmp : -cmp
-              }) : treeData).map((item) => (
-                <div
-                  key={item.key}
-                  data-dir-path={item.isDirectory ? item.path : undefined}
-                  className="file-list-item"
-                  onClick={() => {
-                    setSelectedKeys([item.key])
-                    setSelectedNode(item)
-                  }}
-                  onDoubleClick={() => {
-                    if (item.isDirectory) {
-                      store.setCurrentPath(connectionId, item.path)
-                      loadDirectory(item.path, true)
-                    }
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault()
-                    setSelectedNode(item)
-                    setSelectedKeys([item.key])
-                    setContextMenuPos({ x: e.clientX, y: e.clientY })
-                    setContextMenuVisible(true)
-                  }}
-                  style={{
-                    padding: '8px 12px',
-                    background: selectedKeys.includes(item.key) ? 'rgba(0, 185, 107, 0.15)' : (dragTargetPath === item.path ? 'rgba(0, 185, 107, 0.25)' : 'transparent'),
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                    transition: 'background 0.15s',
-                    userSelect: 'none',
-                    WebkitUserSelect: 'none',
-                    border: dragTargetPath === item.path ? '2px dashed var(--color-primary)' : '2px solid transparent',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!selectedKeys.includes(item.key) && dragTargetPath !== item.path) {
-                      e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!selectedKeys.includes(item.key) && dragTargetPath !== item.path) {
-                      e.currentTarget.style.background = 'transparent'
-                    }
-                  }}
-                >
-                  <div style={{ 
-                    fontSize: 13,
-                    marginBottom: 2,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 6,
-                  }}>
-                    {item.isDirectory ? <FolderOutlined /> : <FileOutlined />}
-                    <span style={{ 
-                      color: item.isDirectory ? 'var(--color-primary)' : 'var(--color-text)',
-                      overflow: 'hidden', 
-                      textOverflow: 'ellipsis', 
-                      whiteSpace: 'nowrap' 
-                    }}>{item.title}</span>
-                  </div>
-                  <div style={{ 
-                    color: 'var(--color-text-quaternary)', 
-                    fontSize: 11,
-                    display: 'flex',
-                    gap: 12,
-                  }}>
-                    <span>{formatSize(item.size || 0)}</span>
-                    <span>{item.modified || '-'}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+      <div ref={treeContainerRef} style={{ flex: 1, overflow: 'hidden' }}>
+        <FileList
+          loading={loading}
+          treeData={treeData}
+          viewMode={viewMode}
+          expandedKeys={expandedKeys}
+          selectedKeys={selectedKeys}
+          searchResults={fileOps.searchResults}
+          sortField={sortField}
+          sortOrder={sortOrder}
+          onSelect={onSelect}
+          onExpand={onExpand}
+          onRightClick={onTreeRightClick}
+          onSearchSelect={handleSearchSelect}
+          onSortChange={handleSortChange}
+          onNavigate={(path: string) => {
+            store.setCurrentPath(connectionId, path)
+            loadDirectory(path, true)
+          }}
+          dragTargetPath={dragDrop.dragTargetPath}
+        />
       </div>
 
-      {contextMenuVisible && createPortal(
-        <div
-          style={{
-            position: 'fixed',
-            left: contextMenuPos.x,
-            top: Math.min(contextMenuPos.y, window.innerHeight - 400),
-            zIndex: 9999,
-            background: 'var(--color-bg-elevated)',
-            borderRadius: 4,
-            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-            minWidth: 160,
-            maxHeight: `calc(100vh - ${Math.min(contextMenuPos.y, window.innerHeight - 400) + 20}px)`,
-            overflowY: 'auto',
-          }}
-          onClick={(e) => {
-            e.stopPropagation()
-            setContextMenuVisible(false)
-          }}
-        >
-          {contextMenuItems.map((item, index) => (
-            item.type === 'divider' ? (
-              <div key={`divider-${index}`} style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
-            ) : (
-              <div
-                key={item.key}
-                style={{
-                  padding: '8px 12px',
-                  cursor: 'pointer',
-                  color: item.danger ? '#ff4d4f' : 'var(--color-text)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  fontSize: 13,
-                }}
-                onClick={item.onClick}
-                onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.1)' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-              >
-                {item.icon}
-                {item.label}
-              </div>
-            )
-          ))}
-        </div>,
-        document.body
-      )}
+      <ContextMenu
+        visible={contextMenuVisible}
+        position={contextMenuPos}
+        selectedNode={selectedNode}
+        onClose={() => setContextMenuVisible(false)}
+        onRefresh={() => {
+          refreshCurrent()
+          setContextMenuVisible(false)
+        }}
+        onNewFile={() => {
+          fileOps.setNewFileVisible(true)
+          setContextMenuVisible(false)
+        }}
+        onNewFolder={() => {
+          fileOps.setNewFolderVisible(true)
+          setContextMenuVisible(false)
+        }}
+        onPreview={() => {
+          fileOps.handlePreview()
+          setContextMenuVisible(false)
+        }}
+        onEdit={() => {
+          fileOps.handleEdit()
+          setContextMenuVisible(false)
+        }}
+        onRename={() => {
+          fileOps.setRenameVisible(true)
+          setContextMenuVisible(false)
+        }}
+        onChmod={() => {
+          fileOps.setChmodValue(selectedNode?.permissions || '644')
+          fileOps.setChmodVisible(true)
+          setContextMenuVisible(false)
+        }}
+        onDownload={() => {
+          if (selectedNode && !selectedNode.isDirectory) {
+            transfer.handleDownload(selectedNode.path, selectedNode.title)
+          }
+          setContextMenuVisible(false)
+        }}
+        onUpload={() => {
+          transfer.handleUploadFile()
+          setContextMenuVisible(false)
+        }}
+        onUploadFolder={() => {
+          transfer.handleUploadFolder()
+          setContextMenuVisible(false)
+        }}
+        onCopyName={() => {
+          fileOps.copyFileName()
+          setContextMenuVisible(false)
+        }}
+        onCopyPath={() => {
+          fileOps.copyFullPath()
+          setContextMenuVisible(false)
+        }}
+        onCompress={() => {
+          fileOps.setCompressName((selectedNode?.title || '') + '.tar.gz')
+          fileOps.setCompressVisible(true)
+          setContextMenuVisible(false)
+        }}
+        onExtract={() => {
+          fileOps.setExtractVisible(true)
+          setContextMenuVisible(false)
+        }}
+        onDelete={() => {
+          fileOps.setDeleteVisible(true)
+          setContextMenuVisible(false)
+        }}
+      />
 
       <NewFileModal
-        visible={newFileVisible}
-        fileName={newFileName}
-        onFileNameChange={setNewFileName}
-        onConfirm={handleCreateFile}
-        onCancel={() => { setNewFileVisible(false); setNewFileName('') }}
+        visible={fileOps.newFileVisible}
+        fileName={fileOps.newFileName}
+        onFileNameChange={fileOps.setNewFileName}
+        onConfirm={fileOps.handleCreateFile}
+        onCancel={() => {
+          fileOps.setNewFileVisible(false)
+          fileOps.setNewFileName('')
+        }}
       />
 
       <NewFolderModal
-        visible={newFolderVisible}
-        folderName={newFolderName}
-        onFolderNameChange={setNewFolderName}
-        onConfirm={handleCreateFolder}
-        onCancel={() => { setNewFolderVisible(false); setNewFolderName('') }}
+        visible={fileOps.newFolderVisible}
+        folderName={fileOps.newFolderName}
+        onFolderNameChange={fileOps.setNewFolderName}
+        onConfirm={fileOps.handleCreateFolder}
+        onCancel={() => {
+          fileOps.setNewFolderVisible(false)
+          fileOps.setNewFolderName('')
+        }}
       />
 
       <RenameModal
-        visible={renameVisible}
-        currentValue={renameValue}
-        onValueChange={setRenameValue}
-        onConfirm={handleRename}
-        onCancel={() => { setRenameVisible(false); setRenameValue('') }}
+        visible={fileOps.renameVisible}
+        currentValue={fileOps.renameValue}
+        onValueChange={fileOps.setRenameValue}
+        onConfirm={fileOps.handleRename}
+        onCancel={() => {
+          fileOps.setRenameVisible(false)
+          fileOps.setRenameValue('')
+        }}
       />
 
       <DeleteModal
-        visible={deleteVisible}
+        visible={fileOps.deleteVisible}
         fileName={selectedNodeRef.current?.title || selectedNodeRef.current?.path?.split('/').pop() || ''}
         isDirectory={selectedNodeRef.current?.isDirectory || false}
-        onConfirm={handleDelete}
-        onCancel={() => setDeleteVisible(false)}
+        onConfirm={fileOps.handleDelete}
+        onCancel={() => fileOps.setDeleteVisible(false)}
       />
 
       <ChmodModal
-        visible={chmodVisible}
-        value={chmodValue}
-        onValueChange={setChmodValue}
-        onConfirm={handleChmod}
-        onCancel={() => { setChmodVisible(false); setChmodValue('644') }}
+        visible={fileOps.chmodVisible}
+        value={fileOps.chmodValue}
+        onValueChange={fileOps.setChmodValue}
+        onConfirm={fileOps.handleChmod}
+        onCancel={() => {
+          fileOps.setChmodVisible(false)
+          fileOps.setChmodValue('644')
+        }}
       />
 
       <CompressModal
-        visible={compressVisible}
-        fileName={compressName}
-        onFileNameChange={setCompressName}
-        onConfirm={handleCompress}
-        onCancel={() => { setCompressVisible(false); setCompressName('') }}
+        visible={fileOps.compressVisible}
+        fileName={fileOps.compressName}
+        onFileNameChange={fileOps.setCompressName}
+        onConfirm={fileOps.handleCompress}
+        onCancel={() => {
+          fileOps.setCompressVisible(false)
+          fileOps.setCompressName('')
+        }}
       />
 
       <ConflictModal
-        visible={conflictModalVisible}
-        fileName={conflictFile?.fileName || ''}
-        remotePath={conflictFile?.remotePath}
-        onOverwrite={() => resolveConflictDialog('overwrite')}
-        onSkip={() => resolveConflictDialog('skip')}
-        onRename={() => resolveConflictDialog('rename')}
+        visible={transfer.conflictModalVisible}
+        fileName={transfer.conflictFile?.fileName || ''}
+        remotePath={transfer.conflictFile?.remotePath}
+        onOverwrite={() => transfer.resolveConflictDialog('overwrite')}
+        onSkip={() => transfer.resolveConflictDialog('skip')}
+        onRename={() => transfer.resolveConflictDialog('rename')}
       />
 
       <Modal
-        open={previewVisible}
-        title={previewFile?.name || '文件预览'}
-        onCancel={() => setPreviewVisible(false)}
+        open={fileOps.previewVisible}
+        title={fileOps.previewFile?.name || '文件预览'}
+        onCancel={() => fileOps.setPreviewVisible(false)}
         footer={null}
         width={800}
         styles={{ body: { maxHeight: '60vh', overflow: 'auto' } }}
       >
-        {previewLoading ? (
+        {fileOps.previewLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
         ) : (
           <>
-            {previewTruncated && (
+            {fileOps.previewTruncated && (
               <div style={{ marginBottom: 8, color: '#faad14', fontSize: 12 }}>
                 文件较大，仅显示前 1MB 内容
               </div>
             )}
             <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              大小: {formatSize(previewSize)}
+              大小: {formatSize(fileOps.previewSize)}
             </div>
-            <pre style={{
-              background: 'var(--color-bg-container)',
-              padding: 12,
-              borderRadius: 4,
-              overflow: 'auto',
-              fontSize: 12,
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-all',
-              margin: 0,
-            }}>
-              {previewContent}
+            <pre
+              style={{
+                background: 'var(--color-bg-container)',
+                padding: 12,
+                borderRadius: 4,
+                overflow: 'auto',
+                fontSize: 12,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-all',
+                margin: 0,
+              }}
+            >
+              {fileOps.previewContent}
             </pre>
           </>
         )}
       </Modal>
 
       <Modal
-        open={editVisible}
-        title={`编辑: ${editFile?.name || ''}`}
-        onCancel={() => setEditVisible(false)}
-        onOk={handleSaveEdit}
+        open={fileOps.editVisible}
+        title={`编辑: ${fileOps.editFile?.name || ''}`}
+        onCancel={() => fileOps.setEditVisible(false)}
+        onOk={fileOps.handleSaveEdit}
         okText="保存"
         cancelText="取消"
-        confirmLoading={editSaving}
+        confirmLoading={fileOps.editSaving}
         width={900}
         styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
       >
-        {editLoading ? (
+        {fileOps.editLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
         ) : (
-          <TextArea
-            value={editContent}
-            onChange={(e) => setEditContent(e.target.value)}
+          <Input.TextArea
+            value={fileOps.editContent}
+            onChange={(e) => fileOps.setEditContent(e.target.value)}
             rows={20}
             style={{
               fontFamily: 'monospace',
@@ -1741,18 +722,18 @@ const renderTreeNode = (node: TreeNode) => (
       </Modal>
 
       <Modal
-        open={extractVisible}
+        open={fileOps.extractVisible}
         title="解压文件"
-        onCancel={() => setExtractVisible(false)}
-        onOk={handleExtract}
+        onCancel={() => fileOps.setExtractVisible(false)}
+        onOk={fileOps.handleExtract}
         okText="解压"
         cancelText="取消"
-        confirmLoading={extractLoading}
+        confirmLoading={fileOps.extractLoading}
       >
-        <p>确定要解压文件 <strong>{selectedNode?.title}</strong> 吗？</p>
-        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
-          文件将解压到当前目录
+        <p>
+          确定要解压文件 <strong>{selectedNode?.title}</strong> 吗？
         </p>
+        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>文件将解压到当前目录</p>
       </Modal>
     </div>
   )

@@ -76,7 +76,18 @@
 │   ├── App.tsx                 # 路由 + 布局
 │   ├── components/             # 公共组件
 │   │   ├── Sidebar.tsx         # 侧边栏 (分组导航 + 终端入口)
-│   │   └── FileManagerPanel.tsx # 文件管理面板
+│   │   ├── FileManagerPanel.tsx # 文件管理面板 (主组件)
+│   │   └── fileManager/        # 文件管理子模块
+│   │       ├── types.ts        # 类型定义
+│   │       ├── utils.ts        # 工具函数
+│   │       ├── Modals.tsx      # Modal 组件
+│   │       ├── ContextMenu.tsx # 右键菜单
+│   │       ├── FileList.tsx    # 文件列表
+│   │       └── hooks/          # 自定义 hooks
+│   │           ├── useFileManager.ts     # 核心状态
+│   │           ├── useFileOperations.ts  # 文件操作
+│   │           ├── useTransfer.ts        # 上传下载
+│   │           └── useDragDrop.ts        # 拖拽处理
 │   ├── pages/                  # 页面组件
 │   │   ├── Terminal.tsx        # 终端页面 (Events 监听)
 │   │   ├── Connections.tsx     # 连接管理 (CRUD + 测试连接)
@@ -119,7 +130,7 @@
 | License 验证 | `src-tauri/src/commands/license.rs` | 存根版本，Pro 版在私有仓库 |
 | HTTP API 服务器 | `src-tauri/src/commands/api.rs` | MCP 桥接 API (axum, 端口 27149) |
 | 修改终端事件监听 | `src/pages/Terminal.tsx` | Events 订阅/取消订阅 |
-| 修改文件管理 UI | `src/components/FileManagerPanel.tsx` | 文件树、上传下载 |
+| 修改文件管理 UI | `src/components/FileManagerPanel.tsx` | 文件树、上传下载，使用 hooks 拆分逻辑 |
 | 修改传输状态 | `src/stores/transferStore.ts` | 传输记录、进度 |
 | 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话状态 |
 | License 状态 | `src/stores/licenseStore.ts` | License 验证状态 (Zustand) |
@@ -149,6 +160,12 @@
 | `upload_file` | async fn | `sftp.rs` | 后台上传 (tokio::spawn) |
 | `download_file` | async fn | `sftp.rs` | 后台下载 (tokio::spawn) |
 | `compress_file` | async fn | `sftp.rs` | 远程压缩 (tar -czf) |
+| `extract_file` | async fn | `sftp.rs` | 远程解压 (tar/unzip) |
+| `search_files` | async fn | `sftp.rs` | 文件搜索 (find 命令) |
+| `read_file_content` | async fn | `sftp.rs` | 文件预览 |
+| `write_file_content` | async fn | `sftp.rs` | 文件编辑 |
+| `pause_transfer` | async fn | `sftp.rs` | 暂停传输 |
+| `resume_transfer` | async fn | `sftp.rs` | 恢复传输 |
 | `list_directory` | async fn | `sftp.rs` | 列出目录内容 |
 | `LicenseType` | enum | `license.rs` | Free/Personal/Professional/Enterprise |
 | `LicenseInfo` | struct | `license.rs` | License 信息 (类型、功能、连接数限制) |
@@ -329,7 +346,7 @@ npm run test:e2e
 - Shell 输出通过 Events 推送，事件名格式 `shell-output-{shellId}`
 - 关闭会话时需调用 `unlisten()` 取消事件订阅
 - 无 CI/CD 配置（无 .github 目录）
-- 测试覆盖: 前端 68 tests, 后端 16 tests, E2E 18 tests
+- 测试覆盖: 前端 101 tests, 后端 38 tests, E2E 18 tests
 - russh 使用原生 async/await，需要 Rust 1.75+
 - License 系统: 免费版 3 连接限制，付费版无限连接
 - 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)
