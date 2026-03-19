@@ -1,7 +1,10 @@
 use crate::db::crypto::{decrypt_password, encrypt_password};
 use rusqlite::{Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -42,16 +45,25 @@ pub struct ExportData {
 
 lazy_static::lazy_static! {
     static ref DB_PATH: Mutex<Option<String>> = Mutex::new(None);
+    static ref DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 }
 
 fn get_db() -> SqlResult<Connection> {
+    if !DB_INITIALIZED.load(Ordering::SeqCst) {
+        panic!("Database not initialized. Call init_database() first.");
+    }
     let guard = DB_PATH.lock().unwrap();
-    let path = guard.as_ref().expect("Database not initialized");
+    let path = guard.as_ref().expect("Database path not set");
     Connection::open(path)
 }
 
 #[tauri::command]
 pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    // 如果已初始化，直接返回
+    if DB_INITIALIZED.load(Ordering::SeqCst) {
+        return Ok(true);
+    }
+
     let app_dir = app_handle
         .path()
         .app_data_dir()
@@ -119,6 +131,9 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
             eprintln!("Warning: Failed to add last_connected_at column: {}", e);
         }
     }
+
+    // 标记初始化完成
+    DB_INITIALIZED.store(true, Ordering::SeqCst);
 
     Ok(true)
 }

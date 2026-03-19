@@ -77,6 +77,11 @@ fn main() {
             iterminal::commands::db::get_recent_connections,
         ])
         .setup(|app| {
+            // 在应用启动时初始化数据库
+            if let Err(e) = iterminal::commands::db::init_database(app.handle().clone()) {
+                eprintln!("Failed to initialize database: {}", e);
+            }
+
             let show_item = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
             let hide_item = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;

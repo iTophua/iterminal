@@ -1,25 +1,48 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Tabs, Tooltip, Input, Button, App, Badge } from 'antd'
-import { CloseOutlined, PlusOutlined, FullscreenOutlined, ScissorOutlined, SearchOutlined, ToolOutlined, LeftOutlined, RightOutlined, CopyOutlined, SnippetsOutlined, CheckCircleOutlined, DashboardOutlined, FolderOutlined, PushpinOutlined, ApiOutlined, HolderOutlined, ExportOutlined, ClearOutlined, ReloadOutlined, DisconnectOutlined, SplitCellsOutlined } from '@ant-design/icons'
+import { Tabs, App, Button, Tooltip, Input } from 'antd'
+import {
+  CloseOutlined,
+  PlusOutlined,
+  HolderOutlined,
+  DisconnectOutlined,
+  ReloadOutlined,
+  ScissorOutlined,
+  ExportOutlined,
+  ClearOutlined,
+  SearchOutlined,
+  FullscreenOutlined,
+  SplitCellsOutlined,
+  DashboardOutlined,
+  FolderOutlined,
+  ApiOutlined,
+  PushpinOutlined,
+  ToolOutlined,
+  LeftOutlined,
+  RightOutlined,
+  CopyOutlined,
+  SnippetsOutlined,
+  CheckCircleOutlined,
+} from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
-import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { Panel, Group, Separator } from 'react-resizable-panels'
 import 'xterm/css/xterm.css'
-import { useTerminalStore, DisconnectedConnection, type ShortcutSettings, type SplitPanel } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectedConnection, type SplitPanel } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
 import { STORAGE_KEYS } from '../config/constants'
+import { useToolbarState, useFullscreen, useTerminalSearch, useContextMenu, useRightPanels } from './terminal/hooks'
+import { TerminalToolbar, ContextMenu, DisconnectedView, EmptyView } from './terminal/components'
 
 interface SortableTabProps {
   id: string
@@ -82,58 +105,76 @@ function Terminal() {
   const initializedRef = useRef<Set<string>>(new Set())
   const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
-  
-  // 工具栏显示状态：'full' = 完整工具栏, 'ball' = 小球形态
-  const [toolbarState, setToolbarState] = useState<'full' | 'ball'>('ball')
-  // 工具栏自动隐藏设置
-  const [autoHideToolbar, setAutoHideToolbar] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.AUTO_HIDE_TOOLBAR)
-    return saved ? saved === 'true' : true
-  })
-  const [mouseOverBall, setMouseOverBall] = useState(false)
-  
-  // 搜索状态
-  const [searchVisible, setSearchVisible] = useState(false)
-  const [searchText, setSearchText] = useState('')
   const searchAddons = useRef<{ [key: string]: SearchAddon }>({})
-  // 右键菜单状态
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; visible: boolean; sessionKey: string }>({ x: 0, y: 0, visible: false, sessionKey: '' })
-  
-  // 监控面板状态
-  const [monitorVisible, setMonitorVisible] = useState(false)
-  
-  const [apiLogVisible, setApiLogVisible] = useState(false)
   const apiLogVisibleRef = useRef(false)
-
-  // 同步 ref
-  useEffect(() => {
-    apiLogVisibleRef.current = apiLogVisible
-  }, [apiLogVisible])
+  
+  // 使用提取的 hooks
+  const {
+    toolbarState,
+    autoHideToolbar,
+    mouseOverBall,
+    setAutoHideToolbar,
+    showFullToolbar,
+    hideToolbar,
+  } = useToolbarState()
+  
+  const {
+    isFullscreen,
+    handleToggleFullscreen,
+  } = useFullscreen(fitAddons, setSidebarCollapsed)
+  
+  const {
+    searchVisible,
+    searchText,
+    setSearchText,
+    handleSearch,
+    setSearchVisible,
+    closeSearch,
+  } = useTerminalSearch(searchAddons, connectedConnections, activeConnectionId)
+  
+  const {
+    contextMenu,
+    handleContextMenu,
+    hideContextMenu,
+  } = useContextMenu()
+  
+  const {
+    monitorVisible,
+    setMonitorVisible,
+    apiLogVisible,
+    setApiLogVisible,
+    rightPanelWidth,
+    prevPanelWidthRef,
+    openMonitor,
+    openFileManager,
+    toggleApiLog,
+  } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
   
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
   })
 
-  // MCP 状态同步 - 使用自定义事件替代轮询
+  // 同步 ref
   useEffect(() => {
-    // 自定义事件处理
+    apiLogVisibleRef.current = apiLogVisible
+  }, [apiLogVisible])
+
+  // MCP 状态同步
+  useEffect(() => {
     const handleMcpStatusChange = (e: CustomEvent<boolean>) => {
       setMcpEnabled(e.detail)
-      // MCP 关闭时，关闭 MCP 日志面板
       if (!e.detail && apiLogVisibleRef.current) {
         setApiLogVisible(false)
       }
     }
 
-    // storage 事件处理（跨标签页同步）
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === STORAGE_KEYS.MCP_ENABLED && e.newValue !== null) {
         setMcpEnabled(e.newValue === 'true')
       }
     }
 
-    // 监听自定义事件和 storage 事件
     window.addEventListener('mcp-status-change', handleMcpStatusChange as EventListener)
     window.addEventListener('storage', handleStorageChange)
 
@@ -155,8 +196,6 @@ function Terminal() {
     }
   }, [terminalThemeKey, appTheme])
   
-  // 全屏状态
-  const [isFullscreen, setIsFullscreen] = useState(false)
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
   const activeSession = activeConnection?.sessions.find(s => s.id === activeConnection?.activeSessionId)
 
@@ -647,11 +686,6 @@ function Terminal() {
     return () => document.removeEventListener('mousedown', handleMouseDown, true)
   }, [contextMenu.visible])
 
-  // 自动隐藏设置持久化
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.AUTO_HIDE_TOOLBAR, String(autoHideToolbar))
-  }, [autoHideToolbar])
-  
   // 终端设置变更时应用到所有已打开终端
   useEffect(() => {
     Object.values(terminalInstances.current).forEach(term => {
@@ -667,67 +701,6 @@ function Terminal() {
     })
   }, [terminalSettings])
   
-  // 处理全屏切换
-  const handleToggleFullscreen = useCallback(async (sessionKey: string) => {
-    try {
-      const appWindow = getCurrentWindow()
-      const isMax = await appWindow.isMaximized()
-      
-      if (isMax || isFullscreen) {
-        // 退出全屏：取消最大化并恢复侧边栏
-        if (isMax) {
-          await appWindow.unmaximize()
-        }
-        setSidebarCollapsed(false)
-        setIsFullscreen(false)
-      } else {
-        // 进入全屏：最大化窗口并收起侧边栏
-        await appWindow.maximize()
-        setSidebarCollapsed(true)
-        setIsFullscreen(true)
-      }
-      
-      // 调整终端大小
-      setTimeout(() => {
-        fitAddons.current[sessionKey]?.fit()
-      }, 100)
-    } catch (err) {
-      console.error('全屏切换失败:', err)
-    }
-  }, [isFullscreen, setSidebarCollapsed])
-  
-  // 处理搜索
-  const handleSearch = useCallback((direction: 'next' | 'prev') => {
-    if (!searchText) return
-    
-    const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
-    const activeSess = activeConn?.sessions.find(s => s.id === activeConn?.activeSessionId)
-    if (!activeSess) return
-    
-    const key = `${activeSess.connectionId}_${activeSess.id}`
-    const searchAddon = searchAddons.current[key]
-    
-    if (searchAddon) {
-      if (direction === 'next') {
-        searchAddon.findNext(searchText, { caseSensitive: false, wholeWord: false })
-      } else {
-        searchAddon.findPrevious(searchText, { caseSensitive: false, wholeWord: false })
-      }
-      // 更新搜索结果数量（xterm-addon-search 没有直接提供，这里简化处理）
-    }
-  }, [searchText, connectedConnections, activeConnectionId])
-  
-  // 处理右键菜单
-  const handleContextMenu = useCallback((e: React.MouseEvent, sessionKey: string) => {
-    e.preventDefault()
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      visible: true,
-      sessionKey
-    })
-  }, [])
-  
   // 复制选中内容
   const handleCopy = useCallback(async () => {
     const term = terminalInstances.current[contextMenu.sessionKey]
@@ -740,15 +713,14 @@ function Terminal() {
         message.info('请先选择要复制的内容')
       }
     }
-    setContextMenu(prev => ({ ...prev, visible: false }))
-  }, [contextMenu.sessionKey])
+    hideContextMenu()
+  }, [contextMenu.sessionKey, hideContextMenu, message])
   
-  // 粘贴 - 使用 Tauri 剪贴板 API，绕过浏览器瞬态激活限制
+  // 粘贴
   const handlePaste = useCallback(async () => {
     const term = terminalInstances.current[contextMenu.sessionKey]
     
     try {
-      // 使用 Tauri 原生剪贴板 API，不受浏览器安全策略限制
       const text = await readText()
       if (text) {
         const [connId, sessId] = contextMenu.sessionKey.split('_')
@@ -759,7 +731,6 @@ function Terminal() {
         }
       }
       if (term) {
-        // 清除选择状态，避免选择背景残留
         term.clearSelection()
         term.focus()
       }
@@ -810,17 +781,7 @@ function Terminal() {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [activeConnectionId, connectedConnections])
 
-  // 右侧面板宽度变化时调整终端尺寸（必须在条件 return 之前）
-  const getRightPanelWidth = () => {
-    let width = 0
-    if (monitorVisible) width += 320
-    if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
-    if (apiLogVisible) width += 380
-    return width
-  }
-  const rightPanelWidth = getRightPanelWidth()
-
-  const prevPanelWidthRef = useRef(rightPanelWidth)
+  // 右侧面板宽度变化时调整终端尺寸
   useEffect(() => {
     if (prevPanelWidthRef.current !== rightPanelWidth) {
       prevPanelWidthRef.current = rightPanelWidth
@@ -831,7 +792,7 @@ function Terminal() {
       }, 350)
       return () => clearTimeout(timer)
     }
-  }, [rightPanelWidth])
+  }, [rightPanelWidth, prevPanelWidthRef])
 
   if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
     return (
@@ -1154,7 +1115,7 @@ function Terminal() {
           )}
 
           {s.splitPanels && s.splitPanels.length > 0 ? (
-            <PanelGroup direction={s.splitDirection === 'vertical' ? 'vertical' : 'horizontal'} style={{ flex: 1 }}>
+            <Group direction={s.splitDirection === 'vertical' ? 'vertical' : 'horizontal'} style={{ flex: 1 }}>
               <Panel defaultSize={50} minSize={20}>
                 <div
                   ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
@@ -1162,7 +1123,7 @@ function Terminal() {
                   onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
                 />
               </Panel>
-              <PanelResizeHandle style={{ width: 4, background: 'var(--color-border)', cursor: 'col-resize' }} />
+              <Separator style={{ width: 4, background: 'var(--color-border)', cursor: 'col-resize' }} />
               {s.splitPanels.map((panel, idx) => (
                 <Panel key={panel.id} defaultSize={50 / (s.splitPanels?.length || 1)} minSize={20}>
                   <div
@@ -1192,7 +1153,7 @@ function Terminal() {
                   </div>
                 </Panel>
               ))}
-            </PanelGroup>
+            </Group>
           ) : (
             <div
               ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
