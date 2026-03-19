@@ -9,6 +9,7 @@ commands/
 ├── mod.rs      # Module exports
 ├── ssh.rs      # SSH connection, shell, command execution (~540 lines)
 ├── sftp.rs     # SFTP file operations (~630 lines)
+├── db.rs       # Database CRUD, encrypted storage (~200 lines)
 ├── license.rs  # License validation (~260 lines)
 ├── api.rs      # HTTP API server for MCP (~200 lines)
 └── system.rs   # System info (fonts) (~50 lines)
@@ -50,6 +51,14 @@ commands/
 | `stop_api_server` | async fn | api.rs | 停止 API 服务器 |
 | `is_api_server_running` | async fn | api.rs | 检查 API 状态 |
 | `get_monospace_fonts` | async fn | system.rs | 获取系统等宽字体列表 |
+| `init_database` | async fn | db.rs | 初始化 SQLite 数据库 |
+| `get_connections` | async fn | db.rs | 获取所有连接 |
+| `get_connection_by_id` | async fn | db.rs | 根据 ID 获取连接 |
+| `save_connection` | async fn | db.rs | 保存连接 (密码加密) |
+| `delete_connection` | async fn | db.rs | 删除连接 |
+| `export_connections` | async fn | db.rs | 导出连接为 JSON |
+| `import_connections` | async fn | db.rs | 从 JSON 导入连接 |
+| `migrate_from_localstorage` | async fn | db.rs | 迁移 localStorage 数据 |
 
 ## Tauri Events Architecture
 
@@ -64,6 +73,31 @@ commands/
   │◄─── emit("transfer-progress-{id}") ──│ 每 200ms 推送
   │                                     │
   │◄─── emit("transfer-complete-{id}") ──│ 传输完成
+```
+
+## Database Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     SQLite Database                          │
+├─────────────────────────────────────────────────────────────┤
+│  connections 表                                              │
+│  ├─ id: TEXT PRIMARY KEY                                     │
+│  ├─ name, host, port, username                               │
+│  ├─ password: TEXT (AES-256-GCM 加密)                        │
+│  ├─ group_name: TEXT                                         │
+│  ├─ tags: TEXT (JSON 字符串)                                 │
+│  └─ created_at, updated_at                                   │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                     加密 (db/crypto.rs)                      │
+├─────────────────────────────────────────────────────────────┤
+│  encrypt_password(plaintext, key) -> ciphertext              │
+│  decrypt_password(ciphertext, key) -> plaintext              │
+│  算法: AES-256-GCM                                           │
+│  密钥: 从机器特征派生 (32 bytes)                              │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## SSH Connection Architecture

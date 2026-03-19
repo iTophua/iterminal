@@ -1,6 +1,6 @@
 # iTerminal - SSH Connection Manager
 
-**Generated:** 2026-03-18
+**Generated:** 2026-03-19
 **Commit:** 5267740
 **Branch:** main
 
@@ -97,7 +97,7 @@
 │   │       ├── license.rs      # License 验证 (存根/Pro)
 │   │       ├── api.rs          # HTTP API 服务器 (axum)
 │   │       └── system.rs       # 系统信息 (字体等)
-│   │   └── db/                 # 数据库 (未完成)
+│   │   └── db/                 # 数据库 (SQLite + 加密存储)
 │   ├── Cargo.toml              # Rust 依赖
 │   ├── tauri.conf.json         # Tauri 配置
 │   └── icons/                  # 应用图标
@@ -114,6 +114,8 @@
 |------|------|------|
 | 添加新 SSH 功能 | `src-tauri/src/commands/ssh.rs` | 核心 SSH 逻辑 (russh async API) |
 | 添加新 SFTP 功能 | `src-tauri/src/commands/sftp.rs` | 文件传输逻辑 |
+| 数据库操作 | `src-tauri/src/commands/db.rs` | 连接 CRUD、加密存储 |
+| 数据库服务层 | `src/services/database.ts` | 前端数据库服务封装 |
 | License 验证 | `src-tauri/src/commands/license.rs` | 存根版本，Pro 版在私有仓库 |
 | HTTP API 服务器 | `src-tauri/src/commands/api.rs` | MCP 桥接 API (axum, 端口 27149) |
 | 修改终端事件监听 | `src/pages/Terminal.tsx` | Events 订阅/取消订阅 |
@@ -152,6 +154,14 @@
 | `verify_license` | async fn | `license.rs` | 验证 License Key |
 | `get_max_connections` | async fn | `license.rs` | 获取最大连接数 (免费版 3) |
 | `start_api_server_command` | async fn | `api.rs` | 启动 HTTP API 服务器 (端口 27149) |
+| `init_database` | async fn | `db.rs` | 初始化 SQLite 数据库 |
+| `get_connections` | async fn | `db.rs` | 获取所有连接 |
+| `save_connection` | async fn | `db.rs` | 保存连接 (密码加密) |
+| `delete_connection` | async fn | `db.rs` | 删除连接 |
+| `export_connections` | async fn | `db.rs` | 导出连接 (JSON) |
+| `import_connections` | async fn | `db.rs` | 导入连接 |
+| `encrypt_password` | fn | `db/crypto.rs` | AES-256-GCM 加密 |
+| `decrypt_password` | fn | `db/crypto.rs` | AES-256-GCM 解密 |
 | `useLicenseStore` | hook | `licenseStore.ts` | License 状态管理 (Zustand) |
 | `useTerminalStore` | hook | `terminalStore.ts` | 连接/会话状态 (Zustand) |
 | `useTransferStore` | hook | `transferStore.ts` | 传输状态 (Zustand) |
@@ -259,7 +269,7 @@ ShellSession {
 **前端 (React/TypeScript):**
 - 组件使用函数式组件 + hooks
 - 状态管理使用 Zustand
-- 连接数据持久化使用 localStorage
+- 连接数据通过 `src/services/database.ts` 存储到后端 SQLite
 - 样式内联，主题色 `#00b96b`，背景 `#1E1E1E`
 - TypeScript strict 模式
 
@@ -272,7 +282,6 @@ ShellSession {
 
 ## 反模式
 
-- **不要**在 `src-tauri/src/db/` 添加代码 - 模块未完成
 - **不要**使用轮询方式读取 shell 输出 - 使用 Events
 - **不要**修改 xterm.js 内部样式 - 用 `src/styles/global.css` 覆盖
 - **不要**在同步上下文中直接调用 russh async API - 使用 `tokio::spawn`
@@ -298,6 +307,15 @@ npm run tauri dev
 
 # Tauri 构建
 npm run tauri build
+
+# 前端测试
+npm run test:run
+
+# 后端测试
+cd src-tauri && cargo test --lib
+
+# E2E 测试
+npm run test:e2e
 ```
 
 ## 注意事项
@@ -306,11 +324,11 @@ npm run tauri build
 - MCP API 端口 27149（`api.rs`）
 - SFTP 使用独立 SSH 连接，不阻塞终端
 - 文件传输在后台执行，通过 Events 通知前端
-- 连接数据存储在 `localStorage` key `iterminal_connections`
+- 连接数据存储在后端 SQLite，密码使用 AES-256-GCM 加密
 - Shell 输出通过 Events 推送，事件名格式 `shell-output-{shellId}`
 - 关闭会话时需调用 `unlisten()` 取消事件订阅
 - 无 CI/CD 配置（无 .github 目录）
-- 测试框架: Vitest + @testing-library/react（测试覆盖低，仅 themeStore 有完整测试）
+- 测试覆盖: 前端 68 tests, 后端 16 tests, E2E 18 tests
 - russh 使用原生 async/await，需要 Rust 1.75+
 - License 系统: 免费版 3 连接限制，付费版无限连接
 - 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)

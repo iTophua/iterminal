@@ -53,6 +53,6 @@ licenseInfo: LicenseInfo | null (licenseStore.ts)
 
 - **Don't** mutate state directly - always use set()
 - **Don't** forget to clean up transferTasks when closing connection
-- **Don't** store sensitive data (passwords) in store - Connection interface has password field but should be removed
+- **Don't** store sensitive data (passwords) in store - 已迁移到后端加密存储
 - **Don't** use array index as session ID - use timestamp
 - **Don't** bypass License check for connection limit

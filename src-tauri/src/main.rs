@@ -45,6 +45,18 @@ fn main() {
             iterminal::commands::license::is_feature_available,
             iterminal::commands::license::check_connection_limit,
             iterminal::commands::license::clear_license,
+            // 数据库命令
+            iterminal::commands::db::init_database,
+            iterminal::commands::db::get_connections,
+            iterminal::commands::db::save_connection,
+            iterminal::commands::db::delete_connection,
+            iterminal::commands::db::get_setting,
+            iterminal::commands::db::save_setting,
+            iterminal::commands::db::export_connections,
+            iterminal::commands::db::import_connections,
+            iterminal::commands::db::export_all_data,
+            iterminal::commands::db::import_all_data,
+            iterminal::commands::db::migrate_from_localstorage,
         ])
         .setup(|_app| Ok(()))
         .run(tauri::generate_context!())

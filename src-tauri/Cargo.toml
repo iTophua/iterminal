@@ -30,6 +30,12 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tauri-plugin-clipboard-manager = "2.3.2"
 rand = "0.8"
 
+# 数据库和加密
+rusqlite = { version = "0.32", features = ["bundled"] }
+aes-gcm = "0.10"
+base64 = "0.22"
+lazy_static = "1.4"
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

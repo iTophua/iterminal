@@ -1,12 +1,23 @@
 import { useState, useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined } from '@ant-design/icons'
+import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App, Upload } from 'antd'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
-import { STORAGE_KEYS, PORT_CHECK_CONFIG } from '../config/constants'
+import { PORT_CHECK_CONFIG } from '../config/constants'
 import { generateUniqueId } from '../types/shared'
+import { 
+  initDatabase, 
+  getConnections, 
+  saveConnection, 
+  deleteConnection as deleteConnectionFromDb,
+  migrateFromLocalStorage,
+  exportConnections,
+  importConnections,
+  downloadExportFile,
+  readImportFile
+} from '../services/database'
 
 type TestResult = 'success' | 'failed' | null
 
@@ -14,12 +25,8 @@ function Connections() {
   const navigate = useNavigate()
   const location = useLocation()
   const { modal, message } = App.useApp()
-  const [connections, setConnections] = useState<Connection[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CONNECTIONS)
-    const parsed = saved ? JSON.parse(saved) : []
-    // 启动时重置所有连接状态为 offline
-    return parsed.map((conn: Connection) => ({ ...conn, status: 'offline' as const }))
-  })
+  const [connections, setConnections] = useState<Connection[]>([])
+  const [loading, setLoading] = useState(true)
   const [searchText, setSearchText] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null)
@@ -49,14 +56,31 @@ function Connections() {
     connectedRef.current = connectedConnections
   }, [connectedConnections])
 
-  // localStorage 写入防抖，避免频繁写入阻塞
+  // 初始化数据库并加载数据
   useEffect(() => {
-    const timer = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEYS.CONNECTIONS, JSON.stringify(connections))
-      window.dispatchEvent(new CustomEvent('connections-updated'))
-    }, 300)
-    return () => clearTimeout(timer)
-  }, [connections])
+    const loadData = async () => {
+      try {
+        await initDatabase()
+        
+        // 尝试迁移 localStorage 数据
+        const migrated = await migrateFromLocalStorage()
+        if (migrated > 0) {
+          message.success(`已迁移 ${migrated} 个连接到本地数据库`)
+        }
+        
+        // 从数据库加载连接
+        const conns = await getConnections()
+        setConnections(conns)
+      } catch (error) {
+        console.error('[Connections] Failed to load data:', error)
+        message.error('加载数据失败')
+      } finally {
+        setLoading(false)
+      }
+    }
+    
+    loadData()
+  }, [])
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
@@ -205,7 +229,7 @@ function Connections() {
     message.success(`已复制${label}`)
   }
 
-  const handleDelete = (e: React.MouseEvent, id: string, name: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string, name: string) => {
     e.stopPropagation()
     modal.confirm({
       title: '确认删除',
@@ -213,35 +237,47 @@ function Connections() {
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',
-      onOk: () => {
-        setConnections(connections.filter(c => c.id !== id))
-        message.success('连接已删除')
+      onOk: async () => {
+        try {
+          await deleteConnectionFromDb(id)
+          setConnections(connections.filter(c => c.id !== id))
+          message.success('连接已删除')
+        } catch (error) {
+          message.error(`删除失败: ${error}`)
+        }
       }
     })
   }
 
-  const handleSubmit = (values: Partial<Connection>) => {
+  const handleSubmit = async (values: Partial<Connection>) => {
     const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
     
-    if (editingConnection) {
-      setConnections(connections.map(c => c.id === editingConnection.id ? { ...c, ...values, port } : c))
-      message.success('连接已更新')
-    } else {
-      const newConn: Connection = {
-        id: generateUniqueId(),
-        name: values.name || '',
-        host: values.host || '',
-        port,
-        username: values.username || '',
-        password: values.password,
-        group: values.group || '默认',
-        tags: values.tags || [],
-        status: 'offline'
+    try {
+      if (editingConnection) {
+        const updated = { ...editingConnection, ...values, port }
+        await saveConnection(updated)
+        setConnections(connections.map(c => c.id === editingConnection.id ? updated : c))
+        message.success('连接已更新')
+      } else {
+        const newConn: Connection = {
+          id: generateUniqueId(),
+          name: values.name || '',
+          host: values.host || '',
+          port,
+          username: values.username || '',
+          password: values.password,
+          group: values.group || '默认',
+          tags: values.tags || [],
+          status: 'offline'
+        }
+        await saveConnection(newConn)
+        setConnections([...connections, newConn])
+        message.success('连接已添加')
       }
-      setConnections([...connections, newConn])
-      message.success('连接已添加')
+      setIsModalOpen(false)
+    } catch (error) {
+      message.error(`保存失败: ${error}`)
     }
-    setIsModalOpen(false)
   }
   const handleTestConnection = async () => {
     try {
@@ -427,7 +463,7 @@ function Connections() {
   }
 
   // 快速导入保存
-  const handleQuickImportSave = (shouldConnect: boolean = false) => {
+  const handleQuickImportSave = async (shouldConnect: boolean = false) => {
     const parsed = parseQuickImportText(quickImportText)
     
     if (!parsed) {
@@ -447,17 +483,51 @@ function Connections() {
       status: 'offline'
     }
     
-    flushSync(() => {
-      setConnections([...connections, newConn])
-    })
-    setIsQuickImportOpen(false)
-    setQuickImportText('')
-    setQuickImportGroup('默认')
-    message.success('连接已添加')
+    try {
+      await saveConnection(newConn)
+      flushSync(() => {
+        setConnections([...connections, newConn])
+      })
+      setIsQuickImportOpen(false)
+      setQuickImportText('')
+      setQuickImportGroup('默认')
+      message.success('连接已添加')
 
-    if (shouldConnect) {
-      setTimeout(() => handleConnect(newConn), 50)
+      if (shouldConnect) {
+        setTimeout(() => handleConnect(newConn), 50)
+      }
+    } catch (error) {
+      message.error(`保存失败: ${error}`)
     }
+  }
+
+  const handleExportConnections = async () => {
+    if (connections.length === 0) {
+      message.warning('没有可导出的连接')
+      return
+    }
+    
+    try {
+      const data = await exportConnections()
+      const filename = `iterminal_connections_${new Date().toISOString().slice(0, 10)}.json`
+      downloadExportFile(data, filename)
+      message.success('导出成功')
+    } catch (error) {
+      message.error(`导出失败: ${error}`)
+    }
+  }
+
+  const handleImportFile = async (file: File) => {
+    try {
+      const jsonData = await readImportFile(file)
+      const count = await importConnections(jsonData, true)
+      const conns = await getConnections()
+      setConnections(conns)
+      message.success(`成功导入 ${count} 个连接`)
+    } catch (error) {
+      message.error(`导入失败: ${error}`)
+    }
+    return false
   }
 
 
@@ -477,10 +547,31 @@ function Connections() {
         <Button icon={<ImportOutlined />} onClick={() => setIsQuickImportOpen(true)}>
           快速导入
         </Button>
+        <Button icon={<ExportOutlined />} onClick={handleExportConnections}>
+          导出
+        </Button>
+        <Upload
+          accept=".json"
+          showUploadList={false}
+          beforeUpload={handleImportFile}
+        >
+          <Button icon={<UploadOutlined />}>导入文件</Button>
+        </Upload>
       </div>
 
       <div style={{ flex: 1, overflow: 'auto' }}>
-        {filteredConnections.length === 0 ? (
+        {loading ? (
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center',
+            height: '100%',
+            color: 'var(--color-text-tertiary)'
+          }}>
+            <LoadingOutlined style={{ fontSize: 24, marginRight: 8 }} />
+            加载中...
+          </div>
+        ) : filteredConnections.length === 0 ? (
           <div style={{ 
             display: 'flex', 
             flexDirection: 'column', 
