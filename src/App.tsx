@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
 import Transfers from './pages/Transfers'
-import { useTerminalStore, type ConnectedConnection } from './stores/terminalStore'
+import { useTerminalStore, type SplitPane } from './stores/terminalStore'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
@@ -13,6 +13,13 @@ import './styles/global.css'
 const { Content } = Layout
 
 const SESSION_STORAGE_KEY = 'iterminal_saved_sessions'
+
+function countSessionsInPane(pane: SplitPane): number {
+  if (pane.children) {
+    return pane.children.reduce((sum, child) => sum + countSessionsInPane(child), 0)
+  }
+  return pane.sessions.length
+}
 
 interface SavedSession {
   connectionId: string
@@ -165,7 +172,7 @@ function SessionSaver() {
         const sessions: SavedSession[] = connectedConnections.map(conn => ({
           connectionId: conn.connectionId,
           connection: conn.connection,
-          sessionCount: conn.sessions.length,
+          sessionCount: countSessionsInPane(conn.rootPane),
           savedAt: Date.now(),
         }))
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))

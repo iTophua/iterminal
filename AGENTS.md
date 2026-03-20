@@ -21,8 +21,9 @@
 │  └─ listen("transfer-complete-{id}") ──► 监听传输完成         │
 ├─────────────────────────────────────────────────────────────┤
 │  terminalStore (Zustand)                                    │
-│  ├─ connectedConnections: Connection[]                      │
-│  └─ activeSessionId: string                                │
+│  ├─ connectedConnections: ConnectedConnection[]             │
+│  │   └─ rootPane: SplitPane (支持嵌套分屏)                   │
+│  └─ activeConnectionId: string                              │
 └─────────────────────────────────────────────────────────────┘
                               │
                               │ Tauri IPC / Events
@@ -187,6 +188,11 @@
 | `useLicenseStore` | hook | `licenseStore.ts` | License 状态管理 (Zustand) |
 | `useTerminalStore` | hook | `terminalStore.ts` | 连接/会话状态 (Zustand) |
 | `useTransferStore` | hook | `transferStore.ts` | 传输状态 (Zustand) |
+| `SplitPane` | interface | `terminalStore.ts` | 分屏数据结构（支持嵌套） |
+| `splitPane` | fn | `terminalStore.ts` | 创建分屏 |
+| `closePane` | fn | `terminalStore.ts` | 关闭分屏 |
+| `getAllSessions` | fn | `Terminal.tsx` | 获取 pane 中所有会话 |
+| `findPaneBySessionId` | fn | `Terminal.tsx` | 根据会话 ID 查找 pane |
 
 ## 核心设计
 
@@ -252,21 +258,38 @@ pub async fn upload_file(...) -> Result<String, String> {
 - 缓冲区: 64KB
 - 进度事件频率: 每 200ms 一次（避免 IPC 阻塞）
 
-### 4. 多连接多会话管理
+### 4. 多连接多会话管理（SplitPane 模型）
 
+**数据结构**:
 ```
 connectedConnections: [
   {
     connectionId: "conn-1",
     connection: Connection,
-    sessions: [
-      { id: "sess-1", shellId: "shell-1", title: "会话1" },
-      { id: "sess-2", shellId: "shell-2", title: "会话2" }
-    ],
-    activeSessionId: "sess-1"
+    rootPane: SplitPane {
+      id: "pane-1",
+      sessions: [
+        { id: "sess-1", shellId: "shell-1", title: "会话1" },
+        { id: "sess-2", shellId: "shell-2", title: "会话2" }
+      ],
+      activeSessionId: "sess-1",
+      // 分屏后:
+      splitDirection: "horizontal",
+      children: [
+        { id: "pane-1", sessions: [...] },
+        { id: "pane-2", sessions: [...] }
+      ],
+      sizes: [50, 50]
+    }
   }
 ]
 ```
+
+**SplitPane 特性**:
+- 支持递归嵌套分屏
+- 每个 pane 可包含多个 sessions（共享标签栏）
+- 每个 pane 独立管理 activeSessionId
+- 使用 `react-resizable-panels` 实现可调整大小的分屏
 
 ### 5. ShellSession 通道设计
 

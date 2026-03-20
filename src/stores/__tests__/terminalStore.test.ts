@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { useTerminalStore, Connection, DEFAULT_TERMINAL_SETTINGS } from '../terminalStore'
+import { useTerminalStore, Connection, DEFAULT_TERMINAL_SETTINGS, SplitPane } from '../terminalStore'
 
 const mockLocalStorage = (() => {
   let store: Record<string, string> = {}
@@ -12,6 +12,20 @@ const mockLocalStorage = (() => {
 })()
 
 Object.defineProperty(window, 'localStorage', { value: mockLocalStorage })
+
+function getSessionsFromPane(pane: SplitPane): { id: string; shellId: string }[] {
+  if (pane.children) {
+    return pane.children.flatMap(child => getSessionsFromPane(child))
+  }
+  return pane.sessions
+}
+
+function countSessionsInPane(pane: SplitPane): number {
+  if (pane.children) {
+    return pane.children.reduce((sum, child) => sum + countSessionsInPane(child), 0)
+  }
+  return pane.sessions.length
+}
 
 describe('terminalStore', () => {
   const mockConnection: Connection = {
@@ -56,8 +70,8 @@ describe('terminalStore', () => {
       const state = useTerminalStore.getState()
       expect(state.connectedConnections).toHaveLength(1)
       expect(state.connectedConnections[0].connectionId).toBe('conn-1')
-      expect(state.connectedConnections[0].sessions).toHaveLength(1)
-      expect(state.connectedConnections[0].sessions[0].shellId).toBe('shell-1')
+      expect(state.connectedConnections[0].rootPane.sessions).toHaveLength(1)
+      expect(state.connectedConnections[0].rootPane.sessions[0].shellId).toBe('shell-1')
       expect(state.activeConnectionId).toBe('conn-1')
       expect(sessionId).toBeTruthy()
     })
@@ -78,8 +92,8 @@ describe('terminalStore', () => {
       
       const state = useTerminalStore.getState()
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.sessions).toHaveLength(2)
-      expect(conn?.activeSessionId).toBe(sessionId)
+      expect(conn?.rootPane.sessions).toHaveLength(2)
+      expect(conn?.rootPane.activeSessionId).toBe(sessionId)
     })
 
     it('should return empty string if connection not found', () => {
@@ -93,7 +107,7 @@ describe('terminalStore', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       
       const stateBeforeAdd = useTerminalStore.getState()
-      const firstSessionId = stateBeforeAdd.connectedConnections[0].sessions[0].id
+      const firstSessionId = stateBeforeAdd.connectedConnections[0].rootPane.sessions[0].id
       
       vi.useFakeTimers()
       vi.advanceTimersByTime(100)
@@ -104,14 +118,14 @@ describe('terminalStore', () => {
       
       const state = useTerminalStore.getState()
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.sessions).toHaveLength(1)
-      expect(conn?.sessions[0].id).toBe(firstSessionId)
+      expect(conn?.rootPane.sessions).toHaveLength(1)
+      expect(conn?.rootPane.sessions[0].id).toBe(firstSessionId)
     })
 
     it('should remove entire connection when last session is closed', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       const state1 = useTerminalStore.getState()
-      const sessionId = state1.connectedConnections[0].sessions[0].id
+      const sessionId = state1.connectedConnections[0].rootPane.sessions[0].id
       
       useTerminalStore.getState().closeSession('conn-1', sessionId)
       
@@ -126,7 +140,7 @@ describe('terminalStore', () => {
       useTerminalStore.getState().setCurrentPath('conn-1', '/custom/path')
       
       const state1 = useTerminalStore.getState()
-      const sessionId = state1.connectedConnections[0].sessions[0].id
+      const sessionId = state1.connectedConnections[0].rootPane.sessions[0].id
       useTerminalStore.getState().closeSession('conn-1', sessionId)
       
       const state = useTerminalStore.getState()
@@ -181,7 +195,7 @@ describe('terminalStore', () => {
       const state = useTerminalStore.getState()
       expect(state.activeConnectionId).toBe('conn-1')
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.activeSessionId).toBe(sessionId)
+      expect(conn?.rootPane.activeSessionId).toBe(sessionId)
     })
   })
 
@@ -345,63 +359,71 @@ describe('terminalStore', () => {
     })
   })
 
-  describe('splitSession', () => {
-    it('should split session horizontally', () => {
+  describe('splitPane', () => {
+    it('should split pane horizontally', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       const state1 = useTerminalStore.getState()
-      const sessionId = state1.connectedConnections[0].sessions[0].id
+      const paneId = state1.connectedConnections[0].rootPane.id
 
-      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-2')
+      useTerminalStore.getState().splitPane('conn-1', paneId, 'horizontal', 'pane-2', 'shell-2')
 
       const state = useTerminalStore.getState()
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.sessions[0].splitDirection).toBe('horizontal')
-      expect(conn?.sessions[0].splitPanels).toHaveLength(1)
-      expect(conn?.sessions[0].splitPanels?.[0].shellId).toBe('shell-2')
+      expect(conn?.rootPane.splitDirection).toBe('horizontal')
+      expect(conn?.rootPane.children).toHaveLength(2)
+      expect(countSessionsInPane(conn?.rootPane!)).toBe(2)
     })
 
-    it('should split session vertically', () => {
+    it('should split pane vertically', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       const state1 = useTerminalStore.getState()
-      const sessionId = state1.connectedConnections[0].sessions[0].id
+      const paneId = state1.connectedConnections[0].rootPane.id
 
-      useTerminalStore.getState().splitSession('conn-1', sessionId, 'vertical', 'shell-2')
+      useTerminalStore.getState().splitPane('conn-1', paneId, 'vertical', 'pane-2', 'shell-2')
 
       const state = useTerminalStore.getState()
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.sessions[0].splitDirection).toBe('vertical')
+      expect(conn?.rootPane.splitDirection).toBe('vertical')
+      expect(conn?.rootPane.children).toHaveLength(2)
     })
 
-    it('should add multiple split panels', () => {
+    it('should support nested splits', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       const state1 = useTerminalStore.getState()
-      const sessionId = state1.connectedConnections[0].sessions[0].id
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
 
-      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-2')
-      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-3')
+      useTerminalStore.getState().splitPane('conn-1', rootPaneId, 'horizontal', 'pane-2', 'shell-2')
+
+      const state2 = useTerminalStore.getState()
+      const childPaneId = state2.connectedConnections[0].rootPane.children![1].id
+
+      useTerminalStore.getState().splitPane('conn-1', childPaneId, 'vertical', 'pane-3', 'shell-3')
 
       const state = useTerminalStore.getState()
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.sessions[0].splitPanels).toHaveLength(2)
+      expect(countSessionsInPane(conn?.rootPane!)).toBe(3)
+      expect(conn?.rootPane.children).toHaveLength(2)
+      expect(conn?.rootPane.children![1].children).toHaveLength(2)
     })
   })
 
-  describe('closeSplitPanel', () => {
-    it('should remove split panel', () => {
+  describe('closePane', () => {
+    it('should remove split pane', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       const state1 = useTerminalStore.getState()
-      const sessionId = state1.connectedConnections[0].sessions[0].id
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
 
-      useTerminalStore.getState().splitSession('conn-1', sessionId, 'horizontal', 'shell-2')
+      useTerminalStore.getState().splitPane('conn-1', rootPaneId, 'horizontal', 'pane-2', 'shell-2')
 
       const state2 = useTerminalStore.getState()
-      const panelId = state2.connectedConnections[0].sessions[0].splitPanels?.[0].id
+      const childPaneId = state2.connectedConnections[0].rootPane.children![1].id
 
-      useTerminalStore.getState().closeSplitPanel('conn-1', sessionId, panelId!)
+      useTerminalStore.getState().closePane('conn-1', childPaneId)
 
       const state = useTerminalStore.getState()
       const conn = state.connectedConnections.find(c => c.connectionId === 'conn-1')
-      expect(conn?.sessions[0].splitPanels).toBeUndefined()
+      expect(conn?.rootPane.children).toBeUndefined()
+      expect(conn?.rootPane.sessions).toHaveLength(1)
     })
   })
 
@@ -425,7 +447,7 @@ describe('terminalStore', () => {
       useTerminalStore.getState().markConnectionDisconnected('conn-1', 'channel_closed')
 
       const state = useTerminalStore.getState()
-      expect(state.disconnectedConnections[0].sessions).toHaveLength(2)
+      expect(countSessionsInPane(state.disconnectedConnections[0].rootPane)).toBe(2)
     })
 
     it('should remove disconnected connection', () => {
@@ -447,32 +469,6 @@ describe('terminalStore', () => {
       useTerminalStore.getState().clearAllDisconnectedConnections()
 
       expect(useTerminalStore.getState().disconnectedConnections).toHaveLength(0)
-    })
-  })
-
-  describe('reorderSessions', () => {
-    it('should reorder sessions within connection', () => {
-      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
-      vi.useFakeTimers()
-      vi.advanceTimersByTime(100)
-      useTerminalStore.getState().addSession('conn-1', 'shell-2')
-      vi.advanceTimersByTime(100)
-      useTerminalStore.getState().addSession('conn-1', 'shell-3')
-      vi.useRealTimers()
-
-      const stateBefore = useTerminalStore.getState()
-      const sessions = stateBefore.connectedConnections[0].sessions
-      const firstId = sessions[0].id
-      const secondId = sessions[1].id
-      const thirdId = sessions[2].id
-
-      useTerminalStore.getState().reorderSessions('conn-1', 0, 2)
-
-      const state = useTerminalStore.getState()
-      const reordered = state.connectedConnections[0].sessions
-      expect(reordered[0].id).toBe(secondId)
-      expect(reordered[1].id).toBe(thirdId)
-      expect(reordered[2].id).toBe(firstId)
     })
   })
 
