@@ -135,10 +135,13 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
 
   useEffect(() => {
     if (visible && connectionId) {
-      const path = currentPathRef.current
-      loadDirectoryRef.current(path, true)
-      setPathInput(path)
-      setSelectedKeys([path])
+      const timer = setTimeout(() => {
+        const path = currentPathRef.current
+        loadDirectoryRef.current(path, true)
+        setPathInput(path)
+        setSelectedKeys([path])
+      }, 200)
+      return () => clearTimeout(timer)
     }
   }, [visible, connectionId])
 

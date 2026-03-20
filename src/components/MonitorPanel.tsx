@@ -245,29 +245,32 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
       }
 
       if (thresholds.enabled) {
-        const newAlerts = {
-          cpu: result.cpu.usage >= thresholds.cpu,
-          memory: result.memory.usage_percent >= thresholds.memory,
-          disk: result.disks.some((d) => d.usage_percent >= thresholds.disk),
-        }
-        setAlerts(newAlerts)
+        setAlerts(prevAlerts => {
+          const newAlerts = {
+            cpu: result.cpu.usage >= thresholds.cpu,
+            memory: result.memory.usage_percent >= thresholds.memory,
+            disk: result.disks.some((d) => d.usage_percent >= thresholds.disk),
+          }
 
-        if (newAlerts.cpu && !alerts.cpu) {
-          message.warning(`CPU 使用率超过 ${thresholds.cpu}%`)
-        }
-        if (newAlerts.memory && !alerts.memory) {
-          message.warning(`内存使用率超过 ${thresholds.memory}%`)
-        }
-        if (newAlerts.disk && !alerts.disk) {
-          message.warning(`磁盘使用率超过 ${thresholds.disk}%`)
-        }
+          if (newAlerts.cpu && !prevAlerts.cpu) {
+            message.warning(`CPU 使用率超过 ${thresholds.cpu}%`)
+          }
+          if (newAlerts.memory && !prevAlerts.memory) {
+            message.warning(`内存使用率超过 ${thresholds.memory}%`)
+          }
+          if (newAlerts.disk && !prevAlerts.disk) {
+            message.warning(`磁盘使用率超过 ${thresholds.disk}%`)
+          }
+
+          return newAlerts
+        })
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
-  }, [connectionId, thresholds, alerts, message])
+  }, [connectionId, thresholds, message])
 
   const fetchNetworkStats = useCallback(async () => {
     if (!connectionId) return
@@ -341,13 +344,23 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
 
   useEffect(() => {
     if (visible && connectionId && !paused) {
-      fetchMonitorData()
-      fetchNetworkStats()
-
-      intervalRef.current = setInterval(() => {
+      const initialTimer = setTimeout(() => {
         fetchMonitorData()
         fetchNetworkStats()
-      }, refreshInterval)
+
+        intervalRef.current = setInterval(() => {
+          fetchMonitorData()
+          fetchNetworkStats()
+        }, refreshInterval)
+      }, 200)
+
+      return () => {
+        clearTimeout(initialTimer)
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+      }
     }
 
     return () => {
@@ -750,19 +763,13 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
   return (
     <div
       style={{
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
         width: 360,
+        height: '100%',
         background: 'var(--color-bg-container)',
         borderLeft: '1px solid var(--color-border)',
-        zIndex: 1,
-        transform: visible ? 'translateX(0)' : 'translateX(100%)',
-        transition: 'transform 0.3s ease',
-        overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',
+        overflow: 'hidden',
       }}
     >
       <div

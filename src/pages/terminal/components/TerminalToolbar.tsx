@@ -5,15 +5,13 @@ import {
   ClearOutlined,
   SearchOutlined,
   FullscreenOutlined,
-  SplitCellsOutlined,
-  DashboardOutlined,
-  FolderOutlined,
-  ApiOutlined,
   PushpinOutlined,
   ToolOutlined,
   LeftOutlined,
   RightOutlined,
   CloseOutlined,
+  BorderHorizontalOutlined,
+  BorderVerticleOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import type { ShortcutSettings } from '../../../stores/terminalStore'
@@ -27,15 +25,14 @@ interface TerminalToolbarProps {
   mouseOverBall: boolean
   searchVisible: boolean
   isFullscreen: boolean
-  mcpEnabled: boolean
   rightPanelWidth: number
   shortcutSettings: ShortcutSettings
+  hasSplitPanel?: boolean
   onShowSearch: () => void
   onToggleFullscreen: (key: string) => void
-  onSplit: () => void
-  onOpenMonitor: () => void
-  onOpenFileManager: () => void
-  onToggleApiLog: () => void
+  onSplitHorizontal: () => void
+  onSplitVertical: () => void
+  onCloseSplit?: () => void
   onToggleAutoHide: () => void
   onMouseLeave: () => void
   onMouseEnterBall: () => void
@@ -54,15 +51,14 @@ export function TerminalToolbar({
   mouseOverBall,
   searchVisible,
   isFullscreen,
-  mcpEnabled,
   rightPanelWidth,
   shortcutSettings,
+  hasSplitPanel,
   onShowSearch,
   onToggleFullscreen,
-  onSplit,
-  onOpenMonitor,
-  onOpenFileManager,
-  onToggleApiLog,
+  onSplitHorizontal,
+  onSplitVertical,
+  onCloseSplit,
   onToggleAutoHide,
   onMouseLeave,
   onMouseEnterBall,
@@ -203,35 +199,26 @@ export function TerminalToolbar({
           <Tooltip title="水平分屏">
             <span
               style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-              onClick={onSplit}
+              onClick={onSplitHorizontal}
             >
-              <SplitCellsOutlined />
+              <BorderHorizontalOutlined />
             </span>
           </Tooltip>
-          <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 4px' }} />
-          <Tooltip title="系统监控">
+          <Tooltip title="垂直分屏">
             <span
               style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-              onClick={onOpenMonitor}
+              onClick={onSplitVertical}
             >
-              <DashboardOutlined />
+              <BorderVerticleOutlined />
             </span>
           </Tooltip>
-          <Tooltip title="文件管理">
-            <span
-              style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-              onClick={onOpenFileManager}
-            >
-              <FolderOutlined />
-            </span>
-          </Tooltip>
-          {mcpEnabled && (
-            <Tooltip title="MCP 日志">
+          {hasSplitPanel && onCloseSplit && (
+            <Tooltip title="关闭分屏">
               <span
-                style={{ color: '#999', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                onClick={onToggleApiLog}
+                style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
+                onClick={onCloseSplit}
               >
-                <ApiOutlined />
+                <CloseOutlined />
               </span>
             </Tooltip>
           )}

@@ -14,10 +14,14 @@ export interface Connection {
   status: 'online' | 'offline' | 'connecting'
 }
 
-// 会话信息
-export interface SplitPanel {
+// 布局节点 - 树形结构管理分屏
+export interface LayoutNode {
   id: string
-  shellId: string
+  type: 'leaf' | 'split'
+  sessionId?: string
+  direction?: 'horizontal' | 'vertical'
+  children?: LayoutNode[]
+  sizes?: number[]
 }
 
 export interface Session {
@@ -25,8 +29,6 @@ export interface Session {
   connectionId: string
   shellId: string
   title: string
-  splitDirection?: 'horizontal' | 'vertical'
-  splitPanels?: SplitPanel[]
 }
 
 export interface DisconnectedConnection {
@@ -43,6 +45,7 @@ export interface ConnectedConnection {
   connectionId: string
   connection: Connection
   sessions: Session[]
+  layout: LayoutNode
   activeSessionId: string | null
 }
 
@@ -176,8 +179,10 @@ interface TerminalState {
   reorderSessions: (connectionId: string, oldIndex: number, newIndex: number) => void
 
   // 分屏终端
-  splitSession: (connectionId: string, sessionId: string, direction: 'horizontal' | 'vertical', shellId: string) => void
+  splitSession: (connectionId: string, sessionId: string, direction: 'horizontal' | 'vertical', shellId: string) => string
   closeSplitPanel: (connectionId: string, sessionId: string, panelId: string) => void
+  getSessionLayoutNode: (connectionId: string, sessionId: string) => LayoutNode | null
+  updateLayoutSizes: (connectionId: string, nodeId: string, sizes: number[]) => void
 
   // 文件管理面板控制
   setFileManagerVisible: (connectionId: string, visible: boolean) => void
@@ -262,6 +267,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       shellId,
       title: '会话1',
     }
+    const layout: LayoutNode = {
+      id: sessionId,
+      type: 'leaf',
+      sessionId,
+    }
     set((state) => ({
       connectedConnections: [
         ...state.connectedConnections,
@@ -269,11 +279,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           connectionId: connection.id,
           connection,
           sessions: [newSession],
+          layout,
           activeSessionId: sessionId,
         }
       ],
       activeConnectionId: connection.id,
-      // 初始化新连接的默认路径
       currentPaths: {
         ...state.currentPaths,
         [connection.id]: '/home/' + connection.username
@@ -318,7 +328,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       const newSessions = conn.sessions.filter(s => s.id !== sessionId)
 
-      // 如果没有会话了，移除整个连接并清理相关状态
       if (newSessions.length === 0) {
         const newTransferTasks = { ...state.transferTasks }
         delete newTransferTasks[connectionId]
@@ -346,15 +355,35 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
       }
 
-      // 更新会话列表
+      const removeFromLayout = (node: LayoutNode): LayoutNode | null => {
+        if (node.type === 'leaf') {
+          return node.sessionId === sessionId ? null : node
+        }
+        if (node.children) {
+          const newChildren = node.children
+            .map(removeFromLayout)
+            .filter(Boolean) as LayoutNode[]
+          if (newChildren.length === 0) return null
+          if (newChildren.length === 1) return newChildren[0]
+          return { ...node, children: newChildren }
+        }
+        return node
+      }
+
+      const newLayout = removeFromLayout(conn.layout)
       const newActiveSessionId = conn.activeSessionId === sessionId
-        ? newSessions[0].id
+        ? (newLayout?.type === 'leaf' ? newLayout.sessionId : newSessions[0]?.id) || null
         : conn.activeSessionId
 
       return {
         connectedConnections: state.connectedConnections.map(c =>
           c.connectionId === connectionId
-            ? { ...c, sessions: newSessions, activeSessionId: newActiveSessionId }
+            ? { 
+                ...c, 
+                sessions: newSessions, 
+                layout: newLayout || { id: newSessions[0]?.id || '', type: 'leaf', sessionId: newSessions[0]?.id },
+                activeSessionId: newActiveSessionId 
+              }
             : c
         ),
       }
@@ -449,27 +478,51 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   splitSession: (connectionId: string, sessionId: string, direction: 'horizontal' | 'vertical', shellId: string) => {
-    set((state) => {
-      return {
-        connectedConnections: state.connectedConnections.map(conn => {
-          if (conn.connectionId !== connectionId) return conn
-          return {
-            ...conn,
-            sessions: conn.sessions.map(session => {
-              if (session.id !== sessionId) return session
-              const panelId = Date.now().toString()
-              const newPanel: SplitPanel = { id: panelId, shellId }
-              const existingPanels = session.splitPanels || []
-              return {
-                ...session,
-                splitDirection: direction,
-                splitPanels: [...existingPanels, newPanel],
-              }
-            }),
-          }
-        }),
+    const newSessionId = Date.now().toString()
+    const state = get()
+    const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+    if (!conn) return ''
+
+    const sessionCount = conn.sessions.length + 1
+    const newSession: Session = {
+      id: newSessionId,
+      connectionId,
+      shellId,
+      title: `会话${sessionCount}`,
+    }
+
+    const splitLeafInTree = (node: LayoutNode): LayoutNode => {
+      if (node.type === 'leaf' && node.sessionId === sessionId) {
+        return {
+          id: Date.now().toString(),
+          type: 'split',
+          direction,
+          children: [
+            { ...node },
+            { id: newSessionId, type: 'leaf', sessionId: newSessionId }
+          ],
+          sizes: [50, 50]
+        }
       }
-    })
+      if (node.children) {
+        return { ...node, children: node.children.map(splitLeafInTree) }
+      }
+      return node
+    }
+
+    set((state) => ({
+      connectedConnections: state.connectedConnections.map(conn => {
+        if (conn.connectionId !== connectionId) return conn
+        return {
+          ...conn,
+          sessions: [...conn.sessions, newSession],
+          layout: splitLeafInTree(conn.layout),
+          activeSessionId: newSessionId,
+        }
+      }),
+    }))
+
+    return newSessionId
   },
 
   closeSplitPanel: (connectionId: string, sessionId: string, panelId: string) => {
@@ -477,18 +530,65 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return {
         connectedConnections: state.connectedConnections.map(conn => {
           if (conn.connectionId !== connectionId) return conn
+          const newSessions = conn.sessions.filter(s => s.id !== panelId)
+          const removeFromLayout = (node: LayoutNode): LayoutNode | null => {
+            if (node.type === 'leaf') {
+              return node.sessionId === panelId ? null : node
+            }
+            if (node.children) {
+              const newChildren = node.children
+                .map(removeFromLayout)
+                .filter(Boolean) as LayoutNode[]
+              if (newChildren.length === 0) return null
+              if (newChildren.length === 1) return newChildren[0]
+              return { ...node, children: newChildren }
+            }
+            return node
+          }
+          const newLayout = removeFromLayout(conn.layout)
           return {
             ...conn,
-            sessions: conn.sessions.map(session => {
-              if (session.id !== sessionId) return session
-              const newPanels = (session.splitPanels || []).filter(p => p.id !== panelId)
-              return {
-                ...session,
-                splitPanels: newPanels.length > 0 ? newPanels : undefined,
-                splitDirection: newPanels.length > 0 ? session.splitDirection : undefined,
-              }
-            }),
+            sessions: newSessions,
+            layout: newLayout || conn.layout,
           }
+        }),
+      }
+    })
+  },
+
+  getSessionLayoutNode: (connectionId: string, sessionId: string) => {
+    const state = get()
+    const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+    if (!conn) return null
+
+    const findNode = (node: LayoutNode): LayoutNode | null => {
+      if (node.type === 'leaf' && node.sessionId === sessionId) return node
+      if (node.children) {
+        for (const child of node.children) {
+          const found = findNode(child)
+          if (found) return found
+        }
+      }
+      return null
+    }
+    return findNode(conn.layout)
+  },
+
+  updateLayoutSizes: (connectionId: string, nodeId: string, sizes: number[]) => {
+    set((state) => {
+      const updateSizes = (node: LayoutNode): LayoutNode => {
+        if (node.id === nodeId && node.type === 'split') {
+          return { ...node, sizes }
+        }
+        if (node.children) {
+          return { ...node, children: node.children.map(updateSizes) }
+        }
+        return node
+      }
+      return {
+        connectedConnections: state.connectedConnections.map(conn => {
+          if (conn.connectionId !== connectionId) return conn
+          return { ...conn, layout: updateSizes(conn.layout) }
         }),
       }
     })

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useRef } from 'react'
 
 export function useRightPanels(
   activeConnectionId: string | null,
@@ -8,15 +8,8 @@ export function useRightPanels(
   const [monitorVisible, setMonitorVisible] = useState(false)
   const [apiLogVisible, setApiLogVisible] = useState(false)
 
-  const getRightPanelWidth = useCallback(() => {
-    let width = 0
-    if (monitorVisible) width += 360
-    if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
-    if (apiLogVisible) width += 380
-    return width
-  }, [monitorVisible, activeConnectionId, fileManagerVisible, apiLogVisible])
-
-  const rightPanelWidth = getRightPanelWidth()
+  const hasAnyPanelOpen = monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible
+  const rightPanelWidth = hasAnyPanelOpen ? 400 : 40
   const prevPanelWidthRef = useRef(rightPanelWidth)
 
   const openMonitor = useCallback(() => {

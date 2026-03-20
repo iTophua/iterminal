@@ -10,6 +10,8 @@ import {
   SnippetsOutlined,
   CheckCircleOutlined,
   SearchOutlined,
+  BorderHorizontalOutlined,
+  BorderVerticleOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
@@ -22,9 +24,10 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalLi
 import { CSS } from '@dnd-kit/utilities'
 import { Panel, Group, Separator } from 'react-resizable-panels'
 import 'xterm/css/xterm.css'
-import { useTerminalStore, DisconnectedConnection } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectedConnection, LayoutNode } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
+import { RightSidebar } from '../components/RightSidebar'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
@@ -54,6 +57,38 @@ function SortableTab({ id, label }: SortableTabProps) {
     <span ref={setNodeRef} style={style} {...attributes} {...listeners}>
       <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', cursor: 'grab' }} />
       {label}
+    </span>
+  )
+}
+
+interface DraggableSessionTabProps {
+  sessionId: string
+  connectionId: string
+  title: string
+  onClose: () => void
+  onDragStart: (sessionId: string, connectionId: string) => void
+}
+
+function DraggableSessionTab({ sessionId, connectionId, title, onClose, onDragStart }: DraggableSessionTabProps) {
+  const handleDragStart = (e: React.DragEvent) => {
+    e.dataTransfer.setData('sessionId', sessionId)
+    e.dataTransfer.setData('connectionId', connectionId)
+    e.dataTransfer.effectAllowed = 'move'
+    onDragStart(sessionId, connectionId)
+  }
+
+  return (
+    <span
+      draggable
+      onDragStart={handleDragStart}
+      style={{ fontSize: 12, cursor: 'grab', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+    >
+      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)' }} />
+      {title}
+      <CloseOutlined
+        style={{ marginLeft: 6, fontSize: 10, cursor: 'pointer' }}
+        onClick={e => { e.stopPropagation(); onClose() }}
+      />
     </span>
   )
 }
@@ -138,6 +173,9 @@ function Terminal() {
     const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
   })
+
+  const [draggedSession, setDraggedSession] = useState<{ sessionId: string; connectionId: string } | null>(null)
+  const [dropIndicator, setDropIndicator] = useState<'left' | 'right' | 'top' | 'bottom' | null>(null)
 
   // 同步 ref
   useEffect(() => {
@@ -432,90 +470,7 @@ function Terminal() {
         delete resizeObserversRef.current[key]
       }
     }
-  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, activeSession?.splitPanels, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message])
-
-  useEffect(() => {
-    if (!activeSession?.splitPanels) return
-
-    activeSession.splitPanels.forEach(panel => {
-      const key = `${activeSession.connectionId}_${panel.id}`
-      
-      if (initializedRef.current.has(key)) {
-        const addon = fitAddons.current[key]
-        if (addon) requestAnimationFrame(() => { try { addon.fit() } catch {} })
-        return
-      }
-
-      const container = terminalRefs.current[key]
-      if (!container) return
-
-      const initPanel = async () => {
-        const terminal = new XTerm({
-          cursorBlink: terminalSettings.cursorBlink,
-          cursorStyle: terminalSettings.cursorStyle,
-          fontSize: terminalSettings.fontSize,
-          fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-          theme: resolveTerminalTheme(appTheme, terminalThemeKey),
-          convertEol: true,
-          disableStdin: false,
-          scrollback: terminalSettings.scrollback,
-        })
-
-        const fitAddon = new FitAddon()
-        terminal.loadAddon(fitAddon)
-        container.innerHTML = ''
-        terminal.open(container)
-
-        terminal.onData(data => {
-          invoke('write_shell', { id: panel.shellId, data }).catch(err => {
-            console.error('写入终端失败:', err)
-          })
-        })
-
-        terminal.onResize(({ cols, rows }) => {
-          invoke('resize_shell', { id: panel.shellId, cols, rows }).catch(err => {
-            console.error('调整终端大小失败:', err)
-          })
-        })
-
-        terminalInstances.current[key] = terminal
-        fitAddons.current[key] = fitAddon
-
-        const searchAddon = new SearchAddon()
-        terminal.loadAddon(searchAddon)
-        searchAddons.current[key] = searchAddon
-
-        const eventName = `shell-output-${panel.shellId}`
-        const unlisten = await listen<string>(eventName, (event) => {
-          const term = terminalInstances.current[key]
-          if (term && event.payload) {
-            if (typeof event.payload === 'object' && (event.payload as any).eof) return
-            term.write(event.payload)
-          }
-        })
-        unlistenersRef.current[key] = unlisten
-
-        const resizeObserver = new ResizeObserver(() => {
-          requestAnimationFrame(() => {
-            try { fitAddon.fit() } catch {}
-          })
-        })
-        resizeObserver.observe(container)
-        resizeObserversRef.current[key] = resizeObserver
-
-        requestAnimationFrame(() => {
-          try { fitAddon.fit() } catch {}
-          try { terminal.focus() } catch {}
-        })
-
-        initializedRef.current.add(key)
-      }
-
-      initPanel().catch(err => {
-        console.error('分屏终端初始化失败:', err)
-      })
-    })
-  }, [activeSession?.splitPanels, terminalSettings, appTheme, terminalThemeKey])
+  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message])
 
   const disconnectListenersRef = useRef<{ [key: string]: UnlistenFn }>({})
 
@@ -740,6 +695,69 @@ function Terminal() {
     hideContextMenu()
   }, [contextMenu.sessionKey])
 
+  const handleSplitHorizontalFromContextMenu = useCallback(async () => {
+    const [connId, sessId] = contextMenu.sessionKey.split('_')
+    const conn = connectedConnections.find(c => c.connectionId === connId)
+    const session = conn?.sessions.find(s => s.id === sessId)
+    if (!conn || !session) {
+      hideContextMenu()
+      return
+    }
+    try {
+      const newShellId = await invoke<string>('get_shell', { id: connId })
+      splitSession(connId, sessId, 'horizontal', newShellId)
+    } catch (err) {
+      message.error(`分屏失败: ${err}`)
+    }
+    hideContextMenu()
+  }, [contextMenu.sessionKey, connectedConnections, splitSession, message])
+
+  const handleSplitVerticalFromContextMenu = useCallback(async () => {
+    const [connId, sessId] = contextMenu.sessionKey.split('_')
+    const conn = connectedConnections.find(c => c.connectionId === connId)
+    const session = conn?.sessions.find(s => s.id === sessId)
+    if (!conn || !session) {
+      hideContextMenu()
+      return
+    }
+    try {
+      const newShellId = await invoke<string>('get_shell', { id: connId })
+      splitSession(connId, sessId, 'vertical', newShellId)
+    } catch (err) {
+      message.error(`分屏失败: ${err}`)
+    }
+    hideContextMenu()
+  }, [contextMenu.sessionKey, connectedConnections, splitSession, message])
+
+  const handleCloseSplitFromContextMenu = useCallback(async () => {
+    const [connId, sessId] = contextMenu.sessionKey.split('_')
+    const conn = connectedConnections.find(c => c.connectionId === connId)
+    if (!conn || conn.layout.type !== 'split') {
+      hideContextMenu()
+      return
+    }
+    const otherChild = conn.layout.children?.find(c => c.sessionId !== sessId)
+    if (otherChild?.sessionId) {
+      const otherSession = conn.sessions.find(s => s.id === otherChild.sessionId)
+      if (otherSession) {
+        try {
+          await invoke('close_shell', { id: otherSession.shellId })
+          closeSplitPanel(connId, sessId, otherChild.sessionId)
+        } catch (err) {
+          message.error(`关闭分屏失败: ${err}`)
+        }
+      }
+    }
+    hideContextMenu()
+  }, [contextMenu.sessionKey, connectedConnections, closeSplitPanel, message])
+
+  const isContextMenuOnSplitPanel = useCallback(() => {
+    const [connId, sessId] = contextMenu.sessionKey.split('_')
+    const conn = connectedConnections.find(c => c.connectionId === connId)
+    if (!conn || conn.layout.type !== 'split') return false
+    return conn.layout.children?.some(c => c.sessionId === sessId && conn.layout.type === 'split') || false
+  }, [contextMenu.sessionKey, connectedConnections])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -773,6 +791,61 @@ function Terminal() {
     }
   }, [rightPanelWidth, prevPanelWidthRef])
 
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    const width = rect.width
+    const height = rect.height
+
+    const edgeSize = 80
+
+    if (x < edgeSize) {
+      setDropIndicator('left')
+    } else if (x > width - edgeSize) {
+      setDropIndicator('right')
+    } else if (y < edgeSize) {
+      setDropIndicator('top')
+    } else if (y > height - edgeSize) {
+      setDropIndicator('bottom')
+    } else {
+      setDropIndicator(null)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    setDropIndicator(null)
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent, targetConnectionId: string, targetSessionId: string) => {
+    e.preventDefault()
+    setDropIndicator(null)
+
+    const sourceConnectionId = e.dataTransfer.getData('connectionId')
+    const sourceSessionId = e.dataTransfer.getData('sessionId')
+
+    if (!sourceConnectionId || !sourceSessionId) return
+    if (sourceConnectionId !== targetConnectionId) {
+      message.warning('暂不支持跨连接分屏')
+      return
+    }
+    if (sourceSessionId === targetSessionId) return
+
+    const direction = dropIndicator === 'left' || dropIndicator === 'right' ? 'horizontal' : 'vertical'
+
+    try {
+      const newShellId = await invoke<string>('get_shell', { id: targetConnectionId })
+      splitSession(targetConnectionId, targetSessionId, direction, newShellId)
+    } catch (err) {
+      message.error(`分屏失败: ${err}`)
+    }
+
+    setDraggedSession(null)
+  }, [dropIndicator, splitSession, message])
+
   if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
@@ -780,6 +853,40 @@ function Terminal() {
         <p style={{ color: 'var(--color-text-quaternary)', fontSize: 14 }}>请先在连接管理中连接服务器</p>
       </div>
     )
+  }
+
+  const renderLayoutNode = (
+    node: LayoutNode,
+    connectionId: string,
+    sessionId: string
+  ): React.ReactNode => {
+    if (node.type === 'leaf') {
+      const sId = node.sessionId || sessionId
+      return (
+        <div
+          ref={el => { terminalRefs.current[`${connectionId}_${sId}`] = el }}
+          style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
+          onContextMenu={(e) => handleContextMenu(e, `${connectionId}_${sId}`)}
+        />
+      )
+    }
+
+    if (node.type === 'split' && node.children) {
+      return (
+        <Group
+          direction={node.direction === 'vertical' ? 'vertical' : 'horizontal'}
+          style={{ height: '100%', width: '100%' }}
+        >
+          {node.children.map((child, index) => (
+            <Panel key={child.id} defaultSize={node.sizes?.[index] || 50} minSize={20}>
+              {renderLayoutNode(child, connectionId, sessionId)}
+            </Panel>
+          ))}
+        </Group>
+      )
+    }
+
+    return null
   }
 
   const disconnectedItems = disconnectedConnections.map(dc => ({
@@ -814,87 +921,40 @@ function Terminal() {
   }))
 
   const connectionItems = connectedConnections.map(conn => {
-    const sessionItems = conn.sessions.map((s, idx) => ({
+    const sessionItems = conn.sessions.map((s) => ({
       key: s.id,
       label: (
-        <span style={{ fontSize: 12 }}>
-          会话{idx + 1}
-          <CloseOutlined style={{ marginLeft: 6, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseSession(conn.connectionId, s.id) }} />
-        </span>
+        <DraggableSessionTab
+          sessionId={s.id}
+          connectionId={conn.connectionId}
+          title={s.title}
+          onClose={() => handleCloseSession(conn.connectionId, s.id)}
+          onDragStart={(sid, cid) => setDraggedSession({ sessionId: sid, connectionId: cid })}
+        />
       ),
       children: (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-          {s.splitPanels && s.splitPanels.length > 0 ? (
-            <Group orientation={s.splitDirection === 'vertical' ? 'vertical' : 'horizontal'} style={{ flex: 1 }}>
-              <Panel defaultSize={50} minSize={20}>
-                <div style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box', position: 'relative' }}>
-                  <div
-                    ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
-                    style={{ height: '100%', width: '100%', overflow: 'hidden' }}
-                    onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
-                  />
-                  <Tooltip title="关闭分屏">
-                    <span
-                      style={{ position: 'absolute', top: 4, right: 4, zIndex: 1000, color: 'var(--color-text-tertiary)', cursor: 'pointer', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: 4, boxShadow: 'var(--shadow-sm)' }}
-                      onClick={async () => {
-                        for (const p of s.splitPanels || []) {
-                          await invoke('close_shell', { id: p.shellId }).catch(() => {})
-                          const pKey = `${conn.connectionId}_${p.id}`
-                          if (terminalInstances.current[pKey]) {
-                            terminalInstances.current[pKey].dispose()
-                            delete terminalInstances.current[pKey]
-                          }
-                          delete fitAddons.current[pKey]
-                          delete searchAddons.current[pKey]
-                          initializedRef.current.delete(pKey)
-                        }
-                        closeSplitPanel(conn.connectionId, s.id, s.splitPanels![0].id)
-                      }}
-                    >
-                      <CloseOutlined style={{ fontSize: 10 }} />
-                    </span>
-                  </Tooltip>
-                </div>
-              </Panel>
-              <Separator style={{ width: 4, background: 'var(--color-border)', cursor: 'col-resize' }} />
-              {s.splitPanels.map((panel) => (
-                <Panel key={panel.id} defaultSize={50 / (s.splitPanels?.length || 1)} minSize={20}>
-                  <div style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box', position: 'relative' }}>
-                    <div
-                      ref={el => { terminalRefs.current[`${conn.connectionId}_${panel.id}`] = el }}
-                      style={{ height: '100%', width: '100%', overflow: 'hidden' }}
-                      onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${panel.id}`)}
-                    />
-                    <Tooltip title="关闭此分屏">
-                      <span
-                        style={{ position: 'absolute', top: 4, right: 4, zIndex: 1000, color: 'var(--color-text-tertiary)', cursor: 'pointer', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: 4, boxShadow: 'var(--shadow-sm)' }}
-                        onClick={async () => {
-                          await invoke('close_shell', { id: panel.shellId }).catch(() => {})
-                          const key = `${conn.connectionId}_${panel.id}`
-                          if (terminalInstances.current[key]) {
-                            terminalInstances.current[key].dispose()
-                            delete terminalInstances.current[key]
-                          }
-                          delete fitAddons.current[key]
-                          delete searchAddons.current[key]
-                          initializedRef.current.delete(key)
-                          closeSplitPanel(conn.connectionId, s.id, panel.id)
-                        }}
-                      >
-                        <CloseOutlined style={{ fontSize: 10 }} />
-                      </span>
-                    </Tooltip>
-                  </div>
-                </Panel>
-              ))}
-            </Group>
-          ) : (
+        <div
+          style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={(e) => handleDrop(e, conn.connectionId, s.id)}
+        >
+          {dropIndicator && draggedSession && draggedSession.connectionId === conn.connectionId && draggedSession.sessionId !== s.id && (
             <div
-              ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
-              style={{ flex: 1, width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
-              onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
+              style={{
+                position: 'absolute',
+                zIndex: 100,
+                background: 'rgba(0, 185, 107, 0.3)',
+                border: '2px dashed var(--color-primary)',
+                ...(dropIndicator === 'left' && { left: 0, top: 0, width: '50%', height: '100%' }),
+                ...(dropIndicator === 'right' && { right: 0, top: 0, width: '50%', height: '100%' }),
+                ...(dropIndicator === 'top' && { left: 0, top: 0, width: '100%', height: '50%' }),
+                ...(dropIndicator === 'bottom' && { left: 0, bottom: 0, width: '100%', height: '50%' }),
+                pointerEvents: 'none',
+              }}
             />
           )}
+          {renderLayoutNode(conn.layout, conn.connectionId, s.id)}
         </div>
       ),
     }))
@@ -940,15 +1000,13 @@ function Terminal() {
   }
 
   return (
-    <div style={{ height: '100%', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ height: '100%', position: 'relative', overflow: 'hidden', display: 'flex' }}>
       <div style={{
+        flex: 1,
         height: '100%',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
-        marginRight: rightPanelWidth,
-        transition: 'margin-right 0.3s ease',
-        width: `calc(100% - ${rightPanelWidth}px)`
       }}>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleConnectionDragEnd}>
           <SortableContext items={connectedConnections.map(c => c.connectionId)} strategy={horizontalListSortingStrategy}>
@@ -963,15 +1021,69 @@ function Terminal() {
           </SortableContext>
         </DndContext>
       </div>
-      <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
-      {activeConnectionId && (
-        <FileManagerPanel
-          connectionId={activeConnectionId}
-          visible={!!fileManagerVisible[activeConnectionId]}
-          onClose={() => setFileManagerVisible(activeConnectionId, false)}
-        />
-      )}
-      <McpLogPanel visible={apiLogVisible} onClose={() => setApiLogVisible(false)} />
+
+      <div style={{
+        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible) ? 360 : 0,
+        height: '100%',
+        flexShrink: 0,
+        overflow: 'hidden',
+        transition: 'width 0.2s ease',
+      }}>
+        {monitorVisible && (
+          <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
+        )}
+        {activeConnectionId && fileManagerVisible[activeConnectionId] && (
+          <FileManagerPanel
+            connectionId={activeConnectionId}
+            visible={true}
+            onClose={() => setFileManagerVisible(activeConnectionId, false)}
+          />
+        )}
+        {apiLogVisible && (
+          <McpLogPanel visible={apiLogVisible} onClose={() => setApiLogVisible(false)} />
+        )}
+      </div>
+
+      <RightSidebar
+        connectionId={activeConnectionId}
+        monitorVisible={monitorVisible}
+        fileManagerVisible={activeConnectionId ? !!fileManagerVisible[activeConnectionId] : false}
+        apiLogVisible={apiLogVisible}
+        mcpEnabled={mcpEnabled}
+        onMonitorToggle={() => {
+          if (monitorVisible) {
+            setMonitorVisible(false)
+          } else {
+            setMonitorVisible(true)
+            if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
+              setFileManagerVisible(activeConnectionId, false)
+            }
+            setApiLogVisible(false)
+          }
+        }}
+        onFileManagerToggle={() => {
+          if (!activeConnectionId) return
+          const isVisible = fileManagerVisible[activeConnectionId]
+          if (isVisible) {
+            setFileManagerVisible(activeConnectionId, false)
+          } else {
+            setFileManagerVisible(activeConnectionId, true)
+            setMonitorVisible(false)
+            setApiLogVisible(false)
+          }
+        }}
+        onApiLogToggle={() => {
+          if (apiLogVisible) {
+            setApiLogVisible(false)
+          } else {
+            setApiLogVisible(true)
+            setMonitorVisible(false)
+            if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
+              setFileManagerVisible(activeConnectionId, false)
+            }
+          }
+        }}
+      />
 
       {activeConnection && activeSession && (
         <TerminalToolbar
@@ -983,12 +1095,12 @@ function Terminal() {
           mouseOverBall={mouseOverBall}
           searchVisible={searchVisible}
           isFullscreen={isFullscreen}
-          mcpEnabled={mcpEnabled}
           rightPanelWidth={rightPanelWidth}
           shortcutSettings={shortcutSettings}
+          hasSplitPanel={activeConnection.layout.type === 'split'}
           onShowSearch={() => setSearchVisible(!searchVisible)}
           onToggleFullscreen={handleToggleFullscreen}
-          onSplit={async () => {
+          onSplitHorizontal={async () => {
             try {
               const newShellId = await invoke<string>('get_shell', { id: activeConnection.connectionId })
               splitSession(activeConnection.connectionId, activeSession.id, 'horizontal', newShellId)
@@ -996,28 +1108,26 @@ function Terminal() {
               message.error(`分屏失败: ${err}`)
             }
           }}
-          onOpenMonitor={() => {
-            setMonitorVisible(true)
-            if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
-              setFileManagerVisible(activeConnectionId, false)
-            }
-            setApiLogVisible(false)
-          }}
-          onOpenFileManager={() => {
-            const isVisible = fileManagerVisible[activeConnection.connectionId]
-            setFileManagerVisible(activeConnection.connectionId, !isVisible)
-            if (!isVisible) {
-              setMonitorVisible(false)
-              setApiLogVisible(false)
+          onSplitVertical={async () => {
+            try {
+              const newShellId = await invoke<string>('get_shell', { id: activeConnection.connectionId })
+              splitSession(activeConnection.connectionId, activeSession.id, 'vertical', newShellId)
+            } catch (err) {
+              message.error(`分屏失败: ${err}`)
             }
           }}
-          onToggleApiLog={() => {
-            const newVisible = !apiLogVisible
-            setApiLogVisible(newVisible)
-            if (newVisible) {
-              setMonitorVisible(false)
-              if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
-                setFileManagerVisible(activeConnectionId, false)
+          onCloseSplit={async () => {
+            if (activeConnection.layout.type !== 'split') return
+            const otherSessionId = activeConnection.layout.children?.find(c => c.sessionId !== activeSession.id)?.sessionId
+            if (otherSessionId) {
+              const otherSession = activeConnection.sessions.find(s => s.id === otherSessionId)
+              if (otherSession) {
+                try {
+                  await invoke('close_shell', { id: otherSession.shellId })
+                  closeSplitPanel(activeConnection.connectionId, activeSession.id, otherSessionId)
+                } catch (err) {
+                  message.error(`关闭分屏失败: ${err}`)
+                }
               }
             }
           }}
@@ -1092,6 +1202,36 @@ function Terminal() {
           >
             <SearchOutlined /> 查找 <span style={{ marginLeft: 'auto', color: 'var(--color-text-tertiary)', fontSize: 11 }}>Ctrl+F</span>
           </div>
+          <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+          {isContextMenuOnSplitPanel() ? (
+            <div
+              style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={handleCloseSplitFromContextMenu}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <CloseOutlined /> 关闭分屏
+            </div>
+          ) : (
+            <>
+              <div
+                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleSplitHorizontalFromContextMenu}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <BorderHorizontalOutlined /> 水平分屏
+              </div>
+              <div
+                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleSplitVerticalFromContextMenu}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <BorderVerticleOutlined /> 垂直分屏
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>
