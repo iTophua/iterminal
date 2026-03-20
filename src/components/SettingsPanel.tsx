@@ -66,6 +66,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const fetchLicense = useLicenseStore(state => state.fetchLicense)
   const verifyLicense = useLicenseStore(state => state.verifyLicense)
   const [licenseKey, setLicenseKey] = useState('')
+  const [editingShortcutKey, setEditingShortcutKey] = useState<string | null>(null)
+  const [tempShortcutKey, setTempShortcutKey] = useState<string>('')
 
   useEffect(() => {
     const fetchVersion = async () => {
@@ -706,9 +708,6 @@ ${claudeConfig}`}
       { key: 'prevSession', label: '上一会话', description: '切换到上一个会话' },
     ]
 
-    const [editingKey, setEditingKey] = useState<string | null>(null)
-    const [tempKey, setTempKey] = useState<string>('')
-
     const handleKeyDown = (e: React.KeyboardEvent, key: keyof ShortcutSettings) => {
       e.preventDefault()
       
@@ -725,9 +724,9 @@ ${claudeConfig}`}
       
       if (parts.length > 1 || (parts.length === 1 && !['CTRL', 'SHIFT', 'ALT', 'META'].includes(parts[0]))) {
         const shortcut = parts.join('+')
-        setTempKey(shortcut)
+        setTempShortcutKey(shortcut)
         updateShortcutSettings({ [key]: shortcut })
-        setEditingKey(null)
+        setEditingShortcutKey(null)
       }
     }
 
@@ -756,13 +755,13 @@ ${claudeConfig}`}
                 <Text style={{ color: 'var(--color-text)', fontWeight: 500 }}>{label}</Text>
                 <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>{description}</Text>
               </div>
-              {editingKey === key ? (
+              {editingShortcutKey === key ? (
                 <Input
                   autoFocus
                   style={{ width: 120, textAlign: 'center' }}
-                  value={tempKey}
+                  value={tempShortcutKey}
                   onKeyDown={(e) => handleKeyDown(e, key)}
-                  onBlur={() => setEditingKey(null)}
+                  onBlur={() => setEditingShortcutKey(null)}
                   placeholder="按下组合键"
                 />
               ) : (
@@ -770,8 +769,8 @@ ${claudeConfig}`}
                   <Button
                     style={{ minWidth: 120, fontFamily: 'monospace' }}
                     onClick={() => {
-                      setEditingKey(key)
-                      setTempKey(shortcutSettings[key])
+                      setEditingShortcutKey(key)
+                      setTempShortcutKey(shortcutSettings[key])
                     }}
                   >
                     {shortcutSettings[key]}

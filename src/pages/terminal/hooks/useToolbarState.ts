@@ -30,6 +30,8 @@ export function useToolbarState() {
     autoHideToolbar,
     mouseOverBall,
     setAutoHideToolbar,
+    setToolbarState,
+    setMouseOverBall,
     showFullToolbar,
     hideToolbar,
   }

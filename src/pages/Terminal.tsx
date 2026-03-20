@@ -1,27 +1,15 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Tabs, App, Button, Tooltip, Input } from 'antd'
+import { Tabs, App, Button, Tooltip } from 'antd'
 import {
   CloseOutlined,
   PlusOutlined,
   HolderOutlined,
   DisconnectOutlined,
   ReloadOutlined,
-  ScissorOutlined,
-  ExportOutlined,
-  ClearOutlined,
-  SearchOutlined,
-  FullscreenOutlined,
-  SplitCellsOutlined,
-  DashboardOutlined,
-  FolderOutlined,
-  ApiOutlined,
-  PushpinOutlined,
-  ToolOutlined,
-  LeftOutlined,
-  RightOutlined,
   CopyOutlined,
   SnippetsOutlined,
   CheckCircleOutlined,
+  SearchOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
@@ -34,7 +22,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalLi
 import { CSS } from '@dnd-kit/utilities'
 import { Panel, Group, Separator } from 'react-resizable-panels'
 import 'xterm/css/xterm.css'
-import { useTerminalStore, DisconnectedConnection, type SplitPanel } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectedConnection } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import MonitorPanel from '../components/MonitorPanel'
@@ -42,7 +30,7 @@ import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
 import { STORAGE_KEYS } from '../config/constants'
 import { useToolbarState, useFullscreen, useTerminalSearch, useContextMenu, useRightPanels } from './terminal/hooks'
-import { TerminalToolbar, ContextMenu, DisconnectedView, EmptyView } from './terminal/components'
+import { TerminalToolbar } from './terminal/components'
 
 interface SortableTabProps {
   id: string
@@ -114,30 +102,29 @@ function Terminal() {
     autoHideToolbar,
     mouseOverBall,
     setAutoHideToolbar,
-    showFullToolbar,
-    hideToolbar,
+    setToolbarState,
+    setMouseOverBall,
   } = useToolbarState()
-  
+
   const {
     isFullscreen,
     handleToggleFullscreen,
   } = useFullscreen(fitAddons, setSidebarCollapsed)
-  
+
   const {
     searchVisible,
     searchText,
     setSearchText,
     handleSearch,
     setSearchVisible,
-    closeSearch,
   } = useTerminalSearch(searchAddons, connectedConnections, activeConnectionId)
-  
+
   const {
     contextMenu,
     handleContextMenu,
     hideContextMenu,
   } = useContextMenu()
-  
+
   const {
     monitorVisible,
     setMonitorVisible,
@@ -145,9 +132,6 @@ function Terminal() {
     setApiLogVisible,
     rightPanelWidth,
     prevPanelWidthRef,
-    openMonitor,
-    openFileManager,
-    toggleApiLog,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
   
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -206,10 +190,21 @@ function Terminal() {
     const key = `${activeSession.connectionId}_${activeSession.id}`
     const shellId = activeSession.shellId
 
-    // 已初始化过，调整大小并获取焦点
+    // 已初始化过
     if (initializedRef.current.has(key)) {
-      const addon = fitAddons.current[key]
       const term = terminalInstances.current[key]
+      const addon = fitAddons.current[key]
+      const container = terminalRefs.current[key]
+
+      // 如果终端元素不在当前容器中，移动它
+      if (term && container && term.element && !container.contains(term.element)) {
+        container.innerHTML = ''
+        container.appendChild(term.element)
+        requestAnimationFrame(() => {
+          try { term.focus() } catch {}
+        })
+      }
+
       if (addon) requestAnimationFrame(() => { try { addon.fit() } catch {} })
       if (term) requestAnimationFrame(() => { try { term.focus() } catch {} })
       return
@@ -437,7 +432,7 @@ function Terminal() {
         delete resizeObserversRef.current[key]
       }
     }
-  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message])
+  }, [activeSession?.id, activeSession?.connectionId, activeSession?.shellId, activeSession?.splitPanels, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message])
 
   useEffect(() => {
     if (!activeSession?.splitPanels) return
@@ -669,22 +664,6 @@ function Terminal() {
       Object.values(unlistenersRef.current).forEach(unlisten => unlisten())
     }
   }, [])
-  
-  // 点击其他地方关闭右键菜单
-  useEffect(() => {
-    const handleMouseDown = (e: MouseEvent) => {
-      if (contextMenu.visible) {
-        const menuEl = document.getElementById('terminal-context-menu')
-        if (menuEl && !menuEl.contains(e.target as Node)) {
-          setTimeout(() => {
-            setContextMenu(prev => ({ ...prev, visible: false }))
-          }, 0)
-        }
-      }
-    }
-    document.addEventListener('mousedown', handleMouseDown, true)
-    return () => document.removeEventListener('mousedown', handleMouseDown, true)
-  }, [contextMenu.visible])
 
   // 终端设置变更时应用到所有已打开终端
   useEffect(() => {
@@ -737,7 +716,7 @@ function Terminal() {
     } catch (err) {
       console.error('粘贴失败:', err)
     }
-    setContextMenu(prev => ({ ...prev, visible: false }))
+    hideContextMenu()
   }, [contextMenu.sessionKey, connectedConnections])
   
   // 全选
@@ -746,7 +725,7 @@ function Terminal() {
     if (term) {
       term.selectAll()
     }
-    setContextMenu(prev => ({ ...prev, visible: false }))
+    hideContextMenu()
   }, [contextMenu.sessionKey])
 
   const handleFindFromContextMenu = useCallback(() => {
@@ -758,7 +737,7 @@ function Terminal() {
       }
     }
     setSearchVisible(true)
-    setContextMenu(prev => ({ ...prev, visible: false }))
+    hideContextMenu()
   }, [contextMenu.sessionKey])
 
   useEffect(() => {
@@ -844,296 +823,51 @@ function Terminal() {
         </span>
       ),
       children: (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-          {/* 悬浮工具栏 */}
-          {(toolbarState === 'full' && (!autoHideToolbar || mouseOverBall)) || searchVisible ? (
-            <div style={{
-              position: 'absolute',
-              top: 8,
-              right: 8,
-              zIndex: 100,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              background: 'var(--color-bg-elevated)',
-              borderRadius: 6,
-              padding: '4px 8px',
-              boxShadow: 'var(--shadow-md)',
-            }}
-            onMouseLeave={() => { if (autoHideToolbar && !searchVisible) { setToolbarState('ball'); setMouseOverBall(false) } }}
-            >
-              <Tooltip title="复制选中内容">
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={async () => {
-                    const key = `${conn.connectionId}_${s.id}`
-                    const term = terminalInstances.current[key]
-                    if (term) {
-                      const selection = term.getSelection()
-                      if (selection) {
-                        await writeText(selection)
-                        message.success('已复制')
-                      } else {
-                        message.info('请先选择要复制的内容')
-                      }
-                    }
-                  }}
-                >
-                  <ScissorOutlined />
-                </span>
-              </Tooltip>
-              <Tooltip title="导出终端输出">
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={async () => {
-                    const key = `${conn.connectionId}_${s.id}`
-                    const term = terminalInstances.current[key]
-                    if (term) {
-                      const content = term.getSelection() || ''
-                      if (!content) {
-                        const buffer = term.buffer.active
-                        const lines: string[] = []
-                        for (let i = 0; i < buffer.length; i++) {
-                          lines.push(buffer.getLine(i)?.translateToString(true) || '')
-                        }
-                        const fullContent = lines.join('\n')
-                        if (fullContent.trim()) {
-                          const blob = new Blob([fullContent], { type: 'text/plain' })
-                          const url = URL.createObjectURL(blob)
-                          const a = document.createElement('a')
-                          a.href = url
-                          a.download = `terminal-${conn.connection.name}-${new Date().toISOString().slice(0, 10)}.txt`
-                          document.body.appendChild(a)
-                          a.click()
-                          document.body.removeChild(a)
-                          URL.revokeObjectURL(url)
-                          message.success('已导出终端输出')
-                        } else {
-                          message.info('终端无内容可导出')
-                        }
-                      } else {
-                        const blob = new Blob([content], { type: 'text/plain' })
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a')
-                        a.href = url
-                        a.download = `terminal-selection-${conn.connection.name}.txt`
-                        document.body.appendChild(a)
-                        a.click()
-                        document.body.removeChild(a)
-                        URL.revokeObjectURL(url)
-                        message.success('已导出选中内容')
-                      }
-                    }
-                  }}
-                >
-                  <ExportOutlined />
-                </span>
-              </Tooltip>
-              <Tooltip title="清屏 (Ctrl+L)">
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={() => {
-                    const key = `${conn.connectionId}_${s.id}`
-                    const term = terminalInstances.current[key]
-                    if (term) {
-                      term.clear()
-                      message.success('已清屏')
-                    }
-                  }}
-                >
-                  <ClearOutlined />
-                </span>
-              </Tooltip>
-              <Tooltip title="搜索">
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={() => setSearchVisible(!searchVisible)}
-                >
-                  <SearchOutlined />
-                </span>
-              </Tooltip>
-              <Tooltip title={isFullscreen ? "退出全屏" : "全屏"}>
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={() => {
-                    const key = `${conn.connectionId}_${s.id}`
-                    handleToggleFullscreen(key)
-                  }}
-                >
-                  <FullscreenOutlined />
-                </span>
-              </Tooltip>
-              <Tooltip title="水平分屏">
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={async () => {
-                    try {
-                      const shellId = await invoke<string>('get_shell', { id: conn.connectionId })
-                      splitSession(conn.connectionId, s.id, 'horizontal', shellId)
-                    } catch (err) {
-                      message.error(`分屏失败: ${err}`)
-                    }
-                  }}
-                >
-                  <SplitCellsOutlined />
-                </span>
-              </Tooltip>
-              <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 4px' }} />
-              <Tooltip title="系统监控">
-                <span
-                  style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-                  onClick={() => {
-                    setMonitorVisible(true)
-                    if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
-                      setFileManagerVisible(activeConnectionId, false)
-                    }
-                    setApiLogVisible(false)
-                  }}
-                >
-                  <DashboardOutlined />
-                </span>
-              </Tooltip>
-              <Tooltip title="文件管理">
-                <span
-                  style={{
-                    color: 'var(--color-text-tertiary)',
-                    cursor: 'pointer',
-                    padding: '4px 6px',
-                    fontSize: 14
-                  }}
-                  onClick={() => {
-                    const isVisible = fileManagerVisible[conn.connectionId]
-                    setFileManagerVisible(conn.connectionId, !isVisible)
-                    if (!isVisible) {
-                      setMonitorVisible(false)
-                      setApiLogVisible(false)
-                    }
-                  }}
-                >
-                  <FolderOutlined />
-                </span>
-              </Tooltip>
-              {mcpEnabled && (
-                <Tooltip title="MCP 日志">
-                  <span
-                    style={{
-                      color: '#999',
-                      cursor: 'pointer',
-                      padding: '4px 6px',
-                      fontSize: 14
-                    }}
-                    onClick={() => {
-                      const newVisible = !apiLogVisible
-                      setApiLogVisible(newVisible)
-                      if (newVisible) {
-                        setMonitorVisible(false)
-                        if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
-                          setFileManagerVisible(activeConnectionId, false)
-                        }
-                      }
-                    }}
-                  >
-                    <ApiOutlined />
-                  </span>
-                </Tooltip>
-              )}
-              
-              <div style={{ width: 1, height: 14, background: 'var(--color-border)', margin: '0 4px' }} />
-              <Tooltip title={autoHideToolbar ? "固定工具栏" : "自动隐藏"}>
-                <span
-                  style={{ color: autoHideToolbar ? 'var(--color-text-quaternary)' : 'var(--color-primary)', cursor: 'pointer', padding: '4px 6px', fontSize: 12 }}
-                  onClick={() => setAutoHideToolbar(!autoHideToolbar)}
-                >
-                  <PushpinOutlined />
-                </span>
-              </Tooltip>
-            </div>
-          ) : (
-            <Tooltip title={autoHideToolbar ? "悬停展开工具栏" : "展开工具栏"}>
-              <div
-                onMouseEnter={() => {
-                  setMouseOverBall(true)
-                  setToolbarState('full')
-                }}
-                style={{
-                  position: 'absolute',
-                  top: 8,
-                  right: 8,
-                  zIndex: 100,
-                  width: 28,
-                  height: 28,
-                  borderRadius: '50%',
-                  background: 'var(--color-bg-elevated)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: autoHideToolbar ? 'default' : 'pointer',
-                  boxShadow: 'var(--shadow-md)',
-                }}
-                onClick={() => {
-                  if (!autoHideToolbar) setToolbarState('full')
-                }}
-              >
-                <ToolOutlined style={{ color: 'var(--color-text-tertiary)', fontSize: 14 }} />
-              </div>
-            </Tooltip>
-          )}
-          
-          {/* 搜索栏 */}
-          {searchVisible && (
-            <div style={{
-              position: 'absolute',
-              top: 44,
-              right: 8,
-              zIndex: 100,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              background: 'var(--color-bg-elevated)',
-              borderRadius: 6,
-              padding: '6px 8px',
-              boxShadow: 'var(--shadow-md)',
-            }}>
-              <Input
-                size="small"
-                placeholder="搜索..."
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                onPressEnter={() => handleSearch('next')}
-                style={{ width: 150, background: 'var(--color-bg-container)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              />
-              <Tooltip title="上一个">
-                <Button size="small" icon={<LeftOutlined />} onClick={() => handleSearch('prev')} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />
-              </Tooltip>
-              <Tooltip title="下一个">
-                <Button size="small" icon={<RightOutlined />} onClick={() => handleSearch('next')} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />
-              </Tooltip>
-              <Tooltip title="关闭">
-                <Button size="small" icon={<CloseOutlined />} onClick={() => { setSearchVisible(false); setSearchText('') }} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />
-              </Tooltip>
-            </div>
-          )}
-
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           {s.splitPanels && s.splitPanels.length > 0 ? (
-            <Group direction={s.splitDirection === 'vertical' ? 'vertical' : 'horizontal'} style={{ flex: 1 }}>
+            <Group orientation={s.splitDirection === 'vertical' ? 'vertical' : 'horizontal'} style={{ flex: 1 }}>
               <Panel defaultSize={50} minSize={20}>
-                <div
-                  ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
-                  style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
-                  onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
-                />
+                <div style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box', position: 'relative' }}>
+                  <div
+                    ref={el => { terminalRefs.current[`${conn.connectionId}_${s.id}`] = el }}
+                    style={{ height: '100%', width: '100%', overflow: 'hidden' }}
+                    onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${s.id}`)}
+                  />
+                  <Tooltip title="关闭分屏">
+                    <span
+                      style={{ position: 'absolute', top: 4, right: 4, zIndex: 1000, color: 'var(--color-text-tertiary)', cursor: 'pointer', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: 4, boxShadow: 'var(--shadow-sm)' }}
+                      onClick={async () => {
+                        for (const p of s.splitPanels || []) {
+                          await invoke('close_shell', { id: p.shellId }).catch(() => {})
+                          const pKey = `${conn.connectionId}_${p.id}`
+                          if (terminalInstances.current[pKey]) {
+                            terminalInstances.current[pKey].dispose()
+                            delete terminalInstances.current[pKey]
+                          }
+                          delete fitAddons.current[pKey]
+                          delete searchAddons.current[pKey]
+                          initializedRef.current.delete(pKey)
+                        }
+                        closeSplitPanel(conn.connectionId, s.id, s.splitPanels![0].id)
+                      }}
+                    >
+                      <CloseOutlined style={{ fontSize: 10 }} />
+                    </span>
+                  </Tooltip>
+                </div>
               </Panel>
               <Separator style={{ width: 4, background: 'var(--color-border)', cursor: 'col-resize' }} />
-              {s.splitPanels.map((panel, idx) => (
+              {s.splitPanels.map((panel) => (
                 <Panel key={panel.id} defaultSize={50 / (s.splitPanels?.length || 1)} minSize={20}>
-                  <div
-                    ref={el => { terminalRefs.current[`${conn.connectionId}_${panel.id}`] = el }}
-                    style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box', position: 'relative' }}
-                    onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${panel.id}`)}
-                  >
-                    <Tooltip title="关闭分屏">
+                  <div style={{ height: '100%', width: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box', position: 'relative' }}>
+                    <div
+                      ref={el => { terminalRefs.current[`${conn.connectionId}_${panel.id}`] = el }}
+                      style={{ height: '100%', width: '100%', overflow: 'hidden' }}
+                      onContextMenu={(e) => handleContextMenu(e, `${conn.connectionId}_${panel.id}`)}
+                    />
+                    <Tooltip title="关闭此分屏">
                       <span
-                        style={{ position: 'absolute', top: 4, right: 4, zIndex: 10, color: 'var(--color-text-tertiary)', cursor: 'pointer', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: 4 }}
+                        style={{ position: 'absolute', top: 4, right: 4, zIndex: 1000, color: 'var(--color-text-tertiary)', cursor: 'pointer', background: 'var(--color-bg-elevated)', padding: '2px 6px', borderRadius: 4, boxShadow: 'var(--shadow-sm)' }}
                         onClick={async () => {
                           await invoke('close_shell', { id: panel.shellId }).catch(() => {})
                           const key = `${conn.connectionId}_${panel.id}`
@@ -1206,7 +940,7 @@ function Terminal() {
   }
 
   return (
-    <>
+    <div style={{ height: '100%', position: 'relative', overflow: 'hidden' }}>
       <div style={{
         height: '100%',
         display: 'flex',
@@ -1231,17 +965,83 @@ function Terminal() {
       </div>
       <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
       {activeConnectionId && (
-        <>
-          <FileManagerPanel
-            connectionId={activeConnectionId}
-            visible={!!fileManagerVisible[activeConnectionId]}
-            onClose={() => setFileManagerVisible(activeConnectionId, false)}
-          />
-        </>
+        <FileManagerPanel
+          connectionId={activeConnectionId}
+          visible={!!fileManagerVisible[activeConnectionId]}
+          onClose={() => setFileManagerVisible(activeConnectionId, false)}
+        />
       )}
       <McpLogPanel visible={apiLogVisible} onClose={() => setApiLogVisible(false)} />
 
-      {/* 右键菜单 - 只渲染一次，避免多会话时重复 */}
+      {activeConnection && activeSession && (
+        <TerminalToolbar
+          sessionKey={`${activeConnection.connectionId}_${activeSession.id}`}
+          connectionName={activeConnection.connection.name}
+          terminalInstances={terminalInstances}
+          toolbarState={toolbarState}
+          autoHideToolbar={autoHideToolbar}
+          mouseOverBall={mouseOverBall}
+          searchVisible={searchVisible}
+          isFullscreen={isFullscreen}
+          mcpEnabled={mcpEnabled}
+          rightPanelWidth={rightPanelWidth}
+          shortcutSettings={shortcutSettings}
+          onShowSearch={() => setSearchVisible(!searchVisible)}
+          onToggleFullscreen={handleToggleFullscreen}
+          onSplit={async () => {
+            try {
+              const newShellId = await invoke<string>('get_shell', { id: activeConnection.connectionId })
+              splitSession(activeConnection.connectionId, activeSession.id, 'horizontal', newShellId)
+            } catch (err) {
+              message.error(`分屏失败: ${err}`)
+            }
+          }}
+          onOpenMonitor={() => {
+            setMonitorVisible(true)
+            if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
+              setFileManagerVisible(activeConnectionId, false)
+            }
+            setApiLogVisible(false)
+          }}
+          onOpenFileManager={() => {
+            const isVisible = fileManagerVisible[activeConnection.connectionId]
+            setFileManagerVisible(activeConnection.connectionId, !isVisible)
+            if (!isVisible) {
+              setMonitorVisible(false)
+              setApiLogVisible(false)
+            }
+          }}
+          onToggleApiLog={() => {
+            const newVisible = !apiLogVisible
+            setApiLogVisible(newVisible)
+            if (newVisible) {
+              setMonitorVisible(false)
+              if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
+                setFileManagerVisible(activeConnectionId, false)
+              }
+            }
+          }}
+          onToggleAutoHide={() => setAutoHideToolbar(!autoHideToolbar)}
+          onMouseLeave={() => {
+            if (autoHideToolbar && !searchVisible) {
+              setToolbarState('ball')
+              setMouseOverBall(false)
+            }
+          }}
+          onMouseEnterBall={() => {
+            setMouseOverBall(true)
+            setToolbarState('full')
+          }}
+          setSearchText={setSearchText}
+          handleSearch={handleSearch}
+          closeSearch={() => {
+            setSearchVisible(false)
+            setSearchText('')
+          }}
+          searchText={searchText}
+        />
+      )}
+
       {contextMenu.visible && (
         <div
           id="terminal-context-menu"
@@ -1294,7 +1094,7 @@ function Terminal() {
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }
 

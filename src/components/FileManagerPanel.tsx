@@ -215,18 +215,19 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         setContextMenuVisible(true)
       }}
       style={{
-        position: 'fixed',
+        position: 'absolute',
         top: 0,
         right: 0,
-        bottom: 32,
+        bottom: 0,
         width: 360,
         background: dragDrop.isDragOver ? 'rgba(0, 185, 107, 0.05)' : 'var(--color-bg-elevated)',
         borderLeft: dragDrop.isDragOver ? '3px solid var(--color-primary)' : '1px solid var(--color-border)',
-        zIndex: 100,
+        zIndex: 1,
         display: 'flex',
         flexDirection: 'column',
-        boxShadow: '-4px 0 12px rgba(0,0,0,0.3)',
-        transition: 'background 0.2s, border-color 0.2s',
+        transform: visible ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 0.3s ease, background 0.2s, border-color 0.2s',
+        overflow: 'hidden',
       }}
     >
       {dragDrop.isDragOver && (

@@ -10,7 +10,7 @@ export function useRightPanels(
 
   const getRightPanelWidth = useCallback(() => {
     let width = 0
-    if (monitorVisible) width += 320
+    if (monitorVisible) width += 360
     if (activeConnectionId && fileManagerVisible[activeConnectionId]) width += 360
     if (apiLogVisible) width += 380
     return width

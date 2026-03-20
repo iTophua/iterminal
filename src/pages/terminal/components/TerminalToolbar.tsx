@@ -16,27 +16,23 @@ import {
   CloseOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { invoke } from '@tauri-apps/api/core'
-import { STORAGE_KEYS } from '../../../config/constants'
 import type { ShortcutSettings } from '../../../stores/terminalStore'
 
 interface TerminalToolbarProps {
   sessionKey: string
-  shellId: string
-  connectionId: string
-  sessionId: string
+  connectionName: string
   terminalInstances: React.MutableRefObject<{ [key: string]: any }>
-  fitAddons: React.MutableRefObject<{ [key: string]: any }>
   toolbarState: 'full' | 'ball'
   autoHideToolbar: boolean
   mouseOverBall: boolean
   searchVisible: boolean
   isFullscreen: boolean
   mcpEnabled: boolean
+  rightPanelWidth: number
   shortcutSettings: ShortcutSettings
   onShowSearch: () => void
   onToggleFullscreen: (key: string) => void
-  onSplit: (shellId: string) => void
+  onSplit: () => void
   onOpenMonitor: () => void
   onOpenFileManager: () => void
   onToggleApiLog: () => void
@@ -51,17 +47,15 @@ interface TerminalToolbarProps {
 
 export function TerminalToolbar({
   sessionKey,
-  shellId,
-  connectionId,
-  sessionId,
+  connectionName,
   terminalInstances,
-  fitAddons,
   toolbarState,
   autoHideToolbar,
   mouseOverBall,
-  searchVisible: externalSearchVisible,
+  searchVisible,
   isFullscreen,
   mcpEnabled,
+  rightPanelWidth,
   shortcutSettings,
   onShowSearch,
   onToggleFullscreen,
@@ -109,7 +103,7 @@ export function TerminalToolbar({
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
-        a.download = `terminal-export-${new Date().toISOString().slice(0, 10)}.txt`
+        a.download = `terminal-${connectionName}-${new Date().toISOString().slice(0, 10)}.txt`
         document.body.appendChild(a)
         a.click()
         document.body.removeChild(a)
@@ -123,7 +117,7 @@ export function TerminalToolbar({
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `terminal-selection.txt`
+      a.download = `terminal-selection-${connectionName}.txt`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -140,15 +134,22 @@ export function TerminalToolbar({
     }
   }
 
-  if (toolbarState === 'full' && (!autoHideToolbar || mouseOverBall)) {
+  const baseStyle: React.CSSProperties = {
+    position: 'fixed',
+    top: 90,
+    right: 8 + rightPanelWidth,
+    zIndex: 100,
+    transition: 'right 0.3s ease',
+  }
+
+  const showFullToolbar = (toolbarState === 'full' && (!autoHideToolbar || mouseOverBall)) || searchVisible
+
+  if (showFullToolbar) {
     return (
       <>
         <div
           style={{
-            position: 'absolute',
-            top: 8,
-            right: 8,
-            zIndex: 100,
+            ...baseStyle,
             display: 'flex',
             alignItems: 'center',
             gap: 4,
@@ -202,7 +203,7 @@ export function TerminalToolbar({
           <Tooltip title="水平分屏">
             <span
               style={{ color: 'var(--color-text-tertiary)', cursor: 'pointer', padding: '4px 6px', fontSize: 14 }}
-              onClick={() => onSplit(shellId)}
+              onClick={onSplit}
             >
               <SplitCellsOutlined />
             </span>
@@ -245,13 +246,11 @@ export function TerminalToolbar({
           </Tooltip>
         </div>
 
-        {externalSearchVisible && (
+        {searchVisible && (
           <div
             style={{
-              position: 'absolute',
-              top: 44,
-              right: 8,
-              zIndex: 100,
+              ...baseStyle,
+              top: 128,
               display: 'flex',
               alignItems: 'center',
               gap: 4,
@@ -288,11 +287,13 @@ export function TerminalToolbar({
     <Tooltip title={autoHideToolbar ? '悬停展开工具栏' : '展开工具栏'}>
       <div
         onMouseEnter={onMouseEnterBall}
+        onClick={() => {
+          if (!autoHideToolbar) {
+            onMouseEnterBall()
+          }
+        }}
         style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          zIndex: 100,
+          ...baseStyle,
           width: 28,
           height: 28,
           borderRadius: '50%',
