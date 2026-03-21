@@ -32,6 +32,22 @@ export function useDragDrop({
   const [isDragOver, setIsDragOver] = useState(false)
   const [dragTargetPath, setDragTargetPath] = useState<string | null>(null)
   const dragTargetPathRef = useRef<string | null>(null)
+  
+  const currentPathRef = useRef(currentPath)
+  const selectedNodeRef = useRef(selectedNode)
+  const uploadFileRef = useRef(uploadFile)
+  const uploadFolderRef = useRef(uploadFolder)
+  const messageRef = useRef(message)
+  const viewModeRef = useRef(viewMode)
+
+  useEffect(() => {
+    currentPathRef.current = currentPath
+    selectedNodeRef.current = selectedNode
+    uploadFileRef.current = uploadFile
+    uploadFolderRef.current = uploadFolder
+    messageRef.current = message
+    viewModeRef.current = viewMode
+  }, [currentPath, selectedNode, uploadFile, uploadFolder, message, viewMode])
 
   useEffect(() => {
     dragTargetPathRef.current = dragTargetPath
@@ -41,25 +57,31 @@ export function useDragDrop({
     if (!visible || !connectionId) return
 
     let unlisten: (() => void) | null = null
+    let isCancelled = false
 
     const handleDrop = async (paths: string[]) => {
+      if (isCancelled) return
+      
       const targetDir =
         dragTargetPathRef.current ||
-        ((selectedNode?.isDirectory && selectedNode?.path) || currentPath)
+        ((selectedNodeRef.current?.isDirectory && selectedNodeRef.current?.path) || currentPathRef.current)
 
       for (const localPath of paths) {
+        if (isCancelled) return
         try {
           const isDir = await invoke<boolean>('is_local_directory', { path: localPath })
+          if (isCancelled) return
+          
           const fileName = getFileName(localPath)
           const remotePath = targetDir + '/' + fileName
 
           if (isDir) {
-            uploadFolder(localPath, remotePath, fileName)
+            uploadFolderRef.current(localPath, remotePath, fileName)
           } else {
-            uploadFile(localPath, remotePath, fileName)
+            uploadFileRef.current(localPath, remotePath, fileName)
           }
         } catch (err) {
-          message.error(`上传失败: ${err}`)
+          messageRef.current.error(`上传失败: ${err}`)
         }
       }
       setDragTargetPath(null)
@@ -68,9 +90,10 @@ export function useDragDrop({
     const setupListeners = async () => {
       unlisten = await getCurrentWebview().onDragDropEvent((event) => {
         const panel = panelRef.current
-        const checkInPanel = (x: number, y: number) => {
-          if (!panel) return false
-          const panelRect = panel.getBoundingClientRect()
+        const panelRect = panel?.getBoundingClientRect()
+        
+        const isInFileManagerPanel = (x: number, y: number): boolean => {
+          if (!panelRect) return false
           return (
             x >= panelRect.left &&
             x <= panelRect.right &&
@@ -81,8 +104,10 @@ export function useDragDrop({
 
         if (event.payload.type === 'enter') {
           const { position } = event.payload
-          if (checkInPanel(position.x, position.y - 24)) {
+          if (isInFileManagerPanel(position.x, position.y)) {
             setIsDragOver(true)
+          } else {
+            setIsDragOver(false)
           }
         } else if (event.payload.type === 'leave') {
           setIsDragOver(false)
@@ -90,19 +115,27 @@ export function useDragDrop({
         } else if (event.payload.type === 'over') {
           const { position } = event.payload
           const x = position.x
-          const y = position.y - 24
+          const y = position.y
 
-          const container = treeContainerRef.current
-          if (!panel || !container || !checkInPanel(x, y)) {
+          const inPanel = isInFileManagerPanel(x, y)
+          
+          if (!panel || !inPanel) {
             setDragTargetPath(null)
             setIsDragOver(false)
+            return
+          }
+
+          const container = treeContainerRef.current
+          if (!container) {
+            setIsDragOver(true)
+            setDragTargetPath(null)
             return
           }
 
           setIsDragOver(true)
 
           const allNodes =
-            viewMode === 'list'
+            viewModeRef.current === 'list'
               ? container.querySelectorAll('.file-list-item')
               : container.querySelectorAll('.ant-tree-treenode')
           let foundPath: string | null = null
@@ -111,7 +144,7 @@ export function useDragDrop({
             const rect = node.getBoundingClientRect()
             const inRow = y >= rect.top && y <= rect.bottom
             if (inRow) {
-              if (viewMode === 'list') {
+              if (viewModeRef.current === 'list') {
                 foundPath = node.getAttribute('data-dir-path')
               } else {
                 const dirElement = node.querySelector('[data-dir-path]')
@@ -132,7 +165,7 @@ export function useDragDrop({
             return
           }
 
-          if (!checkInPanel(position.x, position.y - 24)) {
+          if (!isInFileManagerPanel(position.x, position.y)) {
             setDragTargetPath(null)
             return
           }
@@ -145,17 +178,12 @@ export function useDragDrop({
     setupListeners()
 
     return () => {
+      isCancelled = true
       unlisten?.()
     }
   }, [
     visible,
     connectionId,
-    currentPath,
-    selectedNode,
-    message,
-    viewMode,
-    uploadFile,
-    uploadFolder,
     panelRef,
     treeContainerRef,
   ])

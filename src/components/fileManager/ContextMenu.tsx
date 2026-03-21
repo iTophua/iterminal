@@ -140,10 +140,6 @@ export function ContextMenu({
         maxHeight: `calc(100vh - ${Math.min(position.y, window.innerHeight - 400) + 20}px)`,
         overflowY: 'auto',
       }}
-      onClick={(e) => {
-        e.stopPropagation()
-        onClose()
-      }}
     >
       {items.map((item, index) =>
         item.type === 'divider' ? (
@@ -164,11 +160,16 @@ export function ContextMenu({
               gap: 8,
               fontSize: 13,
               opacity: item.disabled ? 0.5 : 1,
+              transition: 'background 0.15s',
             }}
-            onClick={item.disabled ? undefined : item.onClick}
+            onClick={item.disabled ? undefined : (e) => {
+              e.stopPropagation()
+              item.onClick()
+              onClose()
+            }}
             onMouseEnter={(e) => {
               if (!item.disabled) {
-                e.currentTarget.style.background = 'rgba(255,255,255,0.1)'
+                e.currentTarget.style.background = 'rgba(0, 185, 107, 0.15)'
               }
             }}
             onMouseLeave={(e) => {

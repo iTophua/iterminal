@@ -27,6 +27,7 @@ export interface SplitPane {
   splitDirection?: 'horizontal' | 'vertical'
   children?: SplitPane[]
   sizes?: number[]
+  activePaneId?: string
 }
 
 export interface DisconnectedConnection {
@@ -109,18 +110,43 @@ export interface ShortcutSettings {
   prevSession: string
 }
 
-export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = {
-  clearScreen: 'Ctrl+L',
-  search: 'Ctrl+F',
-  copy: 'Ctrl+Shift+C',
-  paste: 'Ctrl+Shift+V',
-  newSession: 'Ctrl+Shift+T',
-  closeSession: 'Ctrl+Shift+W',
-  fullscreen: 'F11',
-  splitHorizontal: 'Ctrl+Shift+E',
-  splitVertical: 'Ctrl+Shift+O',
-  nextSession: 'Ctrl+Tab',
-  prevSession: 'Ctrl+Shift+Tab',
+const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+
+export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = isMac
+  ? {
+      clearScreen: 'Cmd+L',
+      search: 'Cmd+F',
+      copy: 'Cmd+C',
+      paste: 'Cmd+V',
+      newSession: 'Alt+T',
+      closeSession: 'Alt+W',
+      fullscreen: 'Alt+Enter',
+      splitHorizontal: 'Alt+D',
+      splitVertical: 'Alt+Shift+D',
+      nextSession: 'Alt+ArrowRight',
+      prevSession: 'Alt+ArrowLeft',
+    }
+  : {
+      clearScreen: 'Ctrl+L',
+      search: 'Ctrl+F',
+      copy: 'Ctrl+Shift+C',
+      paste: 'Ctrl+Shift+V',
+      newSession: 'Alt+T',
+      closeSession: 'Alt+W',
+      fullscreen: 'Alt+Enter',
+      splitHorizontal: 'Alt+D',
+      splitVertical: 'Alt+Shift+D',
+      nextSession: 'Alt+ArrowRight',
+      prevSession: 'Alt+ArrowLeft',
+    }
+
+export function formatShortcutForDisplay(shortcut: string): string {
+  if (!isMac) return shortcut
+  return shortcut
+    .replace(/Cmd/g, '⌘')
+    .replace(/Alt/g, '⌥')
+    .replace(/Ctrl/g, '⌃')
+    .replace(/Shift/g, '⇧')
 }
 
 interface TerminalState {
@@ -273,13 +299,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   })(),
   shortcutSettings: (() => {
     const saved = localStorage.getItem('iterminal_shortcut_settings')
-    if (saved) {
+    const savedPlatform = localStorage.getItem('iterminal_shortcut_platform')
+    
+    if (saved && savedPlatform === (isMac ? 'mac' : 'win')) {
       try {
         return { ...DEFAULT_SHORTCUT_SETTINGS, ...JSON.parse(saved) }
       } catch {
         return DEFAULT_SHORTCUT_SETTINGS
       }
     }
+    
+    localStorage.setItem('iterminal_shortcut_platform', isMac ? 'mac' : 'win')
+    localStorage.setItem('iterminal_shortcut_settings', JSON.stringify(DEFAULT_SHORTCUT_SETTINGS))
     return DEFAULT_SHORTCUT_SETTINGS
   })(),
   settingsVisible: false,
@@ -861,10 +892,20 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return pane
       }
 
+      const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+      const hasChildren = conn?.rootPane.children && conn.rootPane.children.length > 0
+
+      const newRootPane = updatePane(conn!.rootPane)
+      
       return {
         connectedConnections: state.connectedConnections.map(c =>
           c.connectionId === connectionId
-            ? { ...c, rootPane: updatePane(c.rootPane) }
+            ? { 
+                ...c, 
+                rootPane: hasChildren 
+                  ? { ...newRootPane, activePaneId: paneId }
+                  : newRootPane
+              }
             : c
         ),
       }
@@ -1015,6 +1056,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   resetShortcutSettings: () => {
+    localStorage.setItem('iterminal_shortcut_platform', isMac ? 'mac' : 'win')
     localStorage.setItem('iterminal_shortcut_settings', JSON.stringify(DEFAULT_SHORTCUT_SETTINGS))
     set({ shortcutSettings: DEFAULT_SHORTCUT_SETTINGS })
   },

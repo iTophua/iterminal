@@ -254,6 +254,7 @@ export function TerminalToolbar({
               onChange={(e) => setSearchText(e.target.value)}
               onPressEnter={() => handleSearch('next')}
               style={{ width: 150, background: 'var(--color-bg-container)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+              autoCorrect="off"
             />
             <Tooltip title="上一个">
               <Button size="small" icon={<LeftOutlined />} onClick={() => handleSearch('prev')} style={{ background: 'transparent', border: 'none', color: 'var(--color-text-tertiary)' }} />

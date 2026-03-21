@@ -74,6 +74,7 @@ export function FileToolbar({
         onChange={e => onPathChange(e.target.value)}
         onPressEnter={() => onNavigate(currentPath)}
         style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }}
+        autoCorrect="off"
       />
 
       {/* 刷新和视图切换 */}

@@ -29,7 +29,7 @@ export function RightSidebar({
   return (
     <div
       style={{
-        width: 40,
+        width: 32,
         height: '100%',
         background: 'var(--color-bg-elevated)',
         borderLeft: '1px solid var(--color-border)',

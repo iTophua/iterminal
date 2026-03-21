@@ -112,10 +112,19 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
             setTreeData((prev) => updateTreeData(prev, path, nodes))
           }
         }
+        if (isRoot) {
+          store.setCurrentPath(connectionId, path)
+        }
         loadingPathsRef.current.delete(path)
       } catch (err) {
-        message.error(`加载目录失败: ${err}`)
         loadingPathsRef.current.delete(path)
+        if (path !== '/' && isRoot) {
+          message.warning(`目录 "${path}" 不存在，已切换到根目录`)
+          store.setCurrentPath(connectionId, '/')
+          loadDirectory('/', true)
+          return
+        }
+        message.error(`加载目录失败: ${err}`)
       } finally {
         if (isRoot && viewMode === 'list') {
           setLoading(false)
@@ -166,19 +175,12 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
       if (viewMode === 'list') {
         setTreeData(nodes)
       } else {
-        const isRootPath = targetPath === currentPath && !treeData.some((n) => n.path === targetPath)
-        if (isRootPath) {
-          setTreeData((prev) =>
-            prev.map((node) => (node.path === targetPath ? { ...node, children: nodes } : node))
-          )
-        } else {
-          setTreeData((prev) => updateTreeData(prev, targetPath, nodes))
-        }
+        setTreeData((prev) => updateTreeData(prev, targetPath, nodes))
       }
     } catch (err) {
       message.error(`刷新失败: ${err}`)
     }
-  }, [connectionId, currentPath, mapFilesToNodes, message, treeData, updateTreeData, viewMode, selectedNode])
+  }, [connectionId, currentPath, mapFilesToNodes, message, updateTreeData, viewMode, selectedNode])
 
   const refreshDirectory = useCallback(
     async (dirPath: string) => {

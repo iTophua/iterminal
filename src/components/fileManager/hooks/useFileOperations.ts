@@ -224,15 +224,18 @@ export function useFileOperations({
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return
     setSearchLoading(true)
+    const searchPath = currentPath || '/'
+    console.log('[Search] Searching:', { connectionId, searchPath, pattern: searchQuery.trim() })
     try {
       const results = await invoke<
         { name: string; path: string; is_directory: boolean; size: number; modified: string }[]
       >('search_files', {
         connectionId,
-        path: currentPath,
+        path: searchPath,
         pattern: searchQuery.trim(),
         maxResults: 100,
       })
+      console.log('[Search] Results:', results)
       const nodes: TreeNode[] = results.map((r) => ({
         key: r.path,
         title: r.name,
@@ -245,6 +248,7 @@ export function useFileOperations({
       setSearchResults(nodes)
       setSearchVisible(true)
     } catch (err) {
+      console.error('[Search] Error:', err)
       message.error(`搜索失败: ${err}`)
     } finally {
       setSearchLoading(false)

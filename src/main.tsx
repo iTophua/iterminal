@@ -21,6 +21,22 @@ const initializeApp = () => {
       e.preventDefault()
     }
   })
+
+  const disableAutocomplete = () => {
+    document.querySelectorAll('input:not([autocorrect="off"]), textarea:not([autocorrect="off"])').forEach((el) => {
+      el.setAttribute('autocorrect', 'off')
+    })
+  }
+  
+  disableAutocomplete()
+  
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null
+  const observer = new MutationObserver(() => {
+    if (debounceTimer) clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(disableAutocomplete, 100)
+  })
+  
+  observer.observe(document.body, { childList: true, subtree: true })
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

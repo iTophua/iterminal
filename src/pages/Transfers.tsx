@@ -177,42 +177,56 @@ function Transfers() {
 
     useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
 
-    const unlisten = await listen<{ transferred: number; total: number }>(
+    const unlistenProgress = await listen<{ transferred: number; total: number }>(
       `transfer-progress-${taskId}`,
       (event) => {
         useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
       }
     )
 
+    const unlistenComplete = await listen<{ success: boolean; cancelled: boolean; error?: string }>(
+      `transfer-complete-${taskId}`,
+      (event) => {
+        unlistenProgress()
+        unlistenComplete()
+        
+        const result = event.payload
+        if (result.cancelled) {
+          useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+        } else if (result.success) {
+          useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+          message.success(`${record.type === 'upload' ? '上传' : '下载'}完成: ${record.fileName}`)
+        } else {
+          useTransferStore.getState().updateRecord(taskId, {
+            status: 'failed',
+            error: result.error || 'Unknown error',
+          })
+          message.error(`${record.type === 'upload' ? '上传' : '下载'}失败: ${result.error}`)
+        }
+      }
+    )
+
     try {
-      let result: { success: boolean; cancelled: boolean }
       if (record.type === 'upload') {
-        result = await invoke<{ success: boolean; cancelled: boolean }>('upload_file', {
+        await invoke('upload_file', {
           taskId,
           connectionId: record.connectionId,
           localPath: record.localPath,
           remotePath: record.remotePath
         })
       } else {
-        result = await invoke<{ success: boolean; cancelled: boolean }>('download_file', {
+        await invoke('download_file', {
           taskId,
           connectionId: record.connectionId,
           remotePath: record.remotePath,
           localPath: record.localPath
         })
       }
-      
-      if (result.cancelled) {
-        useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-      } else {
-        useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
-        message.success(`${record.type === 'upload' ? '上传' : '下载'}完成: ${record.fileName}`)
-      }
     } catch (err) {
+      unlistenProgress()
+      unlistenComplete()
       useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
       message.error(`${record.type === 'upload' ? '上传' : '下载'}失败: ${err}`)
-    } finally {
-      unlisten()
     }
   }
 

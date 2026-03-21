@@ -1207,10 +1207,15 @@ pub async fn search_files(
 
     let max = max_results.unwrap_or(100);
     let escaped_pattern = pattern.replace('"', "\\\"").replace('\'', "'\\''");
+    let escaped_path = path.replace('"', "\\\"").replace('\'', "'\\''");
+    
+    // 尝试使用 find，如果不存在则使用 ls -R 作为替代
     let command = format!(
-        "find \"{}\" -iname \"*{}*\" -printf '%y\t%s\t%T+\t%p\n' 2>/dev/null | head -n {}",
-        path, escaped_pattern, max
+        r#"command -v find >/dev/null 2>&1 && find "{}" -iname "*{}*" 2>/dev/null | head -n {} || ls -R "{}" 2>/dev/null | grep -i "{}" | head -n {}"#,
+        escaped_path, escaped_pattern, max, escaped_path, escaped_pattern, max
     );
+    
+    eprintln!("[search_files] Executing command: {}", command);
 
     channel
         .exec(true, command)
@@ -1218,12 +1223,13 @@ pub async fn search_files(
         .map_err(|e| format!("Failed to execute command: {}", e))?;
 
     let mut output = Vec::new();
+    let mut stderr = Vec::new();
     while let Some(msg) = channel.wait().await {
         match msg {
             russh::ChannelMsg::Data { data } => output.extend_from_slice(&data),
             russh::ChannelMsg::ExtendedData { data, ext } => {
                 if ext == 1 {
-                    output.extend_from_slice(&data);
+                    stderr.extend_from_slice(&data);
                 }
             }
             russh::ChannelMsg::Eof => break,
@@ -1232,28 +1238,25 @@ pub async fn search_files(
     }
 
     let output_str = String::from_utf8_lossy(&output);
+    let stderr_str = String::from_utf8_lossy(&stderr);
+    eprintln!("[search_files] stdout: {}", output_str);
+    eprintln!("[search_files] stderr: {}", stderr_str);
     let mut results: Vec<SearchResult> = Vec::new();
 
     for line in output_str.lines() {
-        let parts: Vec<&str> = line.splitn(4, '\t').collect();
-        if parts.len() >= 4 {
-            let file_type = parts[0];
-            let size_str = parts[1];
-            let modified = parts[2];
-            let full_path = parts[3];
-
-            let name = full_path.rsplit('/').next().unwrap_or(full_path).to_string();
-            let is_directory = file_type == "d";
-            let size = size_str.parse::<u64>().unwrap_or(0);
-
-            results.push(SearchResult {
-                name,
-                path: full_path.to_string(),
-                is_directory,
-                size,
-                modified: modified.to_string(),
-            });
+        let full_path = line.trim();
+        if full_path.is_empty() {
+            continue;
         }
+        let name = full_path.rsplit('/').next().unwrap_or(full_path).to_string();
+        
+        results.push(SearchResult {
+            name,
+            path: full_path.to_string(),
+            is_directory: false,
+            size: 0,
+            modified: String::new(),
+        });
     }
 
     Ok(results)

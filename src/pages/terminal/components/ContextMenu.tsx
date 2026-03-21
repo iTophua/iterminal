@@ -30,10 +30,11 @@ export function ContextMenu({
         top: y,
         zIndex: 1000,
         background: 'var(--color-bg-elevated)',
-        borderRadius: 6,
+        borderRadius: 4,
         boxShadow: 'var(--shadow-lg)',
         overflow: 'hidden',
-        minWidth: 160,
+        minWidth: 120,
+        fontSize: 13,
       }}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
@@ -41,7 +42,7 @@ export function ContextMenu({
       <MenuItem icon={<CopyOutlined />} label="复制" onClick={onCopy} />
       <MenuItem icon={<SnippetsOutlined />} label="粘贴" onClick={onPaste} />
       <MenuItem icon={<CheckCircleOutlined />} label="全选" onClick={onSelectAll} />
-      <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+      <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
       <MenuItem icon={<SearchOutlined />} label="查找" onClick={onFind} />
     </div>
   )
@@ -59,7 +60,7 @@ function MenuItem({
   return (
     <div
       style={{
-        padding: '8px 16px',
+        padding: '6px 12px',
         cursor: 'pointer',
         color: 'var(--color-text)',
         display: 'flex',

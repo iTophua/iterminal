@@ -215,6 +215,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         setContextMenuVisible(true)
       }}
       style={{
+        position: 'relative',
         width: 360,
         height: '100%',
         background: dragDrop.isDragOver ? 'rgba(0, 185, 107, 0.05)' : 'var(--color-bg-container)',
@@ -450,6 +451,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             onChange={(e) => fileOps.setSearchQuery(e.target.value)}
             onPressEnter={fileOps.handleSearch}
             placeholder="输入文件名搜索..."
+            autoCorrect="off"
             style={{
               flex: 1,
               background: 'var(--color-bg-elevated)',
@@ -477,7 +479,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         </div>
       )}
 
-      <div ref={treeContainerRef} style={{ flex: 1, overflow: 'hidden' }}>
+      <div ref={treeContainerRef} style={{ flex: 1, minHeight: 0 }}>
         <FileList
           loading={loading}
           treeData={treeData}
@@ -485,6 +487,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           expandedKeys={expandedKeys}
           selectedKeys={selectedKeys}
           searchResults={fileOps.searchResults}
+          searchLoading={fileOps.searchLoading}
           sortField={sortField}
           sortOrder={sortOrder}
           onSelect={onSelect}

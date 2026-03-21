@@ -17,6 +17,7 @@ interface FileListProps {
   expandedKeys: string[]
   selectedKeys: string[]
   searchResults: TreeNode[]
+  searchLoading: boolean
   sortField: 'name' | 'size' | 'modified' | null
   sortOrder: 'asc' | 'desc'
   onSelect: (keys: React.Key[]) => void
@@ -35,6 +36,7 @@ export function FileList({
   expandedKeys,
   selectedKeys,
   searchResults,
+  searchLoading,
   sortField,
   sortOrder,
   onSelect,
@@ -83,7 +85,7 @@ export function FileList({
   return (
     <div
       style={{
-        flex: 1,
+        height: '100%',
         overflow: 'auto',
         padding: 8,
         background: 'var(--color-bg-elevated)',
@@ -164,6 +166,10 @@ export function FileList({
               </div>
             </div>
           ))}
+        </div>
+      ) : searchLoading ? (
+        <div style={{ textAlign: 'center', padding: 40 }}>
+          <Spin />
         </div>
       ) : loading ? (
         <div style={{ textAlign: 'center', padding: 40 }}>
@@ -271,6 +277,11 @@ export function FileList({
                   if (item.isDirectory) {
                     onNavigate(item.path)
                   }
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  onSelect([item.key])
+                  onRightClick({ event: e, node: { ...item, key: item.key } })
                 }}
                 style={{
                   padding: '8px 12px',

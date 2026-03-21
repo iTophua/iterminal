@@ -1,6 +1,6 @@
 # Pages
 
-**Pages:** Terminal.tsx (~1440 lines), Connections.tsx (~832 lines), Transfers.tsx
+**Pages:** Terminal.tsx (~1700 lines), Connections.tsx (~832 lines), Transfers.tsx
 
 ## WHERE TO LOOK
 
@@ -10,12 +10,13 @@
 | Shell input handling | Terminal.tsx | `write_shell` on `onData` |
 | Terminal cleanup | Terminal.tsx | disposes instance, calls `unlisten()` |
 | SplitPane rendering | Terminal.tsx | `renderSplitPane()` 递归渲染分屏 |
-| SplitPane helpers | Terminal.tsx | `getAllSessions`, `findPaneBySessionId`, `hasSplitChildren` |
+| SplitPane helpers | Terminal.tsx | `getAllSessions`, `findPaneBySessionId`, `hasSplitChildren`, `getActiveSessionInPane` |
 | Session tabs per pane | Terminal.tsx | `renderSplitPane` 内的 Tabs 组件 |
+| Pane toolbar | PaneToolbar.tsx | 每个 pane 独立的工具条（清屏、导出、搜索、分屏） |
 | Context menu split | Terminal.tsx | `handleSplitHorizontalFromContextMenu`, `handleVerticalFromContextMenu` |
-| Toolbar split buttons | Terminal.tsx | `onSplitHorizontal`, `onSplitVertical`, `onCloseSplit` |
 | Drag session to split | Terminal.tsx | `DraggableSessionTab`, `handlePointerUp`, `moveSessionToSplitPane` |
 | Close session logic | Terminal.tsx | `handleCloseSession` - 自动判断是否关闭 pane |
+| Fullscreen button | Terminal.tsx | 连接 tab 右侧的全屏按钮 |
 | Connection CRUD | Connections.tsx | 使用 database service |
 | 数据库服务 | Connections.tsx | import from `../services/database` |
 | Group filtering | Connections.tsx | URL 查询参数 `?group=xxx` |
@@ -28,9 +29,9 @@ Terminal.tsx 使用递归组件 `renderSplitPane` 渲染分屏：
 ```typescript
 // 辅助函数
 function getAllSessions(pane: SplitPane): Session[]
-function getActiveSessionInPane(pane: SplitPane): Session | null
+function getActiveSessionInPane(pane: SplitPane): Session | null  // 使用 activePaneId 找到正确的 pane
 function findPaneBySessionId(pane: SplitPane, sessionId: string): SplitPane | null
-function hasSplitChildren(pane: SplitPane): boolean
+function hasSplitChildren(pane: SplitPane | null): boolean
 function getVisibleSessions(pane: SplitPane): Session[]
 function getPaneStructureKey(pane: SplitPane): string
 
@@ -47,31 +48,54 @@ function renderSplitPane(pane: SplitPane, connectionId: string) {
       </Group>
     )
   }
-  // 每个 pane 有自己的 Tabs
+  // 每个 pane 有自己的 Tabs 和 PaneToolbar
   return (
-    <Tabs items={sessionTabItems} ... />
+    <>
+      <PaneToolbar ... />  {/* 每个 pane 独立的工具条 */}
+      <Tabs items={sessionTabItems} ... />
+    </>
   )
 }
 ```
 
 ## 会话标签架构
 
-**每个分屏 pane 有独立的 Tabs：**
+**每个分屏 pane 有独立的 Tabs 和工具条：**
 
 ```
-连接 Tab（顶层）
+连接 Tab（顶层，包含全屏按钮）
 └── 分屏区域
     ├── 左 pane
+    │   ├── PaneToolbar (清屏/导出/搜索/分屏/关闭分屏)
     │   └── Tabs: [会话1, 会话2, +新建]
     │       └── 终端内容
     └── 右 pane
+        ├── PaneToolbar
         └── Tabs: [会话3, +新建]
                 └── 终端内容
 ```
 
 - 每个 pane 的 Tabs 只显示该 pane 的 sessions
+- 每个 pane 有独立的 PaneToolbar，操作只影响当前 pane
+- 搜索框在当前活动 pane 内显示
 - 点击"新建"在当前 pane 中创建新会话
 - 切换 tab 只影响当前 pane 的 `activeSessionId`
+
+## 活动分屏跟踪
+
+**activePaneId 机制**：
+- `SplitPane.activePaneId` 记录当前活动的子 pane
+- 点击终端时更新 `activePaneId`
+- 快捷键操作使用 `getActiveSessionInPane()` 找到正确的 pane
+
+```typescript
+// 点击终端时更新
+onClick={() => setActiveSessionInPane(connectionId, pane.id, s.id)}
+
+// 快捷键使用
+const activeSess = getActiveSessionInPane(activeConn.rootPane)
+const pane = findPaneBySessionId(activeConn.rootPane, activeSess?.id || '')
+```
 
 ## 分屏操作流程
 
@@ -80,7 +104,7 @@ function renderSplitPane(pane: SplitPane, connectionId: string) {
 3. **关闭会话**: 
    - 如果 pane 只有一个 session 且存在分屏 → 关闭整个 pane
    - 否则只关闭 session
-4. **工具栏按钮**: 检查 `hasSplitChildren(rootPane)` 显示关闭分屏按钮
+4. **工具栏按钮**: PaneToolbar 在每个 pane 内独立渲染
 
 ## 拖拽会话分屏
 
@@ -123,6 +147,30 @@ useEffect(() => {
 }, [visibleSessions, ...])
 ```
 
+## 搜索状态管理
+
+搜索状态在 Terminal.tsx 中统一管理，只在当前活动的 pane 显示搜索框：
+
+```typescript
+// 全局状态
+const [searchVisible, setSearchVisible] = useState(false)
+const [searchText, setSearchText] = useState('')
+
+// 切换连接时重置
+useEffect(() => {
+  setSearchVisible(false)
+  setSearchText('')
+}, [activeConnectionId])
+
+// 传递给 PaneToolbar
+<PaneToolbar
+  searchVisible={searchVisible && activeSession?.id === activeSess.id}
+  searchText={searchText}
+  onToggleSearch={...}
+  onSearchTextChange={setSearchText}
+/>
+```
+
 ## CONVENTIONS
 
 - **xterm init:** Create XTerm instance → load FitAddon → `terminal.open(container)` → `fitAddon.fit()` in setTimeout
@@ -135,6 +183,8 @@ useEffect(() => {
 - **Session naming:** 使用 `getNextSessionNumber()` 获取唯一编号，避免重复
 - **分屏 key:** 使用 `getPaneStructureKey()` 生成分屏结构 key，结构变化时强制重新渲染
 - **Drag timer:** 组件卸载时必须清理 `dragTimerRef`，防止 `userSelect='none'` 残留
+- **PaneToolbar:** 每个 pane 独立渲染，操作只影响当前 pane
+- **Fullscreen:** 全屏按钮在连接 tab 右侧，不在工具条中
 
 ## ANTI-PATTERNS
 
@@ -149,3 +199,5 @@ useEffect(() => {
 - **Don't** 在顶层渲染 session tabs - 每个 pane 有自己的 tabs
 - **Don't** 在 Tabs onChange 中处理 `__add__` key - 会导致 activeSessionId 错误
 - **Don't** 忘记清理 dragTimerRef - 组件卸载时必须清理
+- **Don't** 使用全局工具条 - 每个 pane 有独立的 PaneToolbar
+- **Don't** 快捷键切换会话时使用 getAllSessions - 应在当前 pane 内切换

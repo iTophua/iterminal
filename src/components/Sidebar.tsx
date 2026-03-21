@@ -142,7 +142,7 @@ function Sidebar() {
 
   return (
     <Sider
-      width={240}
+      width={160}
       collapsedWidth={48}
       collapsible
       collapsed={collapsed}

@@ -1,8 +1,8 @@
 import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, Switch, message, Input, Tag, Space, Tooltip } from 'antd'
-import { useTerminalStore, type TerminalSettings, type ShortcutSettings, DEFAULT_SHORTCUT_SETTINGS } from '../stores/terminalStore'
+import { useTerminalStore, type TerminalSettings, type ShortcutSettings, formatShortcutForDisplay } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { invoke } from '@tauri-apps/api/core'
@@ -49,7 +49,15 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const setAppThemeMode = useThemeStore(state => state.setAppThemeMode)
   const setTerminalTheme = useThemeStore(state => state.setTerminalTheme)
   
-  const [activeCategory, setActiveCategory] = useState<SettingCategory>('appearance')
+  const [activeCategory, setActiveCategory] = useState<SettingCategory>(() => {
+    const saved = localStorage.getItem('iterminal_settings_category')
+    return (saved as SettingCategory) || 'appearance'
+  })
+  
+  const handleCategoryChange = useCallback((category: SettingCategory) => {
+    setActiveCategory(category)
+    localStorage.setItem('iterminal_settings_category', category)
+  }, [])
   const [tempSettings, setTempSettings] = useState<TerminalSettings>(terminalSettings)
   const [hasTerminalChanges, setHasTerminalChanges] = useState(false)
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -125,7 +133,6 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     if (visible) {
       setTempSettings(terminalSettings)
       setHasTerminalChanges(false)
-      setActiveCategory('appearance')
       fetchLicense()
     }
   }, [visible, terminalSettings, fetchLicense])
@@ -703,6 +710,8 @@ ${claudeConfig}`}
       { key: 'paste', label: '粘贴', description: '粘贴剪贴板内容' },
       { key: 'newSession', label: '新建会话', description: '创建新的终端会话' },
       { key: 'closeSession', label: '关闭会话', description: '关闭当前会话' },
+      { key: 'splitHorizontal', label: '水平分屏', description: '水平方向分割终端' },
+      { key: 'splitVertical', label: '垂直分屏', description: '垂直方向分割终端' },
       { key: 'fullscreen', label: '全屏', description: '切换全屏模式' },
       { key: 'nextSession', label: '下一会话', description: '切换到下一个会话' },
       { key: 'prevSession', label: '上一会话', description: '切换到上一个会话' },
@@ -711,18 +720,35 @@ ${claudeConfig}`}
     const handleKeyDown = (e: React.KeyboardEvent, key: keyof ShortcutSettings) => {
       e.preventDefault()
       
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
       const parts: string[] = []
-      if (e.ctrlKey) parts.push('Ctrl')
-      if (e.shiftKey) parts.push('Shift')
-      if (e.altKey) parts.push('Alt')
-      if (e.metaKey) parts.push('Meta')
+      
+      if (isMac) {
+        if (e.ctrlKey) parts.push('Ctrl')
+        if (e.altKey) parts.push('Alt')
+        if (e.shiftKey) parts.push('Shift')
+        if (e.metaKey) parts.push('Cmd')
+      } else {
+        if (e.ctrlKey) parts.push('Ctrl')
+        if (e.altKey) parts.push('Alt')
+        if (e.shiftKey) parts.push('Shift')
+        if (e.metaKey) parts.push('Meta')
+      }
       
       const keyName = e.key.toUpperCase()
-      if (!['CONTROL', 'SHIFT', 'ALT', 'META'].includes(keyName)) {
+      const modifierKeys = isMac 
+        ? ['CONTROL', 'SHIFT', 'ALT', 'META', 'CMD']
+        : ['CONTROL', 'SHIFT', 'ALT', 'META']
+      
+      if (!modifierKeys.includes(keyName)) {
         parts.push(keyName === ' ' ? 'Space' : keyName)
       }
       
-      if (parts.length > 1 || (parts.length === 1 && !['CTRL', 'SHIFT', 'ALT', 'META'].includes(parts[0]))) {
+      const validModifiers = isMac 
+        ? ['CTRL', 'SHIFT', 'ALT', 'CMD']
+        : ['CTRL', 'SHIFT', 'ALT', 'META']
+      
+      if (parts.length > 1 || (parts.length === 1 && !validModifiers.includes(parts[0]))) {
         const shortcut = parts.join('+')
         setTempShortcutKey(shortcut)
         updateShortcutSettings({ [key]: shortcut })
@@ -757,13 +783,13 @@ ${claudeConfig}`}
               </div>
               {editingShortcutKey === key ? (
                 <Input
-                  autoFocus
-                  style={{ width: 120, textAlign: 'center' }}
-                  value={tempShortcutKey}
-                  onKeyDown={(e) => handleKeyDown(e, key)}
-                  onBlur={() => setEditingShortcutKey(null)}
-                  placeholder="按下组合键"
-                />
+autoFocus
+                   style={{ width: 120, textAlign: 'center' }}
+                   value={formatShortcutForDisplay(tempShortcutKey)}
+                   onKeyDown={(e) => handleKeyDown(e, key)}
+                   onBlur={() => setEditingShortcutKey(null)}
+                   placeholder="按下组合键"
+                 />
               ) : (
                 <Tooltip title="点击修改">
                   <Button
@@ -773,7 +799,7 @@ ${claudeConfig}`}
                       setTempShortcutKey(shortcutSettings[key])
                     }}
                   >
-                    {shortcutSettings[key]}
+                    {formatShortcutForDisplay(shortcutSettings[key])}
                   </Button>
                 </Tooltip>
               )}
@@ -911,7 +937,7 @@ ${claudeConfig}`}
           <Menu
             mode="vertical"
             selectedKeys={[activeCategory]}
-            onClick={(e) => setActiveCategory(e.key as SettingCategory)}
+            onClick={(e) => handleCategoryChange(e.key as SettingCategory)}
             style={{
               background: 'transparent',
               border: 'none',
@@ -921,7 +947,6 @@ ${claudeConfig}`}
               key: item.key,
               icon: item.icon,
               label: item.label,
-              disabled: item.disabled,
             }))}
           />
         </div>

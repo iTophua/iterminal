@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
-import { Tabs, App, Button } from 'antd'
+import { Tabs, App, Button, Tooltip } from 'antd'
 import { createPortal } from 'react-dom'
 import {
   CloseOutlined,
@@ -13,6 +13,8 @@ import {
   SearchOutlined,
   BorderHorizontalOutlined,
   BorderVerticleOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from 'xterm'
 import { FitAddon } from 'xterm-addon-fit'
@@ -33,8 +35,8 @@ import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
 import { STORAGE_KEYS } from '../config/constants'
-import { useToolbarState, useFullscreen, useTerminalSearch, useContextMenu, useRightPanels } from './terminal/hooks'
-import { TerminalToolbar } from './terminal/components'
+import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
+import { PaneToolbar } from './terminal/components'
 
 interface SortableTabProps {
   id: string
@@ -104,6 +106,26 @@ function getAllSessions(pane: SplitPane): Session[] {
 
 function getActiveSessionInPane(pane: SplitPane): Session | null {
   if (pane.children) {
+    const targetPaneId = pane.activePaneId
+    if (targetPaneId) {
+      const findPaneById = (p: SplitPane): SplitPane | null => {
+        if (p.id === targetPaneId) return p
+        if (p.children) {
+          for (const child of p.children) {
+            const found = findPaneById(child)
+            if (found) return found
+          }
+        }
+        return null
+      }
+      const targetPane = findPaneById(pane)
+      if (targetPane) {
+        if (targetPane.activeSessionId) {
+          return targetPane.sessions.find(s => s.id === targetPane.activeSessionId) || null
+        }
+        return targetPane.sessions[0] || null
+      }
+    }
     for (const child of pane.children) {
       const active = getActiveSessionInPane(child)
       if (active) return active
@@ -129,8 +151,8 @@ function findPaneBySessionId(pane: SplitPane, sessionId: string): SplitPane | nu
   return null
 }
 
-function hasSplitChildren(pane: SplitPane): boolean {
-  return !!(pane.children && pane.children.length > 0)
+function hasSplitChildren(pane: SplitPane | null): boolean {
+  return !!(pane?.children && pane.children.length > 0)
 }
 
 function getVisibleSessions(pane: SplitPane): Session[] {
@@ -146,8 +168,6 @@ function Terminal() {
   const disconnectedConnections = useTerminalStore(state => state.disconnectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
-  const setActiveSession = useTerminalStore(state => state.setActiveSession)
-  const addSession = useTerminalStore(state => state.addSession)
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
   const markConnectionDisconnected = useTerminalStore(state => state.markConnectionDisconnected)
@@ -182,29 +202,16 @@ function Terminal() {
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
   const searchAddons = useRef<{ [key: string]: SearchAddon }>({})
   const apiLogVisibleRef = useRef(false)
+  const shortcutSettingsRef = useRef(shortcutSettings)
   
-  // 使用提取的 hooks
-  const {
-    toolbarState,
-    autoHideToolbar,
-    mouseOverBall,
-    setAutoHideToolbar,
-    setToolbarState,
-    setMouseOverBall,
-  } = useToolbarState()
-
+  useEffect(() => {
+    shortcutSettingsRef.current = shortcutSettings
+  }, [shortcutSettings])
+  
   const {
     isFullscreen,
     handleToggleFullscreen,
-  } = useFullscreen(fitAddons, setSidebarCollapsed)
-
-  const {
-    searchVisible,
-    searchText,
-    setSearchText,
-    handleSearch,
-    setSearchVisible,
-  } = useTerminalSearch(searchAddons, connectedConnections, activeConnectionId)
+  } = useFullscreen(setSidebarCollapsed, fitAddons)
 
   const {
     contextMenu,
@@ -212,13 +219,16 @@ function Terminal() {
     hideContextMenu,
   } = useContextMenu()
 
+  const [searchText, setSearchText] = useState('')
+  const [searchMode, setSearchMode] = useState<'normal' | 'regex' | 'wholeWord'>('normal')
+  const [activeSearchSessionKey, setActiveSearchSessionKey] = useState<string | null>(null)
+
   const {
     monitorVisible,
     setMonitorVisible,
     apiLogVisible,
     setApiLogVisible,
     rightPanelWidth,
-    prevPanelWidthRef,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
   
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -386,8 +396,35 @@ const handlePointerUp = () => {
   }, [terminalThemeKey, appTheme])
   
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
-  const activeSession = activeConnection ? getActiveSessionInPane(activeConnection.rootPane) : null
   const visibleSessions = activeConnection ? getVisibleSessions(activeConnection.rootPane) : []
+
+  // 切换连接时重置搜索状态
+  useEffect(() => {
+    setActiveSearchSessionKey(null)
+    setSearchText('')
+  }, [activeConnectionId])
+
+  const paneStructureRef = useRef<string>('')
+  useEffect(() => {
+    if (!activeConnection) return
+    
+    const getStructureKey = (pane: SplitPane): string => {
+      if (pane.children && pane.children.length > 0) {
+        return `${pane.id}-[${pane.children.map(getStructureKey).join(',')}]`
+      }
+      return `${pane.id}-${pane.sessions.length}`
+    }
+    
+    const structureKey = getStructureKey(activeConnection.rootPane)
+    if (paneStructureRef.current && paneStructureRef.current !== structureKey) {
+      setTimeout(() => {
+        Object.values(fitAddons.current).forEach(addon => {
+          try { addon?.fit() } catch {}
+        })
+      }, 100)
+    }
+    paneStructureRef.current = structureKey
+  }, [activeConnection, activeConnection?.rootPane])
 
   useEffect(() => {
     if (!activeConnection) return
@@ -411,9 +448,6 @@ const handlePointerUp = () => {
             try { term.focus() } catch {}
           })
         }
-
-        const addon = fitAddons.current[key]
-        if (addon) requestAnimationFrame(() => { try { addon.fit() } catch {} })
         continue
       }
 
@@ -446,6 +480,7 @@ const handlePointerUp = () => {
           convertEol: true,
           disableStdin: false,
           scrollback: terminalSettings.scrollback,
+          macOptionIsMeta: true,
         })
 
         const fitAddon = new FitAddon()
@@ -462,36 +497,104 @@ const handlePointerUp = () => {
         }
 
         const matchShortcut = (event: KeyboardEvent, shortcut: string): boolean => {
+          if (!shortcut) return false
+          
           const parts = shortcut.toUpperCase().split('+')
+          const modifiers = ['CTRL', 'CMD', 'SHIFT', 'ALT', 'META']
+          const hasModifiers = parts.some(p => modifiers.includes(p))
+          
           const hasCtrl = parts.includes('CTRL')
+          const hasCmd = parts.includes('CMD')
           const hasShift = parts.includes('SHIFT')
           const hasAlt = parts.includes('ALT')
           const hasMeta = parts.includes('META')
-          const keyPart = parts.find(p => !['CTRL', 'SHIFT', 'ALT', 'META'].includes(p))
+          const keyPart = parts.find(p => !modifiers.includes(p))
           
-          const ctrlMatch = hasCtrl ? (event.ctrlKey || event.metaKey) : (!event.ctrlKey || event.metaKey)
-          const shiftMatch = hasShift ? event.shiftKey : !event.shiftKey
-          const altMatch = hasAlt ? event.altKey : !event.altKey
-          const metaMatch = hasMeta ? event.metaKey : true
-          const keyMatch = keyPart ? event.key.toUpperCase() === keyPart : false
+          const ctrlMatch = hasCtrl ? event.ctrlKey : (!hasModifiers ? !event.ctrlKey : true)
+          const cmdMatch = hasCmd ? event.metaKey : (!hasModifiers ? !event.metaKey : true)
+          const shiftMatch = hasShift ? event.shiftKey : (!hasModifiers ? !event.shiftKey : true)
+          const altMatch = hasAlt ? event.altKey : (!hasModifiers ? !event.altKey : true)
+          const metaMatch = hasMeta ? event.metaKey : (hasCmd ? true : (!hasModifiers ? !event.metaKey : true))
           
-          return ctrlMatch && shiftMatch && altMatch && metaMatch && keyMatch
+          let keyMatch = false
+          if (keyPart) {
+            const eventKey = event.key.toUpperCase()
+            const eventCode = event.code.toUpperCase()
+            
+            keyMatch = eventKey === keyPart ||
+              eventCode === 'KEY' + keyPart ||
+              eventCode === keyPart ||
+              (keyPart === 'ENTER' && (eventKey === 'ENTER' || eventCode === 'ENTER')) ||
+              ((keyPart === 'ARROWRIGHT' || keyPart === 'RIGHT') && (eventKey === 'ARROWRIGHT' || eventCode === 'ARROWRIGHT')) ||
+              ((keyPart === 'ARROWLEFT' || keyPart === 'LEFT') && (eventKey === 'ARROWLEFT' || eventCode === 'ARROWLEFT')) ||
+              ((keyPart === 'ARROWUP' || keyPart === 'UP') && (eventKey === 'ARROWUP' || eventCode === 'ARROWUP')) ||
+              ((keyPart === 'ARROWDOWN' || keyPart === 'DOWN') && (eventKey === 'ARROWDOWN' || eventCode === 'ARROWDOWN')) ||
+              (keyPart === 'SPACE' && (eventKey === ' ' || eventCode === 'SPACE')) ||
+              (keyPart === 'TAB' && (eventKey === 'TAB' || eventCode === 'TAB')) ||
+              (keyPart === 'ESCAPE' && (eventKey === 'ESCAPE' || eventCode === 'ESCAPE')) ||
+              (keyPart === 'BACKSPACE' && (eventKey === 'BACKSPACE' || eventCode === 'BACKSPACE')) ||
+              (keyPart === 'DELETE' && (eventKey === 'DELETE' || eventCode === 'DELETE')) ||
+              (keyPart === 'F1' && eventCode === 'F1') ||
+              (keyPart === 'F2' && eventCode === 'F2') ||
+              (keyPart === 'F3' && eventCode === 'F3') ||
+              (keyPart === 'F4' && eventCode === 'F4') ||
+              (keyPart === 'F5' && eventCode === 'F5') ||
+              (keyPart === 'F6' && eventCode === 'F6') ||
+              (keyPart === 'F7' && eventCode === 'F7') ||
+              (keyPart === 'F8' && eventCode === 'F8') ||
+              (keyPart === 'F9' && eventCode === 'F9') ||
+              (keyPart === 'F10' && eventCode === 'F10') ||
+              (keyPart === 'F11' && eventCode === 'F11') ||
+              (keyPart === 'F12' && eventCode === 'F12')
+          }
+          
+          return ctrlMatch && cmdMatch && shiftMatch && altMatch && metaMatch && keyMatch
         }
-
+        
         terminal.attachCustomKeyEventHandler(event => {
           if (event.type !== 'keydown') return true
           
-          if (matchShortcut(event, shortcutSettings.clearScreen)) {
+          const settings = shortcutSettingsRef.current
+          
+          // 拦截所有使用 Alt/Option 的应用级快捷键，防止 macOS 产生特殊字符
+          if (matchShortcut(event, settings.splitHorizontal)) {
+            return false
+          }
+          if (matchShortcut(event, settings.splitVertical)) {
+            return false
+          }
+          if (matchShortcut(event, settings.newSession)) {
+            return false
+          }
+          if (matchShortcut(event, settings.closeSession)) {
+            return false
+          }
+          if (matchShortcut(event, settings.nextSession)) {
+            return false
+          }
+          if (matchShortcut(event, settings.prevSession)) {
+            return false
+          }
+          if (matchShortcut(event, settings.fullscreen)) {
+            return false
+          }
+          
+          if (matchShortcut(event, settings.clearScreen)) {
             terminal.clear()
             return false
           }
           
-          if (matchShortcut(event, shortcutSettings.search)) {
-            setSearchVisible(prev => !prev)
+          if (matchShortcut(event, settings.copy)) {
+            const selection = terminal.getSelection()
+            if (selection) {
+              writeText(selection).catch(err => {
+                console.error('复制失败:', err)
+              })
+            }
             return false
           }
           
-          if (matchShortcut(event, shortcutSettings.paste)) {
+          if (matchShortcut(event, settings.paste)) {
             terminal.clearSelection()
             readText().then(text => {
               if (text) {
@@ -552,18 +655,18 @@ const handlePointerUp = () => {
 
         unlistenersRef.current[key] = unlisten
 
-        let rafId: number | null = null
+        let resizeTimer: ReturnType<typeof setTimeout> | null = null
         const resizeObserver = new ResizeObserver(() => {
-          if (rafId !== null) {
-            cancelAnimationFrame(rafId)
+          if (resizeTimer) {
+            clearTimeout(resizeTimer)
           }
-          rafId = requestAnimationFrame(() => {
+          resizeTimer = setTimeout(() => {
             const addon = fitAddons.current[key]
             if (addon) {
               try { addon.fit() } catch {}
             }
-            rafId = null
-          })
+            resizeTimer = null
+          }, 150)
         })
         resizeObserver.observe(container)
         resizeObserversRef.current[key] = resizeObserver
@@ -651,18 +754,6 @@ const handlePointerUp = () => {
   }, [removeDisconnectedConnection])
 
 
-  // 新建会话
-  const handleAddSession = useCallback(async (connectionId: string) => {
-    if (!connectionId) return
-    try {
-      const shellId = await invoke<string>('get_shell', { id: connectionId })
-      addSession(connectionId, shellId)
-      message.success('会话已创建')
-    } catch (err) {
-      message.error(`创建失败: ${err}`)
-    }
-  }, [addSession])
-
   const handleCloseSession = useCallback(async (connId: string, sessId: string, paneId?: string) => {
     const conn = connectedConnections.find(c => c.connectionId === connId)
     if (!conn) return
@@ -731,13 +822,6 @@ const handlePointerUp = () => {
     await invoke('disconnect_ssh', { id: connId }).catch(() => {})
     closeConnection(connId)
   }, [connectedConnections, closeConnection])
-
-  // 窗口调整
-  useEffect(() => {
-    const resize = () => Object.values(fitAddons.current).forEach(a => { try { a?.fit() } catch {} })
-    window.addEventListener('resize', resize)
-    return () => window.removeEventListener('resize', resize)
-  }, [])
 
   // 清理所有事件监听
   useEffect(() => {
@@ -819,7 +903,7 @@ const handlePointerUp = () => {
         setSearchText(selection)
       }
     }
-    setSearchVisible(true)
+    setActiveSearchSessionKey(contextMenu.sessionKey)
     hideContextMenu()
   }, [contextMenu.sessionKey])
 
@@ -908,8 +992,63 @@ const handlePointerUp = () => {
   }, [contextMenu.sessionKey, connectedConnections])
 
   useEffect(() => {
+    const matchShortcut = (event: KeyboardEvent, shortcut: string): boolean => {
+      if (!shortcut) return false
+      
+      const parts = shortcut.toUpperCase().split('+')
+      const modifiers = ['CTRL', 'CMD', 'SHIFT', 'ALT', 'META']
+      const hasModifiers = parts.some(p => modifiers.includes(p))
+      
+      const hasCtrl = parts.includes('CTRL')
+      const hasCmd = parts.includes('CMD')
+      const hasShift = parts.includes('SHIFT')
+      const hasAlt = parts.includes('ALT')
+      const hasMeta = parts.includes('META')
+      const keyPart = parts.find(p => !modifiers.includes(p))
+      
+      const ctrlMatch = hasCtrl ? event.ctrlKey : (!hasModifiers ? !event.ctrlKey : true)
+      const cmdMatch = hasCmd ? event.metaKey : (!hasModifiers ? !event.metaKey : true)
+      const shiftMatch = hasShift ? event.shiftKey : (!hasModifiers ? !event.shiftKey : true)
+      const altMatch = hasAlt ? event.altKey : (!hasModifiers ? !event.altKey : true)
+      const metaMatch = hasMeta ? event.metaKey : (hasCmd ? true : (!hasModifiers ? !event.metaKey : true))
+      
+      let keyMatch = false
+      if (keyPart) {
+        const eventKey = event.key.toUpperCase()
+        const eventCode = event.code.toUpperCase()
+        
+        keyMatch = eventKey === keyPart ||
+          eventCode === 'KEY' + keyPart ||
+          eventCode === keyPart ||
+          (keyPart === 'ENTER' && (eventKey === 'ENTER' || eventCode === 'ENTER')) ||
+          ((keyPart === 'ARROWRIGHT' || keyPart === 'RIGHT') && (eventKey === 'ARROWRIGHT' || eventCode === 'ARROWRIGHT')) ||
+          ((keyPart === 'ARROWLEFT' || keyPart === 'LEFT') && (eventKey === 'ARROWLEFT' || eventCode === 'ARROWLEFT')) ||
+          ((keyPart === 'ARROWUP' || keyPart === 'UP') && (eventKey === 'ARROWUP' || eventCode === 'ARROWUP')) ||
+          ((keyPart === 'ARROWDOWN' || keyPart === 'DOWN') && (eventKey === 'ARROWDOWN' || eventCode === 'ARROWDOWN')) ||
+          (keyPart === 'SPACE' && (eventKey === ' ' || eventCode === 'SPACE')) ||
+          (keyPart === 'TAB' && (eventKey === 'TAB' || eventCode === 'TAB')) ||
+          (keyPart === 'ESCAPE' && (eventKey === 'ESCAPE' || eventCode === 'ESCAPE')) ||
+          (keyPart === 'BACKSPACE' && (eventKey === 'BACKSPACE' || eventCode === 'BACKSPACE')) ||
+          (keyPart === 'DELETE' && (eventKey === 'DELETE' || eventCode === 'DELETE')) ||
+          (keyPart === 'F1' && eventCode === 'F1') ||
+          (keyPart === 'F2' && eventCode === 'F2') ||
+          (keyPart === 'F3' && eventCode === 'F3') ||
+          (keyPart === 'F4' && eventCode === 'F4') ||
+          (keyPart === 'F5' && eventCode === 'F5') ||
+          (keyPart === 'F6' && eventCode === 'F6') ||
+          (keyPart === 'F7' && eventCode === 'F7') ||
+          (keyPart === 'F8' && eventCode === 'F8') ||
+          (keyPart === 'F9' && eventCode === 'F9') ||
+          (keyPart === 'F10' && eventCode === 'F10') ||
+          (keyPart === 'F11' && eventCode === 'F11') ||
+          (keyPart === 'F12' && eventCode === 'F12')
+      }
+      
+      return ctrlMatch && cmdMatch && shiftMatch && altMatch && metaMatch && keyMatch
+    }
+    
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      if (matchShortcut(e, shortcutSettings.search)) {
         e.preventDefault()
         const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
         const activeSess = activeConn ? getActiveSessionInPane(activeConn.rootPane) : null
@@ -919,26 +1058,116 @@ const handlePointerUp = () => {
           if (term && term.hasSelection()) {
             setSearchText(term.getSelection())
           }
+          setActiveSearchSessionKey(prev => prev === key ? null : key)
         }
-        setSearchVisible(prev => !prev)
+        return
+      }
+      
+      if (matchShortcut(e, shortcutSettings.splitHorizontal)) {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        if (activeConn) {
+          const activeSess = getActiveSessionInPane(activeConn.rootPane)
+          const pane = findPaneBySessionId(activeConn.rootPane, activeSess?.id || '')
+          if (activeSess && pane) {
+            invoke<string>('get_shell', { id: activeConn.connectionId }).then(newShellId => {
+              const newPaneId = Date.now().toString()
+              splitPane(activeConn.connectionId, pane.id, 'horizontal', newPaneId, newShellId)
+            }).catch(err => {
+              message.error(`分屏失败: ${err}`)
+            })
+          }
+        }
+        return
+      }
+      
+      if (matchShortcut(e, shortcutSettings.splitVertical)) {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        if (activeConn) {
+          const activeSess = getActiveSessionInPane(activeConn.rootPane)
+          const pane = findPaneBySessionId(activeConn.rootPane, activeSess?.id || '')
+          if (activeSess && pane) {
+            invoke<string>('get_shell', { id: activeConn.connectionId }).then(newShellId => {
+              const newPaneId = Date.now().toString()
+              splitPane(activeConn.connectionId, pane.id, 'vertical', newPaneId, newShellId)
+            }).catch(err => {
+              message.error(`分屏失败: ${err}`)
+            })
+          }
+        }
+        return
+      }
+      
+      if (matchShortcut(e, shortcutSettings.newSession)) {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        if (activeConn) {
+          const activeSess = getActiveSessionInPane(activeConn.rootPane)
+          const pane = findPaneBySessionId(activeConn.rootPane, activeSess?.id || '')
+          if (pane) {
+            invoke<string>('get_shell', { id: activeConn.connectionId }).then(newShellId => {
+              addSessionToPane(activeConn.connectionId, pane.id, newShellId)
+            }).catch(err => {
+              message.error(`新建会话失败: ${err}`)
+            })
+          }
+        }
+        return
+      }
+      
+      if (matchShortcut(e, shortcutSettings.closeSession)) {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        if (activeConn) {
+          const activeSess = getActiveSessionInPane(activeConn.rootPane)
+          if (activeSess) {
+            const pane = findPaneBySessionId(activeConn.rootPane, activeSess.id)
+            handleCloseSession(activeConn.connectionId, activeSess.id, pane?.id)
+          }
+        }
+        return
+      }
+      
+if (matchShortcut(e, shortcutSettings.nextSession)) {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        if (activeConn) {
+          const activeSess = getActiveSessionInPane(activeConn.rootPane)
+          const pane = findPaneBySessionId(activeConn.rootPane, activeSess?.id || '')
+          if (pane && pane.sessions.length > 1) {
+            const currentIndex = pane.sessions.findIndex(s => s.id === activeSess?.id)
+            const nextIndex = (currentIndex + 1) % pane.sessions.length
+            setActiveSessionInPane(activeConn.connectionId, pane.id, pane.sessions[nextIndex].id)
+          }
+        }
+        return
+      }
+      
+      if (matchShortcut(e, shortcutSettings.prevSession)) {
+        e.preventDefault()
+        const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+        if (activeConn) {
+          const activeSess = getActiveSessionInPane(activeConn.rootPane)
+          const pane = findPaneBySessionId(activeConn.rootPane, activeSess?.id || '')
+          if (pane && pane.sessions.length > 1) {
+            const currentIndex = pane.sessions.findIndex(s => s.id === activeSess?.id)
+            const prevIndex = (currentIndex - 1 + pane.sessions.length) % pane.sessions.length
+            setActiveSessionInPane(activeConn.connectionId, pane.id, pane.sessions[prevIndex].id)
+          }
+        }
+        return
+      }
+      
+      if (matchShortcut(e, shortcutSettings.fullscreen)) {
+        e.preventDefault()
+        handleToggleFullscreen('')
+        return
       }
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeConnectionId, connectedConnections])
-
-  // 右侧面板宽度变化时调整终端尺寸
-  useEffect(() => {
-    if (prevPanelWidthRef.current !== rightPanelWidth) {
-      prevPanelWidthRef.current = rightPanelWidth
-      const timer = setTimeout(() => {
-        Object.values(fitAddons.current).forEach(addon => {
-          try { addon?.fit() } catch {}
-        })
-      }, 350)
-      return () => clearTimeout(timer)
-    }
-  }, [rightPanelWidth, prevPanelWidthRef])
+    window.addEventListener('keydown', handleKeyDown, true)
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [activeConnectionId, connectedConnections, shortcutSettings, splitPane, addSessionToPane, setActiveSessionInPane, handleCloseSession, handleToggleFullscreen, message])
 
   if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
     return (
@@ -1040,6 +1269,7 @@ const handlePointerUp = () => {
             padding: 4,
           }}
           onContextMenu={(e) => handleContextMenu(e, `${connectionId}_${s.id}`)}
+          onClick={() => setActiveSessionInPane(connectionId, pane.id, s.id)}
         />
       ),
     }))
@@ -1065,6 +1295,108 @@ const handlePointerUp = () => {
             }}
           />
         )}
+        
+        <PaneToolbar
+          sessionKey={`${connectionId}_${activeSess.id}`}
+          searchAddons={searchAddons}
+          shortcutSettings={shortcutSettings}
+          hasSplitPanel={hasSplitChildren(activeConnection?.rootPane || null)}
+          searchVisible={activeSearchSessionKey === `${connectionId}_${activeSess.id}`}
+          searchText={searchText}
+          searchMode={searchMode}
+          onToggleSearch={() => {
+            const currentKey = `${connectionId}_${activeSess.id}`
+            if (activeSearchSessionKey === currentKey) {
+              setActiveSearchSessionKey(null)
+            } else {
+              setActiveSearchSessionKey(currentKey)
+            }
+          }}
+          onSearchTextChange={setSearchText}
+          onSearchModeChange={setSearchMode}
+          onSplitHorizontal={async () => {
+            try {
+              const newShellId = await invoke<string>('get_shell', { id: connectionId })
+              const newPaneId = Date.now().toString()
+              splitPane(connectionId, pane.id, 'horizontal', newPaneId, newShellId)
+            } catch (err) {
+              message.error(`分屏失败: ${err}`)
+            }
+          }}
+          onSplitVertical={async () => {
+            try {
+              const newShellId = await invoke<string>('get_shell', { id: connectionId })
+              const newPaneId = Date.now().toString()
+              splitPane(connectionId, pane.id, 'vertical', newPaneId, newShellId)
+            } catch (err) {
+              message.error(`分屏失败: ${err}`)
+            }
+          }}
+          onCloseSplit={async () => {
+            const conn = connectedConnections.find(c => c.connectionId === connectionId)
+            if (!conn || !hasSplitChildren(conn.rootPane)) return
+            for (const s of pane.sessions) {
+              const key = `${connectionId}_${s.id}`
+              if (unlistenersRef.current[key]) {
+                unlistenersRef.current[key]()
+                delete unlistenersRef.current[key]
+              }
+              if (s.shellId) await invoke('close_shell', { id: s.shellId }).catch(() => {})
+              if (terminalInstances.current[key]) {
+                terminalInstances.current[key].dispose()
+                delete terminalInstances.current[key]
+              }
+              delete fitAddons.current[key]
+              delete searchAddons.current[key]
+              delete resizeObserversRef.current[key]
+              initializedRef.current.delete(key)
+            }
+            closePane(connectionId, pane.id)
+          }}
+          onClear={() => {
+            const term = terminalInstances.current[`${connectionId}_${activeSess.id}`]
+            if (term) term.clear()
+          }}
+          onExport={() => {
+            const term = terminalInstances.current[`${connectionId}_${activeSess.id}`]
+            if (!term) return
+            const content = term.getSelection() || ''
+            if (!content) {
+              const buffer = term.buffer.active
+              const lines: string[] = []
+              for (let i = 0; i < buffer.length; i++) {
+                lines.push(buffer.getLine(i)?.translateToString(true) || '')
+              }
+              const fullContent = lines.join('\n')
+              if (fullContent.trim()) {
+                const blob = new Blob([fullContent], { type: 'text/plain' })
+                const url = URL.createObjectURL(blob)
+                const a = document.createElement('a')
+                a.href = url
+                a.download = `terminal-${new Date().toISOString().slice(0, 10)}.txt`
+                document.body.appendChild(a)
+                a.click()
+                document.body.removeChild(a)
+                URL.revokeObjectURL(url)
+                message.success('已导出终端输出')
+              } else {
+                message.info('终端无内容可导出')
+              }
+            } else {
+              const blob = new Blob([content], { type: 'text/plain' })
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `terminal-selection.txt`
+              document.body.appendChild(a)
+              a.click()
+              document.body.removeChild(a)
+              URL.revokeObjectURL(url)
+              message.success('已导出选中内容')
+            }
+          }}
+        />
+        
         <Tabs
           activeKey={activeSess.id}
           onChange={sid => {
@@ -1139,11 +1471,7 @@ const handlePointerUp = () => {
           }
         />
       ),
-      children: (
-        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-          {renderSplitPane(conn.rootPane, conn.connectionId)}
-        </div>
-      ),
+      children: <div />,
     }
   })
 
@@ -1167,18 +1495,47 @@ const handlePointerUp = () => {
         flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleConnectionDragEnd}>
-          <SortableContext items={connectedConnections.map(c => c.connectionId)} strategy={horizontalListSortingStrategy}>
-            <Tabs
-              activeKey={activeConnectionId || undefined}
-              onChange={setActiveConnection}
-              items={[...connectionItems, ...disconnectedItems]}
-              style={{ height: '100%' }}
-              tabBarStyle={{ margin: 0, padding: '0 12px', background: 'var(--color-bg-elevated)' }}
-              destroyInactiveTabPane={false}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center',
+          background: 'var(--color-bg-elevated)',
+          padding: '0 8px',
+          gap: 8,
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleConnectionDragEnd}>
+              <SortableContext items={connectedConnections.map(c => c.connectionId)} strategy={horizontalListSortingStrategy}>
+                <Tabs
+                  activeKey={activeConnectionId || undefined}
+                  onChange={setActiveConnection}
+                  items={[...connectionItems, ...disconnectedItems]}
+                  style={{ height: 40 }}
+                  tabBarStyle={{ margin: 0, padding: '0 4px', background: 'transparent' }}
+                  destroyInactiveTabPane={false}
+                />
+              </SortableContext>
+            </DndContext>
+          </div>
+          <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
+            <Button
+              type="text"
+              size="small"
+              icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+              onClick={() => handleToggleFullscreen('')}
+              style={{ color: 'var(--color-text-tertiary)' }}
             />
-          </SortableContext>
-        </DndContext>
+          </Tooltip>
+        </div>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          {connectedConnections.map(conn => (
+            <div 
+              key={conn.connectionId} 
+              style={{ height: '100%', display: activeConnectionId === conn.connectionId ? 'flex' : 'none', flexDirection: 'column' }}
+            >
+              {renderSplitPane(conn.rootPane, conn.connectionId)}
+            </div>
+          ))}
+        </div>
       </div>
 
       <div style={{
@@ -1240,89 +1597,9 @@ const handlePointerUp = () => {
             if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
               setFileManagerVisible(activeConnectionId, false)
             }
-          }
+}
         }}
-      />
-
-      {activeConnection && activeSession && (
-        <TerminalToolbar
-          sessionKey={`${activeConnection.connectionId}_${activeSession.id}`}
-          connectionName={activeConnection.connection.name}
-          terminalInstances={terminalInstances}
-          toolbarState={toolbarState}
-          autoHideToolbar={autoHideToolbar}
-          mouseOverBall={mouseOverBall}
-          searchVisible={searchVisible}
-          isFullscreen={isFullscreen}
-          rightPanelWidth={rightPanelWidth}
-          shortcutSettings={shortcutSettings}
-          hasSplitPanel={hasSplitChildren(activeConnection.rootPane)}
-          onShowSearch={() => setSearchVisible(!searchVisible)}
-          onToggleFullscreen={handleToggleFullscreen}
-          onSplitHorizontal={async () => {
-            try {
-              const pane = findPaneBySessionId(activeConnection.rootPane, activeSession.id)
-              if (!pane) return
-              const newShellId = await invoke<string>('get_shell', { id: activeConnection.connectionId })
-              const newPaneId = Date.now().toString()
-              splitPane(activeConnection.connectionId, pane.id, 'horizontal', newPaneId, newShellId)
-            } catch (err) {
-              message.error(`分屏失败: ${err}`)
-            }
-          }}
-          onSplitVertical={async () => {
-            try {
-              const pane = findPaneBySessionId(activeConnection.rootPane, activeSession.id)
-              if (!pane) return
-              const newShellId = await invoke<string>('get_shell', { id: activeConnection.connectionId })
-              const newPaneId = Date.now().toString()
-              splitPane(activeConnection.connectionId, pane.id, 'vertical', newPaneId, newShellId)
-            } catch (err) {
-              message.error(`分屏失败: ${err}`)
-            }
-          }}
-          onCloseSplit={async () => {
-            if (!hasSplitChildren(activeConnection.rootPane)) return
-            const pane = findPaneBySessionId(activeConnection.rootPane, activeSession.id)
-            if (!pane) return
-            for (const s of pane.sessions) {
-              const key = `${activeConnection.connectionId}_${s.id}`
-              if (unlistenersRef.current[key]) {
-                unlistenersRef.current[key]()
-                delete unlistenersRef.current[key]
-              }
-              if (s.shellId) await invoke('close_shell', { id: s.shellId }).catch(() => {})
-              if (terminalInstances.current[key]) {
-                terminalInstances.current[key].dispose()
-                delete terminalInstances.current[key]
-              }
-              delete fitAddons.current[key]
-              delete searchAddons.current[key]
-              delete resizeObserversRef.current[key]
-              initializedRef.current.delete(key)
-            }
-            closePane(activeConnection.connectionId, pane.id)
-          }}
-          onToggleAutoHide={() => setAutoHideToolbar(!autoHideToolbar)}
-          onMouseLeave={() => {
-            if (autoHideToolbar && !searchVisible) {
-              setToolbarState('ball')
-              setMouseOverBall(false)
-            }
-          }}
-          onMouseEnterBall={() => {
-            setMouseOverBall(true)
-            setToolbarState('full')
-          }}
-          setSearchText={setSearchText}
-          handleSearch={handleSearch}
-          closeSearch={() => {
-            setSearchVisible(false)
-            setSearchText('')
-          }}
-          searchText={searchText}
         />
-      )}
 
       {contextMenu.visible && (
         <div
@@ -1333,16 +1610,17 @@ const handlePointerUp = () => {
             top: contextMenu.y,
             zIndex: 1000,
             background: 'var(--color-bg-elevated)',
-            borderRadius: 6,
+            borderRadius: 4,
             boxShadow: 'var(--shadow-lg)',
             overflow: 'hidden',
-            minWidth: 160,
+            minWidth: 120,
+            fontSize: 13,
           }}
           onClick={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
         >
           <div
-            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={handleCopy}
             onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -1350,7 +1628,7 @@ const handlePointerUp = () => {
             <CopyOutlined /> 复制
           </div>
           <div
-            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={handlePaste}
             onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -1358,26 +1636,25 @@ const handlePointerUp = () => {
             <SnippetsOutlined /> 粘贴
           </div>
           <div
-            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={handleSelectAll}
             onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
           >
             <CheckCircleOutlined /> 全选
           </div>
-          <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
           <div
-            style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
             onClick={handleFindFromContextMenu}
             onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
             onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
           >
-            <SearchOutlined /> 查找 <span style={{ marginLeft: 'auto', color: 'var(--color-text-tertiary)', fontSize: 11 }}>Ctrl+F</span>
+            <SearchOutlined /> 查找
           </div>
-          <div style={{ height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+          <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
           {isContextMenuOnSplitPanel() ? (
             <div
-              style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
               onClick={handleCloseSplitFromContextMenu}
               onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
               onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -1387,7 +1664,7 @@ const handlePointerUp = () => {
           ) : (
             <>
               <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
                 onClick={handleSplitHorizontalFromContextMenu}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
@@ -1395,7 +1672,7 @@ const handlePointerUp = () => {
                 <BorderHorizontalOutlined /> 水平分屏
               </div>
               <div
-                style={{ padding: '8px 16px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
                 onClick={handleSplitVerticalFromContextMenu}
                 onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
