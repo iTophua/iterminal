@@ -21,6 +21,7 @@ pub struct ConnectionRecord {
     pub last_connected_at: Option<String>,
     pub created_at: Option<String>,
     pub updated_at: Option<String>,
+    pub sort_order: Option<i32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -132,6 +133,15 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
         }
     }
 
+    if let Err(e) = conn.execute(
+        "ALTER TABLE connections ADD COLUMN sort_order INTEGER DEFAULT 0",
+        [],
+    ) {
+        if !e.to_string().contains("duplicate column") {
+            eprintln!("Warning: Failed to add sort_order column: {}", e);
+        }
+    }
+
     // 标记初始化完成
     DB_INITIALIZED.store(true, Ordering::SeqCst);
 
@@ -143,7 +153,7 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
     let conn = get_db().map_err(|e| e.to_string())?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at FROM connections ORDER BY name"
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order FROM connections ORDER BY sort_order, name"
     ).map_err(|e| e.to_string())?;
 
     let connections = stmt
@@ -164,6 +174,7 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
                 last_connected_at: row.get(9)?,
                 created_at: row.get(10)?,
                 updated_at: row.get(11)?,
+                sort_order: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -375,7 +386,7 @@ pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionReco
     let limit = limit.unwrap_or(10);
 
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at FROM connections WHERE last_connected_at IS NOT NULL ORDER BY last_connected_at DESC LIMIT ?"
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order FROM connections WHERE last_connected_at IS NOT NULL ORDER BY last_connected_at DESC LIMIT ?"
     ).map_err(|e| e.to_string())?;
 
     let connections = stmt
@@ -396,6 +407,7 @@ pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionReco
                 last_connected_at: row.get(9)?,
                 created_at: row.get(10)?,
                 updated_at: row.get(11)?,
+                sort_order: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -403,6 +415,23 @@ pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionReco
         .map_err(|e| e.to_string())?;
 
     Ok(connections)
+}
+
+#[tauri::command]
+pub fn update_connection_order(order: Vec<(String, i32)>) -> Result<bool, String> {
+    let conn = get_db().map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    for (id, sort_order) in order {
+        tx.execute(
+            "UPDATE connections SET sort_order = ? WHERE id = ?",
+            rusqlite::params![sort_order, id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[cfg(test)]

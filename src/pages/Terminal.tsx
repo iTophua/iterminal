@@ -22,7 +22,7 @@ import { SearchAddon } from 'xterm-addon-search'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { Panel, Group, Separator } from 'react-resizable-panels'
@@ -41,9 +41,10 @@ import { PaneToolbar } from './terminal/components'
 interface SortableTabProps {
   id: string
   label: React.ReactNode
+  connectionName?: string
 }
 
-function SortableTab({ id, label }: SortableTabProps) {
+function SortableTab({ id, label, connectionName }: SortableTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
 
   const style: React.CSSProperties = {
@@ -58,7 +59,7 @@ function SortableTab({ id, label }: SortableTabProps) {
   }
 
   return (
-    <span ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <span ref={setNodeRef} style={style} {...attributes} {...listeners} data-connection-tab-id={id} data-connection-name={connectionName}>
       <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
       {label}
     </span>
@@ -170,6 +171,7 @@ function Terminal() {
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
+  const removeConnectionFromStore = useTerminalStore(state => state.removeConnectionFromStore)
   const markConnectionDisconnected = useTerminalStore(state => state.markConnectionDisconnected)
   const removeDisconnectedConnection = useTerminalStore(state => state.removeDisconnectedConnection)
   const addConnection = useTerminalStore(state => state.addConnection)
@@ -239,6 +241,10 @@ function Terminal() {
   const [draggedSession, setDraggedSession] = useState<{ sessionId: string; connectionId: string; title: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null)
+  // 拖拽连接 tab 到新窗口功能（暂时禁用）
+  // const [connectionTabDragToNewWindow, setConnectionTabDragToNewWindow] = useState(false)
+  // const [isConnectionDragging, setIsConnectionDragging] = useState(false)
+  // const connectionDragIdRef = useRef<string | null>(null)
   const paneRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const draggedSessionRef = useRef<{ sessionId: string; connectionId: string; title: string } | null>(null)
   const dropTargetRef = useRef<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
@@ -252,6 +258,30 @@ function Terminal() {
   useEffect(() => {
     dropTargetRef.current = dropTarget
   }, [dropTarget])
+  
+  // 拖拽连接 tab 到新窗口功能（暂时禁用）
+  // useEffect(() => {
+  //   if (!isConnectionDragging) return
+  //   
+  //   const handleConnectionPointerMove = (e: PointerEvent) => {
+  //     const clientX = e.clientX
+  //     const clientY = e.clientY
+  //     const windowWidth = window.innerWidth
+  //     const windowHeight = window.innerHeight
+  //     const edgeThreshold = 60
+  //     
+  //     const atEdge = clientX <= edgeThreshold || clientX >= windowWidth - edgeThreshold ||
+  //                    clientY <= edgeThreshold || clientY >= windowHeight - edgeThreshold
+  //     
+  //     setConnectionTabDragToNewWindow(atEdge)
+  //   }
+  //   
+  //   window.addEventListener('pointermove', handleConnectionPointerMove)
+  //   
+  //   return () => {
+  //     window.removeEventListener('pointermove', handleConnectionPointerMove)
+  //   }
+  // }, [isConnectionDragging])
 
   useEffect(() => {
     apiLogVisibleRef.current = apiLogVisible
@@ -312,6 +342,7 @@ const handlePointerUp = () => {
       setDragPosition({ x: e.clientX + 10, y: e.clientY + 10 })
 
       const { clientX, clientY } = e
+
       let foundTarget: { paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null = null
 
       paneRefs.current.forEach((el, paneKey) => {
@@ -1459,6 +1490,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       label: (
         <SortableTab
           id={conn.connectionId}
+          connectionName={conn.connection.name}
           label={
             <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
               {conn.connection.username}@{conn.connection.host}
@@ -1475,8 +1507,82 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     }
   })
 
+  // 拖拽连接 tab 到新窗口功能（暂时禁用）
+  // const handleConnectionDragStart = (event: DragStartEvent) => {
+  //   connectionDragIdRef.current = String(event.active.id)
+  //   setIsConnectionDragging(true)
+  //   setConnectionTabDragToNewWindow(false)
+  // }
+
+  // const handleConnectionDragEnd = async (event: DragEndEvent) => {
+  //   const { active, over } = event
+  //   const connectionId = connectionDragIdRef.current
+  //   
+  //   setIsConnectionDragging(false)
+  //   connectionDragIdRef.current = null
+  //   
+  //   if (connectionTabDragToNewWindow && connectionId) {
+  //     const conn = connectedConnections.find(c => c.connectionId === connectionId)
+  //     if (conn) {
+  //       try {
+  //         const sessions = getAllSessions(conn.rootPane)
+  //         const sessionsWithShell = sessions.filter(s => s.shellId)
+  //         
+  //         if (sessionsWithShell.length > 0) {
+  //           const sessionsJson = JSON.stringify(sessionsWithShell.map(s => ({
+  //             id: s.id,
+  //             shellId: s.shellId,
+  //             title: s.title,
+  //           })))
+  //           
+  //           await invoke<string>('create_terminal_window', {
+  //             connectionId: connectionId,
+  //             sessionsJson: sessionsJson,
+  //             connectionName: conn.connection.name,
+  //           })
+  //           
+  //           for (const s of sessions) {
+  //             const key = `${connectionId}_${s.id}`
+  //             if (unlistenersRef.current[key]) {
+  //               unlistenersRef.current[key]()
+  //               delete unlistenersRef.current[key]
+  //             }
+  //             if (terminalInstances.current[key]) {
+  //               terminalInstances.current[key].dispose()
+  //               delete terminalInstances.current[key]
+  //             }
+  //             delete fitAddons.current[key]
+  //             delete searchAddons.current[key]
+  //             delete resizeObserversRef.current[key]
+  //             initializedRef.current.delete(key)
+  //           }
+  //           
+  //           removeConnectionFromStore(connectionId)
+  //         } else {
+  //           message.warning('该连接没有活动的终端会话')
+  //         }
+  //       } catch (err) {
+  //         message.error(`创建新窗口失败: ${err}`)
+  //       }
+  //     }
+  //     setConnectionTabDragToNewWindow(false)
+  //     return
+  //   }
+  //   
+  //   if (over && active.id !== over.id) {
+  //     const oldIndex = connectedConnections.findIndex(c => c.connectionId === active.id)
+  //     const newIndex = connectedConnections.findIndex(c => c.connectionId === over.id)
+  //     if (oldIndex !== -1 && newIndex !== -1) {
+  //       reorderConnections(oldIndex, newIndex)
+  //     }
+  //   }
+  //   
+  //   setConnectionTabDragToNewWindow(false)
+  // }
+
   const handleConnectionDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
+    
     if (over && active.id !== over.id) {
       const oldIndex = connectedConnections.findIndex(c => c.connectionId === active.id)
       const newIndex = connectedConnections.findIndex(c => c.connectionId === over.id)
@@ -1712,6 +1818,38 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         </span>,
         document.body
       ) : null}
+      
+      {/* 拖拽连接 tab 到新窗口功能（暂时禁用） */}
+      {/* {connectionTabDragToNewWindow && createPortal(
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          border: '4px solid var(--color-primary)',
+          pointerEvents: 'none',
+          zIndex: 9999,
+          boxShadow: 'inset 0 0 40px rgba(0, 185, 107, 0.4)',
+          background: 'rgba(0, 185, 107, 0.05)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+          <div style={{
+            background: 'var(--color-primary)',
+            color: '#fff',
+            padding: '12px 24px',
+            borderRadius: 8,
+            fontSize: 14,
+            fontWeight: 500,
+            boxShadow: '0 4px 12px rgba(0, 185, 107, 0.4)',
+          }}>
+            ↗ 释放以在新窗口打开
+          </div>
+        </div>,
+        document.body
+      )} */}
     </div>
   )
 }

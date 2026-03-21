@@ -78,6 +78,83 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const [tempShortcutKey, setTempShortcutKey] = useState<string>('')
 
   useEffect(() => {
+    if (!editingShortcutKey) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      
+      if (e.key === 'Escape') {
+        setEditingShortcutKey(null)
+        setTempShortcutKey('')
+        return
+      }
+      
+      if (e.key === 'Enter' && tempShortcutKey) {
+        updateShortcutSettings({ [editingShortcutKey as keyof ShortcutSettings]: tempShortcutKey })
+        setEditingShortcutKey(null)
+        setTempShortcutKey('')
+        return
+      }
+      
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
+      const parts: string[] = []
+      
+      if (e.ctrlKey) parts.push('Ctrl')
+      if (e.altKey) parts.push('Alt')
+      if (e.shiftKey) parts.push('Shift')
+      if (isMac && e.metaKey) parts.push('Cmd')
+      if (!isMac && e.metaKey) parts.push('Meta')
+      
+      const modifierKeys = ['Control', 'Shift', 'Alt', 'Meta']
+      
+      if (!modifierKeys.includes(e.key)) {
+        const codeToKey: Record<string, string> = {
+          'Space': 'Space',
+          'ArrowUp': 'Up',
+          'ArrowDown': 'Down',
+          'ArrowLeft': 'Left',
+          'ArrowRight': 'Right',
+          'Enter': 'Enter',
+          'Backspace': 'Backspace',
+          'Delete': 'Delete',
+          'Tab': 'Tab',
+        }
+        
+        let keyName = e.code
+        if (keyName.startsWith('Key')) {
+          keyName = keyName.slice(3)
+        } else if (keyName.startsWith('Digit')) {
+          keyName = keyName.slice(5)
+        } else if (keyName.startsWith('Numpad')) {
+          keyName = 'Num' + keyName.slice(6)
+        } else if (codeToKey[keyName]) {
+          keyName = codeToKey[keyName]
+        }
+        
+        parts.push(keyName.toUpperCase())
+      }
+      
+      setTempShortcutKey(parts.join('+'))
+    }
+
+    const handleBlur = () => {
+      if (tempShortcutKey && editingShortcutKey) {
+        updateShortcutSettings({ [editingShortcutKey as keyof ShortcutSettings]: tempShortcutKey })
+      }
+      setEditingShortcutKey(null)
+      setTempShortcutKey('')
+    }
+
+    window.addEventListener('keydown', handleKeyDown, true)
+    window.addEventListener('mousedown', handleBlur, true)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown, true)
+      window.removeEventListener('mousedown', handleBlur, true)
+    }
+  }, [editingShortcutKey, tempShortcutKey, updateShortcutSettings])
+
+  useEffect(() => {
     const fetchVersion = async () => {
       try {
         const version = await getVersion()
@@ -717,45 +794,6 @@ ${claudeConfig}`}
       { key: 'prevSession', label: '上一会话', description: '切换到上一个会话' },
     ]
 
-    const handleKeyDown = (e: React.KeyboardEvent, key: keyof ShortcutSettings) => {
-      e.preventDefault()
-      
-      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
-      const parts: string[] = []
-      
-      if (isMac) {
-        if (e.ctrlKey) parts.push('Ctrl')
-        if (e.altKey) parts.push('Alt')
-        if (e.shiftKey) parts.push('Shift')
-        if (e.metaKey) parts.push('Cmd')
-      } else {
-        if (e.ctrlKey) parts.push('Ctrl')
-        if (e.altKey) parts.push('Alt')
-        if (e.shiftKey) parts.push('Shift')
-        if (e.metaKey) parts.push('Meta')
-      }
-      
-      const keyName = e.key.toUpperCase()
-      const modifierKeys = isMac 
-        ? ['CONTROL', 'SHIFT', 'ALT', 'META', 'CMD']
-        : ['CONTROL', 'SHIFT', 'ALT', 'META']
-      
-      if (!modifierKeys.includes(keyName)) {
-        parts.push(keyName === ' ' ? 'Space' : keyName)
-      }
-      
-      const validModifiers = isMac 
-        ? ['CTRL', 'SHIFT', 'ALT', 'CMD']
-        : ['CTRL', 'SHIFT', 'ALT', 'META']
-      
-      if (parts.length > 1 || (parts.length === 1 && !validModifiers.includes(parts[0]))) {
-        const shortcut = parts.join('+')
-        setTempShortcutKey(shortcut)
-        updateShortcutSettings({ [key]: shortcut })
-        setEditingShortcutKey(null)
-      }
-    }
-
     return (
       <div style={{ padding: '0 16px' }}>
         <div style={{ marginBottom: 16 }}>
@@ -763,7 +801,7 @@ ${claudeConfig}`}
             终端快捷键
           </Text>
           <Text type="secondary" style={{ fontSize: 13 }}>
-            点击快捷键输入框，然后按下新的组合键来修改
+            点击快捷键输入框，按下组合键后按 Enter 确认（按 Esc 取消）
           </Text>
         </div>
 
@@ -782,21 +820,36 @@ ${claudeConfig}`}
                 <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>{description}</Text>
               </div>
               {editingShortcutKey === key ? (
-                <Input
-autoFocus
-                   style={{ width: 120, textAlign: 'center' }}
-                   value={formatShortcutForDisplay(tempShortcutKey)}
-                   onKeyDown={(e) => handleKeyDown(e, key)}
-                   onBlur={() => setEditingShortcutKey(null)}
-                   placeholder="按下组合键"
-                 />
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 140 }}>
+                  <div
+                    style={{ 
+                      width: '100%',
+                      height: 32,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      background: 'var(--color-bg-elevated)',
+                      border: '2px solid var(--color-primary)',
+                      borderRadius: 6,
+                      fontFamily: 'monospace',
+                      color: tempShortcutKey ? 'var(--color-text)' : 'var(--color-text-tertiary)',
+                      fontSize: 13,
+                      padding: '0 8px',
+                    }}
+                  >
+                    {tempShortcutKey ? formatShortcutForDisplay(tempShortcutKey) : '按下组合键...'}
+                  </div>
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    {tempShortcutKey ? 'Enter 确认 / Esc 取消' : 'Esc 取消'}
+                  </Text>
+                </div>
               ) : (
                 <Tooltip title="点击修改">
                   <Button
-                    style={{ minWidth: 120, fontFamily: 'monospace' }}
+                    style={{ minWidth: 140, fontFamily: 'monospace' }}
                     onClick={() => {
                       setEditingShortcutKey(key)
-                      setTempShortcutKey(shortcutSettings[key])
+                      setTempShortcutKey('')
                     }}
                   >
                     {formatShortcutForDisplay(shortcutSettings[key])}

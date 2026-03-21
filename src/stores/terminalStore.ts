@@ -112,6 +112,10 @@ export interface ShortcutSettings {
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
+export const APP_SHORTCUTS = {
+  openSettings: isMac ? 'Cmd+,' : 'Ctrl+,',
+}
+
 export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = isMac
   ? {
       clearScreen: 'Cmd+L',
@@ -184,6 +188,8 @@ interface TerminalState {
   closeSession: (connectionId: string, sessionId: string) => void
   // 关闭连接
   closeConnection: (connectionId: string) => void
+  // 移除连接（仅前端状态，不断开后端连接）
+  removeConnectionFromStore: (connectionId: string) => void
   // 设置激活的连接
   setActiveConnection: (connectionId: string | null) => void
   // 设置激活的会话
@@ -436,6 +442,36 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   closeConnection: (connectionId) => {
+    set((state) => {
+      const newConnections = state.connectedConnections.filter(c => c.connectionId !== connectionId)
+      const newActiveId = state.activeConnectionId === connectionId
+        ? (newConnections.length > 0 ? newConnections[0].connectionId : null)
+        : state.activeConnectionId
+
+      const newTransferTasks = { ...state.transferTasks }
+      delete newTransferTasks[connectionId]
+      const newFileManagerVisible = { ...state.fileManagerVisible }
+      delete newFileManagerVisible[connectionId]
+      const newTransferManagerVisible = { ...state.transferManagerVisible }
+      delete newTransferManagerVisible[connectionId]
+      const newCurrentPaths = { ...state.currentPaths }
+      delete newCurrentPaths[connectionId]
+      const newExpandedKeys = { ...state.expandedKeys }
+      delete newExpandedKeys[connectionId]
+
+      return {
+        connectedConnections: newConnections,
+        activeConnectionId: newActiveId,
+        transferTasks: newTransferTasks,
+        fileManagerVisible: newFileManagerVisible,
+        transferManagerVisible: newTransferManagerVisible,
+        currentPaths: newCurrentPaths,
+        expandedKeys: newExpandedKeys,
+      }
+    })
+  },
+
+  removeConnectionFromStore: (connectionId) => {
     set((state) => {
       const newConnections = state.connectedConnections.filter(c => c.connectionId !== connectionId)
       const newActiveId = state.activeConnectionId === connectionId

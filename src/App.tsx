@@ -1,13 +1,16 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Modal, Button, Space, message } from 'antd'
 import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
+// 拖拽连接 tab 到新窗口功能（暂时禁用）
+// import TerminalWindowPage from './pages/TerminalWindow'
 import Transfers from './pages/Transfers'
 import { useTerminalStore, type SplitPane } from './stores/terminalStore'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import './styles/global.css'
 
 const { Content } = Layout
@@ -67,6 +70,74 @@ function WindowStateRestorer() {
   }, [])
 
   return null
+}
+
+function MenuActionHandler() {
+  const navigate = useNavigate()
+  const setSettingsVisible = useTerminalStore(s => s.setSettingsVisible)
+  const [aboutVisible, setAboutVisible] = useState(false)
+
+  useEffect(() => {
+    const unlisten = listen<string>('menu-action', (event) => {
+      const action = event.payload
+      switch (action) {
+        case 'new-connection':
+          navigate('/connections')
+          break
+        case 'import-connections':
+          window.dispatchEvent(new CustomEvent('import-connections'))
+          break
+        case 'export-connections':
+          window.dispatchEvent(new CustomEvent('export-connections'))
+          break
+        case 'open-settings':
+          setSettingsVisible(true)
+          break
+        case 'copy':
+          document.execCommand('copy')
+          break
+        case 'paste':
+          document.execCommand('paste')
+          break
+        case 'select-all':
+          document.execCommand('selectAll')
+          break
+        case 'toggle-fullscreen':
+          getCurrentWindow().toggleMaximize()
+          break
+        case 'show-about':
+          setAboutVisible(true)
+          break
+      }
+    })
+
+    return () => {
+      unlisten.then(fn => fn())
+    }
+  }, [navigate, setSettingsVisible])
+
+  if (!aboutVisible) return null
+
+  return (
+    <Modal
+      open={aboutVisible}
+      title="关于 iTerminal"
+      onCancel={() => setAboutVisible(false)}
+      footer={<Button onClick={() => setAboutVisible(false)}>关闭</Button>}
+      width={400}
+    >
+      <div style={{ textAlign: 'center', padding: '16px 0' }}>
+        <div style={{ fontSize: 48, marginBottom: 12 }}>🖥️</div>
+        <div style={{ fontSize: 20, fontWeight: 'bold', marginBottom: 8 }}>iTerminal</div>
+        <div style={{ color: 'var(--color-text-secondary)', marginBottom: 16 }}>
+          SSH 连接管理器
+        </div>
+        <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+          一款现代化的 SSH 终端管理工具
+        </div>
+      </div>
+    </Modal>
+  )
 }
 
 function SessionRestorer() {
@@ -268,21 +339,31 @@ function MainContent() {
 function App() {
   return (
     <BrowserRouter>
+      <Routes>
+        {/* 拖拽连接 tab 到新窗口功能（暂时禁用） */}
+        {/* <Route path="/terminal-window" element={<TerminalWindowPage />} /> */}
+        <Route path="/*" element={<MainApp />} />
+      </Routes>
+    </BrowserRouter>
+  )
+}
+
+function MainApp() {
+  return (
+    <>
       <FontPreloader />
       <WindowStateRestorer />
       <SessionRestorer />
       <SessionSaver />
+      <MenuActionHandler />
       <Layout style={{ minHeight: '100vh', background: 'var(--color-bg-container)' }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>
-          {/* 左侧导航栏 */}
           <Sidebar />
 
-          {/* 主内容区 */}
           <MainContent />
         </Layout>
 
-        {/* 底部状态栏 */}
         <div style={{
           height: 32,
           background: 'var(--color-bg-elevated)',
@@ -296,7 +377,7 @@ function App() {
           iTerminal - SSH 连接管理器 ©2026
         </div>
       </Layout>
-    </BrowserRouter>
+    </>
   )
 }
 

@@ -6,13 +6,9 @@ import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
 import SettingsPanel from './SettingsPanel'
 import { STORAGE_KEYS } from '../config/constants'
+import { getConnections } from '../services/database'
 
 const { Sider } = Layout
-
-interface Connection {
-  id: string
-  group: string
-}
 
 function Sidebar() {
   const navigate = useNavigate()
@@ -28,13 +24,12 @@ function Sidebar() {
   const transferringCount = useTransferStore(state => state.transferringCount)
   const storeSidebarCollapsed = useTerminalStore(state => state.sidebarCollapsed)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
-  
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.CONNECTIONS)
-    if (saved) {
-      const connections: Connection[] = JSON.parse(saved)
+const settingsVisible = useTerminalStore(state => state.settingsVisible)
+  const setSettingsVisible = useTerminalStore(state => state.setSettingsVisible)
+
+  const loadGroupData = async () => {
+    try {
+      const connections = await getConnections()
       const uniqueGroups = [...new Set(connections.map(c => c.group))]
       setGroups(['全部', ...uniqueGroups])
       
@@ -43,23 +38,18 @@ function Sidebar() {
         counts[c.group] = (counts[c.group] || 0) + 1
       })
       setGroupCounts(counts)
+    } catch (e) {
+      console.error('Failed to load connections:', e)
     }
+  }
+  
+  useEffect(() => {
+    loadGroupData()
   }, [location.pathname])
   
   useEffect(() => {
     const handleConnectionsUpdate = () => {
-      const saved = localStorage.getItem(STORAGE_KEYS.CONNECTIONS)
-      if (saved) {
-        const connections: Connection[] = JSON.parse(saved)
-        const uniqueGroups = [...new Set(connections.map(c => c.group))]
-        setGroups(['全部', ...uniqueGroups])
-        
-        const counts: Record<string, number> = { '全部': connections.length }
-        connections.forEach(c => {
-          counts[c.group] = (counts[c.group] || 0) + 1
-        })
-        setGroupCounts(counts)
-      }
+      loadGroupData()
     }
     
     window.addEventListener('connections-updated', handleConnectionsUpdate)
@@ -210,7 +200,7 @@ style={{
             justifyContent: collapsed ? 'center' : 'flex-start',
             cursor: 'pointer',
           }}
-          onClick={() => setSettingsOpen(true)}
+          onClick={() => setSettingsVisible(true)}
           onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-spotlight)'}
           onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
         >
@@ -260,8 +250,8 @@ style={{
       
       {/* 设置弹窗 */}
       <SettingsPanel
-        visible={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        visible={settingsVisible}
+        onClose={() => setSettingsVisible(false)}
       />
     </Sider>
   )

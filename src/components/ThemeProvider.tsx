@@ -122,6 +122,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         token: {
           colorPrimary: '#00b96b',
           borderRadius: 6,
+          fontSize: 13,
+          fontSizeSM: 12,
+          fontSizeLG: 14,
         },
         components: {
           Tree: {

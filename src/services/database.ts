@@ -140,6 +140,7 @@ export async function migrateFromLocalStorage(): Promise<number> {
     key_file: conn.keyFile || null,
     group_name: conn.group || null,
     tags: conn.tags && conn.tags.length > 0 ? JSON.stringify(conn.tags) : null,
+    last_connected_at: conn.lastConnectedAt || null,
     created_at: null,
     updated_at: null
   }))
@@ -185,4 +186,10 @@ export async function getRecentConnections(limit?: number): Promise<Connection[]
   await initDatabase()
   const records = await invoke<ConnectionRecord[]>('get_recent_connections', { limit: limit || 10 })
   return records.map(recordToConnection)
+}
+
+export async function updateConnectionOrder(order: { id: string; sortOrder: number }[]): Promise<boolean> {
+  await initDatabase()
+  const backendOrder = order.map(item => [item.id, item.sortOrder])
+  return invoke<boolean>('update_connection_order', { order: backendOrder })
 }
