@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, App, Button } from 'antd'
+import { createPortal } from 'react-dom'
 import {
   CloseOutlined,
   PlusOutlined,
@@ -22,7 +23,7 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { Panel, Group } from 'react-resizable-panels'
+import { Panel, Group, Separator } from 'react-resizable-panels'
 import 'xterm/css/xterm.css'
 import { useTerminalStore, DisconnectedConnection, SplitPane, Session } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
@@ -50,12 +51,13 @@ function SortableTab({ id, label }: SortableTabProps) {
     cursor: 'grab',
     display: 'inline-flex',
     alignItems: 'center',
-    gap: 4,
+    gap: 0,
+    lineHeight: 1,
   }
 
   return (
     <span ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', cursor: 'grab' }} />
+      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
       {label}
     </span>
   )
@@ -66,27 +68,27 @@ interface DraggableSessionTabProps {
   connectionId: string
   title: string
   onClose: () => void
-  onDragStart: (sessionId: string, connectionId: string) => void
+  onDragStart: (sessionId: string, connectionId: string, title: string) => void
 }
 
 function DraggableSessionTab({ sessionId, connectionId, title, onClose, onDragStart }: DraggableSessionTabProps) {
-  const handleDragStart = (e: React.DragEvent) => {
-    e.dataTransfer.setData('sessionId', sessionId)
-    e.dataTransfer.setData('connectionId', connectionId)
-    e.dataTransfer.effectAllowed = 'move'
-    onDragStart(sessionId, connectionId)
-  }
-
   return (
     <span
-      draggable
-      onDragStart={handleDragStart}
-      style={{ fontSize: 12, cursor: 'grab', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+      style={{ fontSize: 12, cursor: 'grab', display: 'inline-flex', alignItems: 'center', gap: 0, padding: '2px 0' }}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return
+        const target = e.target as HTMLElement
+        if (target.closest('.session-tab-close')) return
+        e.stopPropagation()
+        e.preventDefault()
+        onDragStart(sessionId, connectionId, title)
+      }}
     >
-      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)' }} />
-      {title}
+      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
+      <span style={{ lineHeight: '16px' }}>{title}</span>
       <CloseOutlined
-        style={{ marginLeft: 6, fontSize: 10, cursor: 'pointer' }}
+        className="session-tab-close"
+        style={{ marginLeft: 4, fontSize: 9, cursor: 'pointer' }}
         onClick={e => { e.stopPropagation(); onClose() }}
       />
     </span>
@@ -152,6 +154,8 @@ function Terminal() {
   const removeDisconnectedConnection = useTerminalStore(state => state.removeDisconnectedConnection)
   const addConnection = useTerminalStore(state => state.addConnection)
   const splitPane = useTerminalStore(state => state.splitPane)
+  const splitPaneWithPosition = useTerminalStore(state => state.splitPaneWithPosition)
+  const moveSessionToSplitPane = useTerminalStore(state => state.moveSessionToSplitPane)
   const closePane = useTerminalStore(state => state.closePane)
   const addSessionToPane = useTerminalStore(state => state.addSessionToPane)
   const closeSessionInPane = useTerminalStore(state => state.closeSessionInPane)
@@ -222,13 +226,128 @@ function Terminal() {
     return saved ? saved === 'true' : false
   })
 
-  const [draggedSession, setDraggedSession] = useState<{ sessionId: string; connectionId: string } | null>(null)
-  const [dropIndicator, setDropIndicator] = useState<'left' | 'right' | 'top' | 'bottom' | null>(null)
+  const [draggedSession, setDraggedSession] = useState<{ sessionId: string; connectionId: string; title: string } | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
+  const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null)
+  const paneRefs = useRef<Map<string, HTMLDivElement>>(new Map())
+  const draggedSessionRef = useRef<{ sessionId: string; connectionId: string; title: string } | null>(null)
+  const dropTargetRef = useRef<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
+  const dragStartRef = useRef<{ sessionId: string; connectionId: string; title: string } | null>(null)
+  const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 同步 ref
+  useEffect(() => {
+    draggedSessionRef.current = draggedSession
+  }, [draggedSession])
+
+  useEffect(() => {
+    dropTargetRef.current = dropTarget
+  }, [dropTarget])
+
   useEffect(() => {
     apiLogVisibleRef.current = apiLogVisible
   }, [apiLogVisible])
+
+useEffect(() => {
+    
+const handlePointerUp = () => {
+      if (dragTimerRef.current) {
+        clearTimeout(dragTimerRef.current)
+        dragTimerRef.current = null
+      }
+      
+      const currentDropTarget = dropTargetRef.current
+      const currentDraggedSession = draggedSessionRef.current
+      
+      document.body.style.userSelect = ''
+      draggedSessionRef.current = null
+      dragStartRef.current = null
+      setDraggedSession(null)
+      setDropTarget(null)
+      setDragPosition(null)
+      
+      if (currentDropTarget && currentDraggedSession) {
+        const { connectionId: targetConnId, paneId: targetPaneId, direction } = currentDropTarget
+
+        const splitDirection = direction === 'left' || direction === 'right' ? 'horizontal' : 'vertical'
+        const newPosition = direction === 'left' || direction === 'top' ? 'first' : 'second'
+
+        const conn = connectedConnections.find(c => c.connectionId === currentDraggedSession.connectionId)
+        const sourcePane = conn ? findPaneBySessionId(conn.rootPane, currentDraggedSession.sessionId) : null
+        
+        if (sourcePane && sourcePane.sessions.length > 1) {
+          moveSessionToSplitPane(
+            currentDraggedSession.connectionId,
+            sourcePane.id,
+            currentDraggedSession.sessionId,
+            targetPaneId,
+            splitDirection,
+            newPosition
+          )
+        } else {
+          invoke<string>('get_shell', { id: targetConnId }).then(newShellId => {
+            const newPaneId = Date.now().toString()
+            splitPaneWithPosition(targetConnId, targetPaneId, splitDirection, newPaneId, newShellId, newPosition)
+          }).catch(err => {
+            message.error(`分屏失败: ${err}`)
+          })
+        }
+      }
+    }
+
+    const handlePointerMove = (e: PointerEvent) => {
+      const currentDraggedSession = draggedSessionRef.current
+      if (!currentDraggedSession) return
+
+      e.preventDefault()
+      setDragPosition({ x: e.clientX + 10, y: e.clientY + 10 })
+
+      const { clientX, clientY } = e
+      let foundTarget: { paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null = null
+
+      paneRefs.current.forEach((el, paneKey) => {
+        const [paneConnId, paneId] = paneKey.split('::')
+        if (paneConnId !== currentDraggedSession.connectionId) return
+
+        const rect = el.getBoundingClientRect()
+        const inRect = clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom
+        if (!inRect) return
+
+        const x = clientX - rect.left
+        const y = clientY - rect.top
+        const width = rect.width
+        const height = rect.height
+        const edgeSize = Math.min(width, height) * 0.35
+
+        let direction: 'left' | 'right' | 'top' | 'bottom' | null = null
+        if (x < edgeSize) direction = 'left'
+        else if (x > width - edgeSize) direction = 'right'
+        else if (y < edgeSize) direction = 'top'
+        else if (y > height - edgeSize) direction = 'bottom'
+
+        if (direction) {
+          foundTarget = { paneId, connectionId: paneConnId, direction }
+        }
+      })
+
+      if (foundTarget) {
+        setDropTarget(foundTarget)
+      } else if (dropTargetRef.current) {
+        setDropTarget(null)
+      }
+    }
+
+    window.addEventListener('pointermove', handlePointerMove)
+    window.addEventListener('pointerup', handlePointerUp)
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove)
+      window.removeEventListener('pointerup', handlePointerUp)
+      if (dragTimerRef.current) {
+        clearTimeout(dragTimerRef.current)
+        dragTimerRef.current = null
+      }
+    }
+  }, [connectedConnections, splitPaneWithPosition, moveSessionToSplitPane, message])
 
   // MCP 状态同步
   useEffect(() => {
@@ -821,61 +940,6 @@ function Terminal() {
     }
   }, [rightPanelWidth, prevPanelWidthRef])
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.dataTransfer.dropEffect = 'move'
-
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const width = rect.width
-    const height = rect.height
-
-    const edgeSize = 80
-
-    if (x < edgeSize) {
-      setDropIndicator('left')
-    } else if (x > width - edgeSize) {
-      setDropIndicator('right')
-    } else if (y < edgeSize) {
-      setDropIndicator('top')
-    } else if (y > height - edgeSize) {
-      setDropIndicator('bottom')
-    } else {
-      setDropIndicator(null)
-    }
-  }, [])
-
-  const handleDragLeave = useCallback(() => {
-    setDropIndicator(null)
-  }, [])
-
-  const handleDrop = useCallback(async (e: React.DragEvent, targetConnectionId: string, targetPaneId: string) => {
-    e.preventDefault()
-    setDropIndicator(null)
-
-    const sourceConnectionId = e.dataTransfer.getData('connectionId')
-    const sourceSessionId = e.dataTransfer.getData('sessionId')
-
-    if (!sourceConnectionId || !sourceSessionId) return
-    if (sourceConnectionId !== targetConnectionId) {
-      message.warning('暂不支持跨连接分屏')
-      return
-    }
-
-    const direction = dropIndicator === 'left' || dropIndicator === 'right' ? 'horizontal' : 'vertical'
-
-    try {
-      const newShellId = await invoke<string>('get_shell', { id: targetConnectionId })
-      const newPaneId = Date.now().toString()
-      splitPane(targetConnectionId, targetPaneId, direction, newPaneId, newShellId)
-    } catch (err) {
-      message.error(`分屏失败: ${err}`)
-    }
-
-    setDraggedSession(null)
-  }, [dropIndicator, splitPane, message])
-
   if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
@@ -898,17 +962,34 @@ function Terminal() {
   ): React.ReactNode => {
     if (pane.children && pane.children.length > 0) {
       const layout = pane.sizes || pane.children.map(() => 100 / pane.children!.length)
+      const isHorizontal = pane.splitDirection !== 'vertical'
       return (
         <Group
           key={getPaneStructureKey(pane)}
           orientation={pane.splitDirection === 'vertical' ? 'vertical' : 'horizontal'}
           style={{ height: '100%', width: '100%' }}
         >
-          {pane.children.map((child, index) => (
-            <Panel key={child.id} defaultSize={layout[index]} minSize={20}>
-              {renderSplitPane(child, connectionId)}
-            </Panel>
-          ))}
+          {pane.children.flatMap((child, index) => {
+            const elements: React.ReactNode[] = []
+            if (index > 0) {
+              elements.push(
+                <Separator
+                  key={`sep-${child.id}`}
+                  style={{
+                    background: 'var(--color-border)',
+                    width: isHorizontal ? 1 : undefined,
+                    height: isHorizontal ? undefined : 1,
+                  }}
+                />
+              )
+            }
+            elements.push(
+              <Panel key={child.id} defaultSize={layout[index]} minSize={20}>
+                {renderSplitPane(child, connectionId)}
+              </Panel>
+            )
+            return elements
+          })}
         </Group>
       )
     }
@@ -937,23 +1018,59 @@ function Terminal() {
           connectionId={connectionId}
           title={s.title}
           onClose={() => handleCloseSession(connectionId, s.id, pane.id)}
-          onDragStart={(sid, cid) => setDraggedSession({ sessionId: sid, connectionId: cid })}
+          onDragStart={(sid, cid, title) => {
+        if (dragTimerRef.current) clearTimeout(dragTimerRef.current)
+        dragTimerRef.current = setTimeout(() => {
+          document.body.style.userSelect = 'none'
+          dragStartRef.current = { sessionId: sid, connectionId: cid, title }
+          draggedSessionRef.current = { sessionId: sid, connectionId: cid, title }
+          setDraggedSession({ sessionId: sid, connectionId: cid, title })
+        }, 500)
+      }}
         />
       ),
       children: (
         <div
           ref={el => { terminalRefs.current[`${connectionId}_${s.id}`] = el }}
-          style={{ height: '100%', background: 'var(--color-bg-base)', overflow: 'hidden', paddingLeft: 8, boxSizing: 'border-box' }}
+          style={{ 
+            height: '100%', 
+            background: 'var(--color-bg-container)', 
+            overflow: 'hidden', 
+            boxSizing: 'border-box', 
+            padding: 4,
+          }}
           onContextMenu={(e) => handleContextMenu(e, `${connectionId}_${s.id}`)}
         />
       ),
     }))
 
     return (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--color-bg-container)' }}>
+      <div
+        ref={el => { if (el) paneRefs.current.set(`${connectionId}::${pane.id}`, el) }}
+        style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--color-bg-container)', position: 'relative' }}
+      >
+        {/* 分屏高亮指示器 */}
+        {dropTarget && dropTarget.paneId === pane.id && dropTarget.connectionId === connectionId && (
+          <div
+            style={{
+              position: 'absolute',
+              background: 'rgba(0, 185, 107, 0.3)',
+              border: '2px dashed var(--color-primary)',
+              zIndex: 10,
+              pointerEvents: 'none',
+              ...(dropTarget.direction === 'left' && { left: 0, top: 0, width: '50%', height: '100%' }),
+              ...(dropTarget.direction === 'right' && { right: 0, top: 0, width: '50%', height: '100%' }),
+              ...(dropTarget.direction === 'top' && { left: 0, top: 0, width: '100%', height: '50%' }),
+              ...(dropTarget.direction === 'bottom' && { left: 0, bottom: 0, width: '100%', height: '50%' }),
+            }}
+          />
+        )}
         <Tabs
           activeKey={activeSess.id}
-          onChange={sid => setActiveSessionInPane(connectionId, pane.id, sid)}
+          onChange={sid => {
+            if (sid === '__add__') return
+            setActiveSessionInPane(connectionId, pane.id, sid)
+          }}
           items={[
             ...sessionTabItems,
             { 
@@ -964,7 +1081,7 @@ function Terminal() {
           ]}
           type="card"
           style={{ flex: '0 0 auto' }}
-          tabBarStyle={{ margin: 0, padding: '0 4px', background: 'var(--color-bg-elevated)', minHeight: 28 }}
+          tabBarStyle={{ margin: 0, padding: '0 4px', background: 'var(--color-bg-elevated)', minHeight: 24, height: 24 }}
           onTabClick={(key) => { if (key === '__add__') handleAddSessionToPane() }}
           destroyInactiveTabPane={false}
           size="small"
@@ -1011,35 +1128,19 @@ function Terminal() {
         <SortableTab
           id={conn.connectionId}
           label={
-            <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500 }}>
+            <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
               {conn.connection.username}@{conn.connection.host}
-              <CloseOutlined style={{ marginLeft: 8, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} />
+              <CloseOutlined 
+                style={{ marginLeft: 4, fontSize: 9 }} 
+                onPointerDown={e => e.stopPropagation()}
+                onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} 
+              />
             </span>
           }
         />
       ),
       children: (
-        <div
-          style={{ height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={(e) => handleDrop(e, conn.connectionId, conn.rootPane.id)}
-        >
-          {dropIndicator && draggedSession && draggedSession.connectionId === conn.connectionId && (
-            <div
-              style={{
-                position: 'absolute',
-                zIndex: 100,
-                background: 'rgba(0, 185, 107, 0.3)',
-                border: '2px dashed var(--color-primary)',
-                ...(dropIndicator === 'left' && { left: 0, top: 0, width: '50%', height: '100%' }),
-                ...(dropIndicator === 'right' && { right: 0, top: 0, width: '50%', height: '100%' }),
-                ...(dropIndicator === 'top' && { left: 0, top: 0, width: '100%', height: '50%' }),
-                ...(dropIndicator === 'bottom' && { left: 0, bottom: 0, width: '100%', height: '50%' }),
-                pointerEvents: 'none',
-              }}
-            />
-          )}
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
           {renderSplitPane(conn.rootPane, conn.connectionId)}
         </div>
       ),
@@ -1305,6 +1406,35 @@ function Terminal() {
           )}
         </div>
       )}
+      
+      {draggedSession && dragPosition ? createPortal(
+        <span
+          style={{
+            position: 'fixed',
+            left: dragPosition.x,
+            top: dragPosition.y,
+            fontSize: 12,
+            cursor: 'grabbing',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 0,
+            padding: '0 6px',
+            background: 'var(--color-bg-elevated)',
+            border: '1px solid var(--color-border)',
+            borderRadius: '4px 4px 0 0',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+            zIndex: 10000,
+            whiteSpace: 'nowrap',
+            pointerEvents: 'none',
+            lineHeight: 1.4,
+          }}
+        >
+          <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
+          <span style={{ lineHeight: 1 }}>{draggedSession.title}</span>
+          <CloseOutlined style={{ marginLeft: 4, fontSize: 9, color: 'var(--color-text-quaternary)' }} />
+        </span>,
+        document.body
+      ) : null}
     </div>
   )
 }

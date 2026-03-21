@@ -290,6 +290,18 @@ connectedConnections: [
 - 每个 pane 可包含多个 sessions（共享标签栏）
 - 每个 pane 独立管理 activeSessionId
 - 使用 `react-resizable-panels` 实现可调整大小的分屏
+- 每个 pane 有独立的 Tabs 组件显示该 pane 的 sessions
+- 关闭 pane 最后一个 session 时自动关闭整个 pane
+
+**会话标签架构**:
+```
+连接 Tab（顶层）
+└── 分屏区域
+    ├── 左 pane
+    │   └── Tabs: [会话1, 会话2, +新建]
+    └── 右 pane
+        └── Tabs: [会话3, +新建]
+```
 
 ### 5. ShellSession 通道设计
 

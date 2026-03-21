@@ -168,6 +168,9 @@ interface TerminalState {
   reorderConnections: (oldIndex: number, newIndex: number) => void
 
   splitPane: (connectionId: string, paneId: string, direction: 'horizontal' | 'vertical', newPaneId: string, shellId: string) => void
+  splitPaneWithPosition: (connectionId: string, paneId: string, direction: 'horizontal' | 'vertical', newPaneId: string, shellId: string, newPosition: 'first' | 'second') => void
+  // 移动现有会话到新分屏（拖拽会话 tab 时使用）
+  moveSessionToSplitPane: (connectionId: string, sourcePaneId: string, sessionId: string, targetPaneId: string, direction: 'horizontal' | 'vertical', newPosition: 'first' | 'second') => void
   closePane: (connectionId: string, paneId: string) => void
   addSessionToPane: (connectionId: string, paneId: string, shellId: string) => string
   closeSessionInPane: (connectionId: string, paneId: string, sessionId: string) => void
@@ -217,6 +220,29 @@ function countSessions(pane: SplitPane): number {
     }
   }
   return count
+}
+
+function getNextSessionNumber(pane: SplitPane): number {
+  const numbers: number[] = []
+  
+  const collectNumbers = (p: SplitPane) => {
+    for (const s of p.sessions) {
+      const match = s.title.match(/^会话(\d+)$/)
+      if (match) {
+        numbers.push(parseInt(match[1], 10))
+      }
+    }
+    if (p.children) {
+      for (const child of p.children) {
+        collectNumbers(child)
+      }
+    }
+  }
+  
+  collectNumbers(pane)
+  
+  if (numbers.length === 0) return 1
+  return Math.max(...numbers) + 1
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -298,12 +324,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!conn) return ''
 
     const sessionId = Date.now().toString()
-    const sessionCount = countSessions(conn.rootPane) + 1
+    const sessionNumber = getNextSessionNumber(conn.rootPane)
     const newSession: Session = {
       id: sessionId,
       connectionId,
       shellId,
-      title: `会话${sessionCount}`,
+      title: `会话${sessionNumber}`,
     }
     set((state) => ({
       connectedConnections: state.connectedConnections.map(c =>
@@ -466,12 +492,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
     if (!conn) return
 
-    const sessionCount = countSessions(conn.rootPane)
+    const sessionNumber = getNextSessionNumber(conn.rootPane)
     const newSession: Session = {
       id: newPaneId,
       connectionId,
       shellId,
-      title: `会话${sessionCount + 1}`,
+      title: `会话${sessionNumber}`,
     }
 
     const newChildPane: SplitPane = {
@@ -504,6 +530,211 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           : c
       ),
     }))
+  },
+
+  splitPaneWithPosition: (connectionId, paneId, direction, newPaneId, shellId, newPosition) => {
+    const state = get()
+    const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+    if (!conn) return
+
+    const sessionNumber = getNextSessionNumber(conn.rootPane)
+    const newSession: Session = {
+      id: newPaneId,
+      connectionId,
+      shellId,
+      title: `会话${sessionNumber}`,
+    }
+
+    const newChildPane: SplitPane = {
+      id: newPaneId,
+      sessions: [newSession],
+      activeSessionId: newPaneId,
+    }
+
+    const updatePane = (pane: SplitPane): SplitPane => {
+      if (pane.id === paneId) {
+        const children = newPosition === 'first' 
+          ? [newChildPane, pane] 
+          : [pane, newChildPane]
+        return {
+          id: `split-${Date.now()}`,
+          sessions: [],
+          activeSessionId: null,
+          splitDirection: direction,
+          children,
+          sizes: [50, 50],
+        }
+      }
+      if (pane.children) {
+        return { ...pane, children: pane.children.map(updatePane) }
+      }
+      return pane
+    }
+
+    set((state) => ({
+      connectedConnections: state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, rootPane: updatePane(c.rootPane) }
+          : c
+      ),
+    }))
+  },
+
+  moveSessionToSplitPane: (connectionId, sourcePaneId, sessionId, targetPaneId, direction, newPosition) => {
+    set((state) => {
+      const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
+      if (!conn) return state
+
+      let movedSession: Session | null = null
+      const findSession = (pane: SplitPane): Session | null => {
+        const sess = pane.sessions.find(s => s.id === sessionId)
+        if (sess) return sess
+        if (pane.children) {
+          for (const child of pane.children) {
+            const found = findSession(child)
+            if (found) return found
+          }
+        }
+        return null
+      }
+      movedSession = findSession(conn.rootPane)
+      if (!movedSession) return state
+
+      if (sourcePaneId === targetPaneId) {
+        const baseTime = Date.now()
+        const newChildPaneId = `pane-${baseTime}`
+        const newSplitId = `split-${baseTime + 1}`
+        const remainingPaneId = `pane-${baseTime + 2}`
+        
+        const handleSamePaneSplit = (pane: SplitPane): SplitPane => {
+          if (pane.id === targetPaneId) {
+            const remainingSessions = pane.sessions.filter(s => s.id !== sessionId)
+            
+            if (remainingSessions.length === 0) return pane
+            
+            const movedPane: SplitPane = {
+              id: newChildPaneId,
+              sessions: [movedSession!],
+              activeSessionId: sessionId,
+            }
+            
+            const remainingPane: SplitPane = {
+              id: remainingPaneId,
+              sessions: remainingSessions,
+              activeSessionId: remainingSessions[0]?.id || null,
+            }
+            
+            const children = newPosition === 'first'
+              ? [movedPane, remainingPane]
+              : [remainingPane, movedPane]
+            
+            return {
+              id: newSplitId,
+              sessions: [],
+              activeSessionId: null,
+              splitDirection: direction,
+              children,
+              sizes: [50, 50],
+            }
+          }
+          if (pane.children) {
+            return { ...pane, children: pane.children.map(handleSamePaneSplit) }
+          }
+          return pane
+        }
+        
+        const newRootPane = handleSamePaneSplit(conn.rootPane)
+        
+        return {
+          connectedConnections: state.connectedConnections.map(c =>
+            c.connectionId === connectionId
+              ? { ...c, rootPane: newRootPane }
+              : c
+          ),
+        }
+      }
+
+      // 一般情况：先移除会话，再在目标位置创建分屏
+      const baseTime = Date.now()
+      let idCounter = 0
+      const nextId = () => {
+        idCounter++
+        return `${baseTime + idCounter}`
+      }
+
+      const removeSessionFromPane = (pane: SplitPane): SplitPane | null => {
+        if (pane.id === sourcePaneId) {
+          const newSessions = pane.sessions.filter(s => s.id !== sessionId)
+          if (newSessions.length === 0) {
+            return null
+          }
+          const newActiveSessionId = pane.activeSessionId === sessionId
+            ? newSessions[0]?.id || null
+            : pane.activeSessionId
+          return { ...pane, sessions: newSessions, activeSessionId: newActiveSessionId }
+        }
+        if (pane.children) {
+          const newChildren = pane.children.map(removeSessionFromPane).filter(Boolean) as SplitPane[]
+          if (newChildren.length === 0) return null
+          if (newChildren.length === 1) {
+            const singleChild = newChildren[0]
+            return {
+              id: `pane-${nextId()}`,
+              sessions: singleChild.sessions,
+              activeSessionId: singleChild.activeSessionId,
+              splitDirection: undefined,
+              children: undefined,
+              sizes: undefined,
+            }
+          }
+          const newSizes = newChildren.map(() => 100 / newChildren.length)
+          return { ...pane, children: newChildren, sizes: newSizes }
+        }
+        return pane
+      }
+
+      const createSplitWithSession = (pane: SplitPane): SplitPane => {
+        if (pane.id === targetPaneId) {
+          const newChildPane: SplitPane = {
+            id: `pane-${nextId()}`,
+            sessions: [movedSession!],
+            activeSessionId: sessionId,
+          }
+          const children = newPosition === 'first'
+            ? [newChildPane, pane]
+            : [pane, newChildPane]
+          return {
+            id: `split-${nextId()}`,
+            sessions: [],
+            activeSessionId: null,
+            splitDirection: direction,
+            children,
+            sizes: [50, 50],
+          }
+        }
+        if (pane.children) {
+          return { ...pane, children: pane.children.map(createSplitWithSession) }
+        }
+        return pane
+      }
+
+      let newRootPane = removeSessionFromPane(conn.rootPane)
+      if (!newRootPane) {
+        console.log('[moveSessionToSplitPane] removeSessionFromPane returned null')
+        return state
+      }
+
+      newRootPane = createSplitWithSession(newRootPane)
+      console.log('[moveSessionToSplitPane] final newRootPane id:', newRootPane.id)
+
+      return {
+        connectedConnections: state.connectedConnections.map(c =>
+          c.connectionId === connectionId
+            ? { ...c, rootPane: newRootPane }
+            : c
+        ),
+      }
+    })
   },
 
   closePane: (connectionId, paneId) => {
@@ -552,12 +783,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     if (!conn) return ''
 
     const sessionId = Date.now().toString()
-    const sessionCount = countSessions(conn.rootPane) + 1
+    const sessionNumber = getNextSessionNumber(conn.rootPane)
     const newSession: Session = {
       id: sessionId,
       connectionId,
       shellId,
-      title: `会话${sessionCount}`,
+      title: `会话${sessionNumber}`,
     }
 
     const updatePane = (pane: SplitPane): SplitPane => {
