@@ -28,11 +28,11 @@ interface LicenseState {
 }
 
 const DEFAULT_LICENSE: LicenseInfo = {
-  license_type: 'Free',
-  expires_at: null,
-  features: ['basic_ssh', 'basic_sftp', 'basic_monitor'],
+  license_type: 'Enterprise',
+  expires_at: '2099-12-31',
+  features: ['*'],
   is_valid: true,
-  max_connections: 3,
+  max_connections: 999,
   email: null,
 }
 

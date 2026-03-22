@@ -632,6 +632,7 @@ ${claudeConfig}`}
   const renderLicenseSettings = () => {
     const currentType = licenseInfo?.license_type || 'Free'
     const isPaid = currentType !== 'Free'
+    const isEnterprise = currentType === 'Enterprise'
     
     const licenseTypeLabels: Record<string, string> = {
       Free: '免费版',
@@ -686,95 +687,99 @@ ${claudeConfig}`}
           </div>
         </div>
 
-        <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+        {!isEnterprise && (
+          <>
+            <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
 
-        <div style={{ marginBottom: 24 }}>
-          <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 12 }}>
-            升级到付费版
-          </Text>
-          
-          <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
-            <div 
-              style={{ 
-                flex: 1, 
-                padding: 16, 
-                border: `1px solid ${currentType === 'Personal' ? '#faad14' : 'var(--color-border)'}`,
-                borderRadius: 8,
-                background: currentType === 'Personal' ? 'rgba(250, 173, 20, 0.05)' : 'var(--color-bg-container)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <CrownOutlined style={{ color: '#faad14' }} />
-                <Text strong style={{ color: 'var(--color-text)' }}>个人版</Text>
+            <div style={{ marginBottom: 24 }}>
+              <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 12 }}>
+                升级到付费版
+              </Text>
+              
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                <div 
+                  style={{ 
+                    flex: 1, 
+                    padding: 16, 
+                    border: `1px solid ${currentType === 'Personal' ? '#faad14' : 'var(--color-border)'}`,
+                    borderRadius: 8,
+                    background: currentType === 'Personal' ? 'rgba(250, 173, 20, 0.05)' : 'var(--color-bg-container)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <CrownOutlined style={{ color: '#faad14' }} />
+                    <Text strong style={{ color: 'var(--color-text)' }}>个人版</Text>
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
+                    ¥99<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
+                  </div>
+                  <Button 
+                    type="primary" 
+                    block 
+                    style={{ background: '#faad14', borderColor: '#faad14' }}
+                    onClick={() => window.open('https://iterminal.app/buy?plan=personal')}
+                  >
+                    立即购买
+                  </Button>
+                </div>
+                
+                <div 
+                  style={{ 
+                    flex: 1, 
+                    padding: 16, 
+                    border: `1px solid ${currentType === 'Professional' ? '#722ed1' : 'var(--color-border)'}`,
+                    borderRadius: 8,
+                    background: currentType === 'Professional' ? 'rgba(114, 46, 209, 0.05)' : 'var(--color-bg-container)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <CrownOutlined style={{ color: '#722ed1' }} />
+                    <Text strong style={{ color: 'var(--color-text)' }}>专业版</Text>
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
+                    ¥299<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
+                  </div>
+                  <Button 
+                    type="primary" 
+                    block 
+                    style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                    onClick={() => window.open('https://iterminal.app/buy?plan=professional')}
+                  >
+                    立即购买
+                  </Button>
+                </div>
               </div>
-              <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
-                ¥99<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
-              </div>
-              <Button 
-                type="primary" 
-                block 
-                style={{ background: '#faad14', borderColor: '#faad14' }}
-                onClick={() => window.open('https://iterminal.app/buy?plan=personal')}
-              >
-                立即购买
-              </Button>
             </div>
-            
-            <div 
-              style={{ 
-                flex: 1, 
-                padding: 16, 
-                border: `1px solid ${currentType === 'Professional' ? '#722ed1' : 'var(--color-border)'}`,
-                borderRadius: 8,
-                background: currentType === 'Professional' ? 'rgba(114, 46, 209, 0.05)' : 'var(--color-bg-container)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <CrownOutlined style={{ color: '#722ed1' }} />
-                <Text strong style={{ color: 'var(--color-text)' }}>专业版</Text>
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
-                ¥299<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
-              </div>
-              <Button 
-                type="primary" 
-                block 
-                style={{ background: '#722ed1', borderColor: '#722ed1' }}
-                onClick={() => window.open('https://iterminal.app/buy?plan=professional')}
-              >
-                立即购买
-              </Button>
+
+            <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+            <div>
+              <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 12 }}>
+                激活 License
+              </Text>
+              
+              <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
+                <Input 
+                  placeholder="输入 License Key，如: IT-1-PERSONAL-XXXXXXXX-XXXX"
+                  value={licenseKey}
+                  onChange={e => setLicenseKey(e.target.value)}
+                  onPressEnter={handleActivate}
+                />
+                <Button 
+                  type="primary" 
+                  onClick={handleActivate}
+                  loading={licenseLoading}
+                >
+                  激活
+                </Button>
+              </Space.Compact>
+              
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                购买后 License Key 将发送到您的邮箱
+              </Text>
             </div>
-          </div>
-        </div>
-
-        <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
-
-        <div>
-          <Text strong style={{ color: 'var(--color-text)', display: 'block', marginBottom: 12 }}>
-            激活 License
-          </Text>
-          
-          <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
-            <Input 
-              placeholder="输入 License Key，如: IT-1-PERSONAL-XXXXXXXX-XXXX"
-              value={licenseKey}
-              onChange={e => setLicenseKey(e.target.value)}
-              onPressEnter={handleActivate}
-            />
-            <Button 
-              type="primary" 
-              onClick={handleActivate}
-              loading={licenseLoading}
-            >
-              激活
-            </Button>
-          </Space.Compact>
-          
-          <Text type="secondary" style={{ fontSize: 12 }}>
-            购买后 License Key 将发送到您的邮箱
-          </Text>
-        </div>
+          </>
+        )}
       </div>
     )
   }

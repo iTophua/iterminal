@@ -43,24 +43,29 @@ pub struct LicenseInfo {
 impl Default for LicenseInfo {
     fn default() -> Self {
         Self {
-            license_type: LicenseType::Free,
-            expires_at: None,
-            features: vec![
-                "basic_ssh".to_string(),
-                "basic_sftp".to_string(),
-                "basic_monitor".to_string(),
-            ],
+            license_type: LicenseType::Enterprise,
+            expires_at: Some("2099-12-31".to_string()),
+            features: vec!["*".to_string()],
             is_valid: true,
-            max_connections: 3,
+            max_connections: 999,
             email: None,
         }
     }
 }
 
 /// 全局 License 状态
-static LICENSE_ACTIVE: AtomicBool = AtomicBool::new(false);
-static LICENSE_BYPASS: AtomicBool = AtomicBool::new(false);
-static LICENSE_INFO: Lazy<RwLock<Option<LicenseInfo>>> = Lazy::new(|| RwLock::new(None));
+static LICENSE_ACTIVE: AtomicBool = AtomicBool::new(true);
+static LICENSE_BYPASS: AtomicBool = AtomicBool::new(true);
+static LICENSE_INFO: Lazy<RwLock<Option<LicenseInfo>>> = Lazy::new(|| {
+    RwLock::new(Some(LicenseInfo {
+        license_type: LicenseType::Enterprise,
+        expires_at: Some("2099-12-31".to_string()),
+        features: vec!["*".to_string()],
+        is_valid: true,
+        max_connections: 999,
+        email: None,
+    }))
+});
 
 /// 获取 License 信息
 pub async fn get_license_info() -> LicenseInfo {
