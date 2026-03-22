@@ -61,16 +61,6 @@ function FontPreloader() {
   return null
 }
 
-function WindowStateRestorer() {
-  useEffect(() => {
-    invoke('restore_window_state').catch(err => {
-      console.error('Failed to restore window state:', err)
-    })
-  }, [])
-
-  return null
-}
-
 function MenuActionHandler() {
   const navigate = useNavigate()
   const setSettingsVisible = useTerminalStore(s => s.setSettingsVisible)
@@ -349,7 +339,6 @@ function MainApp() {
   return (
     <>
       <FontPreloader />
-      <WindowStateRestorer />
       <SessionRestorer />
       <SessionSaver />
       <MenuActionHandler />

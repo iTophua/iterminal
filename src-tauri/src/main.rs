@@ -88,6 +88,35 @@ fn main() {
                 eprintln!("Failed to initialize database: {}", e);
             }
 
+            if let Some(window) = app.webview_windows().get("main") {
+                if let Ok(state_json) =
+                    iterminal::commands::db::get_setting("window_state".to_string())
+                {
+                    if let Some(json) = state_json {
+                        if let Ok(state) =
+                            serde_json::from_str::<iterminal::commands::system::WindowState>(&json)
+                        {
+                            if state.maximized {
+                                let _ = window.maximize();
+                            } else {
+                                let _ =
+                                    window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                                        width: state.width,
+                                        height: state.height,
+                                    }));
+                                let _ = window.set_position(tauri::Position::Physical(
+                                    tauri::PhysicalPosition {
+                                        x: state.x,
+                                        y: state.y,
+                                    },
+                                ));
+                            }
+                        }
+                    }
+                }
+                let _ = window.show();
+            }
+
             let new_conn =
                 MenuItem::with_id(app, "new_connection", "新建连接", true, Some("CmdOrCtrl+N"))?;
             let import_conn =
