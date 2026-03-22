@@ -283,11 +283,7 @@ async fn execute_command_handler(
     Path(id): Path<String>,
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ApiResponse<CommandResult>>, (StatusCode, Json<ApiResponse<CommandResult>>)> {
-    let cmd_preview = if payload.command.len() > 50 {
-        format!("{}...", &payload.command[..50])
-    } else {
-        payload.command.clone()
-    };
+    let full_command = payload.command.clone();
     
     match ssh::execute_command(id.clone(), payload.command).await {
         Ok(result) => {
@@ -295,7 +291,7 @@ async fn execute_command_handler(
                 &state.app_handle,
                 "exec",
                 Some(&id),
-                &cmd_preview,
+                &full_command,
                 result.success,
                 result.error.as_deref(),
             );
@@ -306,7 +302,7 @@ async fn execute_command_handler(
                 &state.app_handle,
                 "exec",
                 Some(&id),
-                &cmd_preview,
+                &full_command,
                 false,
                 Some(&e),
             );

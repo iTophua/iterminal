@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef, useMemo } from 'react'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
-import { Button, Tooltip, Empty, Select } from 'antd'
-import { CloseOutlined, DownloadOutlined, ClearOutlined, ApiOutlined } from '@ant-design/icons'
+import { Button, Tooltip, Empty, Select, message } from 'antd'
+import { CloseOutlined, DownloadOutlined, ClearOutlined, ApiOutlined, CopyOutlined } from '@ant-design/icons'
+import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 
 interface McpOperation {
   timestamp: string
@@ -233,12 +234,35 @@ function McpLogPanel({ onClose }: McpLogPanelProps) {
               <div
                 style={{
                   color: log.success ? 'var(--color-text-secondary)' : 'var(--color-error)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-all',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
                 }}
               >
-                {log.error || log.details}
+                <span style={{ flex: 1 }}>{log.error || log.details}</span>
+                {!log.error && log.details && (
+                  <Tooltip title="复制">
+                    <CopyOutlined
+                      onClick={async () => {
+                        try {
+                          await writeText(log.details)
+                          message.success('已复制')
+                        } catch {
+                          message.error('复制失败')
+                        }
+                      }}
+                      style={{
+                        color: 'var(--color-text-tertiary)',
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        flexShrink: 0,
+                        marginTop: 2,
+                      }}
+                    />
+                  </Tooltip>
+                )}
               </div>
             </div>
           ))
