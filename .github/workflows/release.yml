@@ -79,8 +79,8 @@ jobs:
           # Update tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tauri.tmp && mv tauri.tmp src-tauri/tauri.conf.json
           
-          # Update Cargo.toml
-          sed -i 's/^version = ".*"/version = "'"$VERSION"'"/' src-tauri/Cargo.toml
+          # Update Cargo.toml (use perl for cross-platform compatibility)
+          perl -pi -e 's/^version = ".*"/version = "'"$VERSION"'"/' src-tauri/Cargo.toml
           
           # Update mcp/package.json
           jq --arg v "$VERSION" '.version = $v' mcp/package.json > mcp-package.tmp && mv mcp-package.tmp mcp/package.json
