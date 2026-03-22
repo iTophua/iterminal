@@ -79,6 +79,15 @@ jobs:
           # Update tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tauri.tmp && mv tauri.tmp src-tauri/tauri.conf.json
           
+          # Update Cargo.toml
+          sed -i 's/^version = ".*"/version = "'"$VERSION"'"/' src-tauri/Cargo.toml
+          
+          # Update mcp/package.json
+          jq --arg v "$VERSION" '.version = $v' mcp/package.json > mcp-package.tmp && mv mcp-package.tmp mcp/package.json
+          
+          # Update mcp/server.json
+          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' mcp/server.json > server.tmp && mv server.tmp mcp/server.json
+          
           echo "Version updated to $VERSION"
 
       - name: Setup Node.js
@@ -225,12 +234,6 @@ jobs:
 
       - name: Authenticate to MCP Registry
         run: ./mcp-publisher login github-oidc
-
-      - name: Update server.json version
-        working-directory: ./mcp
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
 
       - name: Publish to MCP Registry
         working-directory: ./mcp
