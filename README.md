@@ -26,11 +26,15 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 ### 核心特性
 
 - 🚀 **轻量高效** - 基于 Tauri，内存占用低，启动速度快
-- 🔐 **安全可靠** - 本地存储连接信息，数据安全有保障
+- 🔐 **安全可靠** - AES-256-GCM 加密存储连接信息，支持 SSH 密钥认证
 - 🖥️ **多标签管理** - 支持同时打开多个 SSH 会话
+- 📐 **终端分屏** - 支持水平/垂直分屏，可拖拽调整大小
 - 🔍 **终端搜索** - 支持终端内容全文搜索
-- 📁 **文件管理** - SFTP 文件浏览、上传下载、拖拽上传
+- ⌨️ **快捷键系统** - 丰富的快捷键支持，可自定义
+- 📁 **文件管理** - SFTP 文件浏览、上传下载、拖拽上传、文件搜索、压缩解压
 - 📊 **系统监控** - 实时 CPU、内存、磁盘监控面板
+- 🤖 **MCP 支持** - 内置 MCP 服务器，支持 AI 助手集成
+- 🪟 **多窗口支持** - 拖拽连接到边缘创建新窗口
 - 📋 **中文支持** - 完整的中文界面和右键菜单
 - 🌍 **跨平台** - 支持 Windows、macOS、Linux
 
@@ -60,7 +64,7 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 #### 通用要求
 
 - Node.js >= 18.x
-- Rust >= 1.70
+- Rust >= 1.75
 - npm 或 pnpm
 
 #### Windows
@@ -110,64 +114,6 @@ npm run tauri build
 | macOS | `.dmg` / `.app` | `bundle/dmg/` `bundle/macos/` |
 | Linux | `.deb` / `.AppImage` | `bundle/deb/` `bundle/appimage/` |
 
-### GitHub Actions 自动打包
-
-创建 `.github/workflows/build.yml` 实现跨平台自动打包：
-
-```yaml
-name: Build and Release
-
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            target: x86_64-apple-darwin
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-
-    runs-on: ${{ matrix.os }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Setup Rust
-        uses: dtolnay/rust-action@stable
-
-      - name: Install dependencies (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
-
-      - name: Install npm dependencies
-        run: npm install
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'iTerminal ${{ github.ref_name }}'
-          releaseDraft: true
-          prerelease: false
-          args: --target ${{ matrix.target }}
-```
-
 ---
 
 ## 功能介绍
@@ -177,9 +123,11 @@ jobs:
 #### 1.1 连接列表
 
 - 卡片式展示所有 SSH 连接
-- 分组管理（全部、生产环境、开发环境、测试环境）
+- 分组管理（自定义分组）
+- 标签分类
 - 实时显示连接状态（在线/离线）
 - 支持按名称、IP、标签搜索筛选
+- 连接排序、批量管理
 
 #### 1.2 连接操作
 
@@ -191,9 +139,8 @@ jobs:
 | 复制连接 | 快速复制现有配置创建新连接 |
 | 连接测试 | 测试 SSH 连通性和认证 |
 | 快速连接 | 一键打开 SSH 终端 |
-| 快速导入 | 按格式粘贴批量导入连接 |
+| 导入/导出 | JSON 格式批量导入导出连接 |
 | 复制 IP | 一键复制服务器 IP 地址 |
-| 复制信息 | 复制完整连接信息 |
 
 #### 1.3 连接状态
 
@@ -201,7 +148,7 @@ jobs:
 - **离线** - 端口不可达（灰色指示灯）
 - **连接中** - 正在建立连接（蓝色指示灯）
 
-> 💡 启动后自动检测所有连接状态，每 10 分钟刷新一次。
+> 💡 启动后自动检测所有连接状态，定期刷新。
 
 #### 1.4 连接配置
 
@@ -215,6 +162,7 @@ jobs:
 
 **认证方式：**
 - 密码认证
+- SSH 密钥认证（支持 OpenSSH 和 PEM 格式）
 
 ### 2. SSH 终端
 
@@ -225,19 +173,29 @@ jobs:
 - 标签页显示服务器名称/IP
 - 会话状态标识
 
-#### 2.2 终端功能
+#### 2.2 终端分屏
+
+- 支持水平/垂直分屏
+- 可拖拽调整分屏大小
+- 每个分屏独立会话管理
+- 拖拽会话标签创建新分屏
+
+#### 2.3 终端功能
 
 | 功能 | 快捷键/操作 |
 |------|------------|
 | 终端模拟 | 完整的 xterm.js 终端 |
 | 彩色输出 | 支持 ANSI 颜色 |
-| 复制 | 工具栏按钮 / 右键菜单 |
-| 粘贴 | 右键菜单 |
+| 复制 | 工具栏按钮 / 右键菜单 / CmdOrCtrl+Shift+C |
+| 粘贴 | 右键菜单 / CmdOrCtrl+Shift+V |
 | 全选 | 右键菜单 |
-| 搜索 | 工具栏搜索按钮 |
-| 全屏 | 工具栏全屏按钮（窗口最大化 + 自动收起侧边栏） |
+| 搜索 | 工具栏搜索按钮 / CmdOrCtrl+F |
+| 全屏 | 工具栏全屏按钮 |
+| 分屏 | CmdOrCtrl+D 水平 / CmdOrCtrl+Shift+D 垂直 |
+| 新建会话 | CmdOrCtrl+T |
+| 关闭会话 | CmdOrCtrl+W |
 
-#### 2.3 工具栏
+#### 2.4 工具栏
 
 悬浮工具栏提供快捷操作：
 - 📋 **复制** - 复制选中的终端内容
@@ -247,12 +205,11 @@ jobs:
 - 📁 **文件管理** - 打开 SFTP 文件管理面板
 - ➖ **收起** - 收起工具栏为小球形态
 
-#### 2.4 右键菜单
+#### 2.5 多窗口支持
 
-中文右键菜单支持：
-- **复制** - 复制选中内容
-- **粘贴** - 粘贴剪贴板内容到终端
-- **全选** - 全选终端内容
+- 拖拽连接标签到窗口边缘创建新窗口
+- 新窗口保留完整终端功能
+- 窗口位置自动记忆
 
 ### 3. 文件管理
 
@@ -271,9 +228,13 @@ jobs:
 | 新建文件 | 创建空文件 |
 | 新建文件夹 | 创建目录 |
 | 重命名 | 修改文件/文件夹名称 |
-| 删除 | 删除文件或空文件夹 |
+| 删除 | 删除文件或目录 |
 | 修改权限 | chmod 权限设置 |
 | 压缩 | 远程 tar.gz 压缩 |
+| 解压 | 支持 tar.gz/zip/gz 等格式 |
+| 文件搜索 | 远程文件搜索 |
+| 文件预览 | 文本文件预览 |
+| 文件编辑 | 在线编辑远程文件 |
 | 复制文件名 | 复制选中文件名 |
 | 复制路径 | 复制完整路径 |
 
@@ -284,14 +245,13 @@ jobs:
 - **拖拽上传** - 直接拖拽文件到面板上传
 - **下载文件** - 选择保存位置下载
 - **传输进度** - 实时显示传输进度
-
-> ⚠️ 注意：文件夹下载暂不支持，需先压缩后下载。
+- **暂停/恢复** - 支持传输暂停和恢复
 
 ### 4. 系统监控
 
 #### 4.1 监控面板
 
-实时显示服务器状态，每 3 秒自动刷新：
+实时显示服务器状态，自动刷新：
 
 **系统信息：**
 - 主机名
@@ -315,98 +275,23 @@ jobs:
 - 已用/总量/可用空间
 - 使用率百分比
 
+**进程管理：**
+- 进程列表（按内存排序）
+- 进程终止
+
 #### 4.2 状态指示
 
 - 🟢 绿色 - 使用率 < 70%
 - 🟡 黄色 - 使用率 70% - 90%
 - 🔴 红色 - 使用率 > 90%
 
----
+### 5. MCP 服务器
 
-## 使用指南
+内置 MCP (Model Context Protocol) 服务器，支持 AI 助手集成：
 
-### 快速开始
-
-#### 第一步：创建连接
-
-1. 启动 iTerminal
-2. 点击左侧导航栏「连接管理」
-3. 点击「新建连接」按钮
-4. 填写连接信息：
-   - 名称：`我的服务器`
-   - 主机：`192.168.1.100`
-   - 端口：`22`
-   - 用户名：`root`
-   - 密码：`********`
-   - 分组：`生产环境`
-5. 点击「保存」
-
-#### 第二步：测试连接
-
-1. 在连接列表中找到刚创建的连接
-2. 点击「测试」按钮
-3. 查看连接状态和延迟
-
-#### 第三步：连接服务器
-
-1. 点击「连接」按钮
-2. 自动跳转到终端页面
-3. 开始使用 SSH 终端
-
-### 多会话管理
-
-#### 创建多个会话
-
-1. 在终端页面，点击会话标签栏的「+ 新建」
-2. 自动创建新的会话并连接
-
-#### 切换会话
-
-- 点击会话标签切换
-- 点击连接标签切换不同服务器
-
-### 终端操作
-
-#### 使用搜索功能
-
-1. 点击工具栏「🔍」按钮
-2. 输入搜索关键词
-3. 使用「←」「→」按钮导航搜索结果
-4. 按 Enter 键跳转到下一个匹配
-
-#### 全屏模式
-
-1. 点击工具栏「⛶」按钮
-2. 窗口自动最大化，侧边栏自动收起
-3. 再次点击退出全屏
-
-#### 使用右键菜单
-
-1. 在终端区域右键点击
-2. 选择需要的操作：
-   - 复制：复制选中内容
-   - 粘贴：粘贴内容到终端
-   - 全选：全选终端内容
-
-### 搜索和筛选
-
-#### 搜索连接
-
-1. 在连接管理页面顶部搜索框输入关键词
-2. 实时过滤匹配的连接
-
-#### 按分组筛选
-
-1. 点击左侧导航栏的分组名称
-2. 显示该分组下的所有连接
-
-### 数据存储
-
-连接配置存储在浏览器 localStorage 中：
-- 存储键：`iterminal_connections`
-- 侧边栏状态：`iterminal_sidebar_collapsed`
-
-> ⚠️ 注意：当前密码为明文存储，后续版本将支持加密存储。
+- 通过 HTTP API 控制 SSH 连接
+- 支持命令执行、文件操作、系统监控
+- 可与 Claude 等 AI 助手集成
 
 ---
 
@@ -420,27 +305,43 @@ iTerminal/
 │   ├── components/             # 公共组件
 │   │   ├── Sidebar.tsx         # 侧边栏
 │   │   ├── FileManagerPanel.tsx # 文件管理面板
-│   │   └── MonitorPanel.tsx    # 系统监控面板
+│   │   ├── MonitorPanel.tsx    # 系统监控面板
+│   │   ├── SettingsPanel.tsx   # 设置面板
+│   │   └── fileManager/        # 文件管理子模块
 │   ├── pages/                  # 页面组件
 │   │   ├── Terminal.tsx        # 终端页面
+│   │   ├── TerminalWindow.tsx  # 新窗口终端
 │   │   ├── Connections.tsx     # 连接管理
 │   │   └── Transfers.tsx       # 传输管理
 │   ├── stores/                 # Zustand 状态管理
 │   │   ├── terminalStore.ts    # 连接/会话状态
 │   │   └── transferStore.ts    # 传输记录状态
+│   ├── services/               # 服务层
+│   │   ├── database.ts         # 数据库服务
+│   │   └── sftp.ts             # SFTP 服务
+│   ├── utils/                  # 工具函数
+│   │   ├── paneUtils.ts        # 分屏工具
+│   │   └── TerminalManager.ts  # 终端管理
 │   └── styles/                 # 全局样式
 │       └── global.css          # xterm.js 样式覆盖
 ├── src-tauri/                  # Rust 后端
 │   ├── src/
 │   │   ├── main.rs             # Tauri 入口
 │   │   ├── lib.rs              # 模块声明
+│   │   ├── db/                 # 数据库
+│   │   │   ├── schema.sql      # 数据库结构
+│   │   │   └── crypto.rs       # 加密模块
 │   │   └── commands/           # Tauri 命令
-│   │       ├── ssh.rs          # SSH 操作 + 系统监控
+│   │       ├── ssh.rs          # SSH 操作
 │   │       ├── sftp.rs         # SFTP 文件传输
-│   │       └── db.rs           # 数据库（开发中）
+│   │       ├── db.rs           # 数据库操作
+│   │       ├── api.rs          # HTTP API 服务器
+│   │       └── window.rs       # 窗口管理
 │   ├── Cargo.toml              # Rust 依赖
 │   ├── tauri.conf.json         # Tauri 配置
 │   └── capabilities/           # 权限配置
+├── mcp/                        # MCP 服务器
+│   └── src/index.ts            # MCP 工具定义
 ├── package.json                # npm 依赖
 ├── vite.config.ts              # Vite 配置
 └── tsconfig.json               # TypeScript 配置
@@ -450,13 +351,11 @@ iTerminal/
 
 ## 安全注意事项
 
-> ⚠️ 以下安全风险当前版本存在，生产环境使用请注意：
-
 | 风险项 | 当前状态 | 建议 |
 |--------|----------|------|
-| 密码存储 | 明文存储在 localStorage | 避免在生产环境存储敏感密码 |
+| 密码存储 | AES-256-GCM 加密存储 | 安全 |
 | 主机密钥验证 | 已跳过 | 后续版本将支持 known_hosts |
-| 密钥认证 | 未实现 | 后续版本支持 |
+| 密钥认证 | 已实现 | 推荐使用密钥认证 |
 | 会话超时 | 无自动锁定 | 手动断开不使用的连接 |
 
 ---
@@ -467,7 +366,7 @@ iTerminal/
 
 1. 检查网络连通性
 2. 确认 SSH 服务已启动
-3. 验证用户名和密码
+3. 验证用户名和密码/密钥
 4. 检查防火墙设置
 
 ### Q: Windows 打包失败？
@@ -501,31 +400,29 @@ iTerminal/
 - [x] 文件上传/下载
 - [x] 拖拽上传
 - [x] 系统监控面板
-- [x] 远程文件压缩
+- [x] 远程文件压缩/解压
+- [x] 密钥认证
+- [x] 密码加密存储
+- [x] 连接导入/导出
+- [x] 断线自动重连
+- [x] 快捷键系统
+- [x] 分屏终端
+- [x] 终端主题配置
+- [x] 文件预览/编辑
+- [x] 文件搜索
+- [x] 传输暂停/恢复
+- [x] MCP 服务器
+- [x] 多窗口支持
 
 ### 计划功能
 
-- [ ] 密钥认证
-- [ ] 密码加密存储
-- [ ] 连接导入/导出
-- [ ] 断线自动重连
-- [ ] 快捷键系统
-- [ ] 命令片段/Snippets
-- [ ] 分屏终端
-- [ ] 终端主题配置
-- [ ] 文件预览/编辑
 - [ ] 文件夹下载
 - [ ] 断点续传
-- [ ] 进程管理
+- [ ] 进程管理增强
 - [ ] Docker 管理
 - [ ] 主题切换
 - [ ] 多语言支持
-
----
-
-## 许可证
-
-MIT License
+- [ ] 命令片段/Snippets
 
 ---
 
