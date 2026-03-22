@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { useTerminalStore, Connection, DEFAULT_TERMINAL_SETTINGS, SplitPane, Session } from '../terminalStore'
+import { useTerminalStore, Connection, DEFAULT_TERMINAL_SETTINGS, SplitPane } from '../terminalStore'
 
 const mockLocalStorage = (() => {
   let store: Record<string, string> = {}
@@ -13,29 +13,11 @@ const mockLocalStorage = (() => {
 
 Object.defineProperty(window, 'localStorage', { value: mockLocalStorage })
 
-function getSessionsFromPane(pane: SplitPane): { id: string; shellId: string }[] {
-  if (pane.children) {
-    return pane.children.flatMap(child => getSessionsFromPane(child))
-  }
-  return pane.sessions
-}
-
 function countSessionsInPane(pane: SplitPane): number {
   if (pane.children) {
     return pane.children.reduce((sum, child) => sum + countSessionsInPane(child), 0)
   }
   return pane.sessions.length
-}
-
-function findPaneById(pane: SplitPane, paneId: string): SplitPane | null {
-  if (pane.id === paneId) return pane
-  if (pane.children) {
-    for (const child of pane.children) {
-      const found = findPaneById(child, paneId)
-      if (found) return found
-    }
-  }
-  return null
 }
 
 describe('terminalStore', () => {
@@ -672,10 +654,12 @@ describe('terminalStore', () => {
     it('should restore connection with split panes', () => {
       const rootPane: SplitPane = {
         id: 'pane-root',
+        sessions: [],
+        activeSessionId: null,
         splitDirection: 'horizontal',
         children: [
-          { id: 'pane-left', sessions: [{ id: 'sess-1', connectionId: 'conn-1', shellId: 'shell-1', title: 'Left' }] },
-          { id: 'pane-right', sessions: [{ id: 'sess-2', connectionId: 'conn-1', shellId: 'shell-2', title: 'Right' }] }
+          { id: 'pane-left', sessions: [{ id: 'sess-1', connectionId: 'conn-1', shellId: 'shell-1', title: 'Left' }], activeSessionId: 'sess-1' },
+          { id: 'pane-right', sessions: [{ id: 'sess-2', connectionId: 'conn-1', shellId: 'shell-2', title: 'Right' }], activeSessionId: 'sess-2' }
         ],
         sizes: [50, 50],
       }

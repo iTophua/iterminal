@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { useTransferStore, TransferRecord, RetentionPeriod } from '../transferStore'
+import { useTransferStore, TransferRecord } from '../transferStore'
 
 const mockLocalStorage = (() => {
   let store: Record<string, string> = {}

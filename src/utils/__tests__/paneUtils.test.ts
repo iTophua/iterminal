@@ -28,7 +28,7 @@ const createMockPane = (
 ): SplitPane => ({
   id,
   sessions,
-  activeSessionId: options.activeSessionId,
+  activeSessionId: options.activeSessionId ?? null,
   activePaneId: options.activePaneId,
   splitDirection: options.splitDirection,
   children: options.children,

@@ -17,7 +17,7 @@ export class TerminalInstance {
   public readonly xterm: XTerm
   public readonly fitAddon: FitAddonType
   public readonly searchAddon: SearchAddonType
-  public readonly resizeObserver?: ResizeObserver
+  public resizeObserver?: ResizeObserver
 
   private disposed = false
 
