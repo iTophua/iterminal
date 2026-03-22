@@ -23,7 +23,7 @@ pub async fn create_terminal_window(
     // 先存储数据，再创建窗口
     WINDOW_DATA.write().await.insert(window_label.clone(), connection_data);
 
-    let mut builder = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         &app,
         &window_label,
         WebviewUrl::App(format!("index.html#/terminal-window?label={}", window_label).into())
@@ -34,9 +34,7 @@ pub async fn create_terminal_window(
     .resizable(true);
 
     #[cfg(debug_assertions)]
-    {
-        builder = builder.devtools(true);
-    }
+    let builder = builder.devtools(true);
 
     builder.build().map_err(|e: tauri::Error| e.to_string())?;
 
