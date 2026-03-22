@@ -1,5 +1,5 @@
 import { Button } from 'antd'
-import { DisconnectOutlined, ReloadOutlined, CloseOutlined } from '@ant-design/icons'
+import { DisconnectOutlined, ReloadOutlined } from '@ant-design/icons'
 import type { DisconnectedConnection } from '../../../stores/terminalStore'
 
 interface DisconnectedViewProps {

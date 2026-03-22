@@ -1,7 +1,6 @@
 # iTerminal - SSH Connection Manager
 
-**Generated:** 2026-03-19
-**Commit:** 5267740
+**Generated:** 2026-03-22
 **Branch:** main
 
 **技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 5.3 + Rust (russh 0.50 + russh-sftp 2.1)
@@ -12,9 +11,14 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                        前端 (React)                          │
 ├─────────────────────────────────────────────────────────────┤
-│  Terminal.tsx                                               │
+│  Terminal.tsx (主窗口)                                       │
 │  ├─ listen("shell-output-{id}") ──────► 监听 shell 输出事件   │
 │  └─ invoke('write_shell') ────────────► 发送用户输入          │
+├─────────────────────────────────────────────────────────────┤
+│  TerminalWindow.tsx (新窗口)                                 │
+│  ├─ listen("terminal-window-init") ───► 监听初始化事件        │
+│  ├─ restoreConnection() ──────────────► 恢复连接到 store      │
+│  └─ 渲染 <Terminal /> ───────────────── 复用主窗口组件         │
 ├─────────────────────────────────────────────────────────────┤
 │  FileManagerPanel.tsx                                       │
 │  ├─ listen("transfer-progress-{id}") ──► 监听传输进度         │
@@ -23,6 +27,7 @@
 │  terminalStore (Zustand)                                    │
 │  ├─ connectedConnections: ConnectedConnection[]             │
 │  │   └─ rootPane: SplitPane (支持嵌套分屏)                   │
+│  ├─ restoreConnection() ──────────────► 恢复连接（新窗口）    │
 │  └─ activeConnectionId: string                              │
 └─────────────────────────────────────────────────────────────┘
                               │
@@ -36,6 +41,10 @@
 │  └─ tokio::spawn reader task                                │
 │       └─ tokio::select! { resize, write, wait() }           │
 │       └─ emit("shell-output-{id}", data) ──► 推送到前端      │
+├─────────────────────────────────────────────────────────────┤
+│  create_terminal_window                                      │
+│  ├─ 创建新 WebviewWindow                                     │
+│  └─ emit("terminal-window-init", data) ──► 发送初始化数据    │
 ├─────────────────────────────────────────────────────────────┤
 │  upload_file / download_file                                │
 │  ├─ 创建独立 SSH 连接 (不阻塞 Shell)                         │
@@ -74,7 +83,7 @@
 .
 ├── src/                        # React 前端
 │   ├── main.tsx                # 入口，ConfigProvider 配置
-│   ├── App.tsx                 # 路由 + 布局
+│   ├── App.tsx                 # 路由 + 布局（含 /terminal-window 路由）
 │   ├── components/             # 公共组件
 │   │   ├── Sidebar.tsx         # 侧边栏 (分组导航 + 终端入口)
 │   │   ├── FileManagerPanel.tsx # 文件管理面板 (主组件)
@@ -90,13 +99,18 @@
 │   │           ├── useTransfer.ts        # 上传下载
 │   │           └── useDragDrop.ts        # 拖拽处理
 │   ├── pages/                  # 页面组件
-│   │   ├── Terminal.tsx        # 终端页面 (Events 监听)
+│   │   ├── Terminal.tsx        # 终端页面 (主窗口 + 新窗口共用)
+│   │   ├── TerminalWindow.tsx  # 新窗口入口（监听 event + 复用 Terminal）
+│   │   ├── terminal/           # 终端相关子模块
+│   │   │   ├── components/     # 终端组件（PaneToolbar, ContextMenu 等）
+│   │   │   └── hooks/          # 终端 hooks（useConnectionDrag 等）
 │   │   ├── Connections.tsx     # 连接管理 (CRUD + 测试连接)
 │   │   └── Transfers.tsx       # 传输管理
 │   ├── stores/                 # Zustand 状态管理
-│   │   ├── terminalStore.ts    # 连接/会话状态
+│   │   ├── terminalStore.ts    # 连接/会话状态（含 restoreConnection）
 │   │   └── transferStore.ts    # 传输记录/进度状态
 │   ├── utils/                  # 工具函数
+│   │   └── paneUtils.ts        # SplitPane 辅助函数
 │   └── styles/                 # 全局 CSS
 │       └── global.css          # xterm.js 样式覆盖
 ├── src-tauri/                  # Rust 后端
@@ -106,6 +120,7 @@
 │   │   └── commands/           # Tauri 命令
 │   │       ├── ssh.rs          # SSH 操作 (async + Events)
 │   │       ├── sftp.rs         # SFTP 文件传输 (russh-sftp)
+│   │       ├── window.rs       # 新窗口创建命令
 │   │       ├── license.rs      # License 验证 (存根/Pro)
 │   │       ├── api.rs          # HTTP API 服务器 (axum)
 │   │       └── system.rs       # 系统信息 (字体等)
@@ -115,6 +130,10 @@
 │   └── icons/                  # 应用图标
 ├── mcp/                        # MCP 服务器 (独立 npm 包)
 │   └── src/index.ts            # MCP 工具定义 (iter_*)
+├── docs/                       # 项目文档
+│   ├── 优化实施计划.md         # 优化进度跟踪
+│   ├── 新窗口功能实施方案.md   # 新窗口功能文档
+│   └── 组件拆分进度.md         # 组件拆分状态
 ├── package.json                # npm 依赖
 ├── vite.config.ts              # Vite 配置 (端口 1430)
 └── tsconfig.json               # TypeScript 配置 (strict 模式)
@@ -126,14 +145,18 @@
 |------|------|------|
 | 添加新 SSH 功能 | `src-tauri/src/commands/ssh.rs` | 核心 SSH 逻辑 (russh async API) |
 | 添加新 SFTP 功能 | `src-tauri/src/commands/sftp.rs` | 文件传输逻辑 |
+| 新窗口功能 | `src-tauri/src/commands/window.rs` | 创建新窗口 Tauri 命令 |
 | 数据库操作 | `src-tauri/src/commands/db.rs` | 连接 CRUD、加密存储 |
 | 数据库服务层 | `src/services/database.ts` | 前端数据库服务封装 |
 | License 验证 | `src-tauri/src/commands/license.rs` | 存根版本，Pro 版在私有仓库 |
 | HTTP API 服务器 | `src-tauri/src/commands/api.rs` | MCP 桥接 API (axum, 端口 27149) |
 | 修改终端事件监听 | `src/pages/Terminal.tsx` | Events 订阅/取消订阅 |
+| 修改新窗口逻辑 | `src/pages/TerminalWindow.tsx` | Event 监听 + restoreConnection |
+| 拖拽到新窗口检测 | `src/pages/terminal/hooks/useConnectionDrag.ts` | 边缘检测 hook |
+| 新窗口视觉提示 | `src/pages/terminal/components/DragToNewWindowOverlay.tsx` | 拖拽提示组件 |
 | 修改文件管理 UI | `src/components/FileManagerPanel.tsx` | 文件树、上传下载，使用 hooks 拆分逻辑 |
 | 修改传输状态 | `src/stores/transferStore.ts` | 传输记录、进度 |
-| 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话状态 |
+| 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话状态、restoreConnection |
 | License 状态 | `src/stores/licenseStore.ts` | License 验证状态 (Zustand) |
 | 添加新页面 | `src/pages/` | 创建组件 + 在 App.tsx 添加路由 |
 | 修改终端样式 | `src/styles/global.css` | xterm.js CSS 覆盖 |
@@ -172,6 +195,8 @@
 | `pause_transfer` | async fn | `sftp.rs` | 暂停传输 |
 | `resume_transfer` | async fn | `sftp.rs` | 恢复传输 |
 | `list_directory` | async fn | `sftp.rs` | 列出目录内容 |
+| `create_terminal_window` | async fn | `window.rs` | 创建新窗口 + 发送初始化事件 |
+| `close_terminal_window` | async fn | `window.rs` | 关闭新窗口 |
 | `LicenseType` | enum | `license.rs` | Free/Personal/Professional/Enterprise |
 | `LicenseInfo` | struct | `license.rs` | License 信息 (类型、功能、连接数限制) |
 | `verify_license` | async fn | `license.rs` | 验证 License Key |
@@ -191,8 +216,11 @@
 | `SplitPane` | interface | `terminalStore.ts` | 分屏数据结构（支持嵌套） |
 | `splitPane` | fn | `terminalStore.ts` | 创建分屏 |
 | `closePane` | fn | `terminalStore.ts` | 关闭分屏 |
-| `getAllSessions` | fn | `Terminal.tsx` | 获取 pane 中所有会话 |
-| `findPaneBySessionId` | fn | `Terminal.tsx` | 根据会话 ID 查找 pane |
+| `restoreConnection` | fn | `terminalStore.ts` | 恢复连接（新窗口） |
+| `updateSessionShellId` | fn | `terminalStore.ts` | 更新会话 shellId |
+| `getAllSessions` | fn | `paneUtils.ts` | 获取 pane 中所有会话 |
+| `findPaneBySessionId` | fn | `paneUtils.ts` | 根据会话 ID 查找 pane |
+| `useConnectionDragToNewWindow` | hook | `useConnectionDrag.ts` | 拖拽到边缘检测 |
 
 ## 核心设计
 
@@ -205,6 +233,7 @@
 | Shell 输出 | `shell-output-{shellId}` | 终端数据推送 |
 | 传输进度 | `transfer-progress-{taskId}` | 文件传输进度 |
 | 传输完成 | `transfer-complete-{taskId}` | 传输结束通知 |
+| 新窗口初始化 | `terminal-window-init` | 新窗口连接数据传递 |
 
 ### 2. russh Async 架构
 
@@ -349,6 +378,8 @@ ShellSession {
 - **不要**在公开仓库修改 `license.rs` 的 `SECRET_KEY` - Pro 版在私有仓库
 - **不要**跳过 License 连接数检查 - 免费版限制 3 个连接
 - **不要**直接构建商业版 - 使用 `../iterminal-pro/scripts/build-pro.sh`
+- **不要**为新窗口创建独立的简化版组件 - 复用 `Terminal.tsx`
+- **不要**在新窗口中重新实现终端逻辑 - 使用 `restoreConnection()` 共享 store
 
 ## 命令
 
@@ -390,6 +421,38 @@ npm run test:e2e
 - License 系统: 免费版 3 连接限制，付费版无限连接
 - 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)
 - MCP 已发布到 npm: `iterminal-mcp-server@1.0.4`
+
+## 新窗口功能
+
+**拖拽连接到边缘创建新窗口**：
+- 拖拽连接 tab 到窗口边缘 60px 区域触发
+- 显示绿色边框视觉提示
+- 释放后创建新窗口，包含完整终端功能
+
+**新窗口架构**：
+```
+TerminalWindow.tsx
+    └── 解析 URL 获取 windowLabel
+    └── 调用 get_terminal_window_data 获取连接数据
+    └── 连接 SSH + 获取新 shellId
+    └── restoreConnection() 到 store
+    └── 渲染 <Terminal singleConnectionMode /> 复用主窗口组件
+```
+
+**新窗口特性**：
+- 复用主窗口 Terminal 组件，功能完全一致
+- 全屏按钮在右侧工具栏顶部
+- 关闭最后一个会话后自动关闭窗口
+- 不显示空状态页面
+
+**主窗口空状态**：
+- 显示最近 5 个连接，点击直接连接
+- 显示「连接管理」按钮跳转到连接页面
+
+**权限配置** (`capabilities/default.json`)：
+- `windows: ["*"]` 允许所有窗口（包括新窗口）访问权限
+- `core:event:allow-listen` 允许事件监听
+- `core:window:allow-close` 允许关闭窗口
 
 ## 安全注意事项
 

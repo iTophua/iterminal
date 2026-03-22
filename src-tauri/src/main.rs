@@ -63,6 +63,8 @@ fn main() {
             iterminal::commands::license::is_feature_available,
             iterminal::commands::license::check_connection_limit,
             iterminal::commands::license::clear_license,
+            iterminal::commands::license::set_license_bypass,
+            iterminal::commands::license::is_license_bypassed,
             iterminal::commands::db::init_database,
             iterminal::commands::db::get_connections,
             iterminal::commands::db::save_connection,
@@ -79,6 +81,7 @@ fn main() {
             iterminal::commands::db::update_connection_order,
             iterminal::commands::window::create_terminal_window,
             iterminal::commands::window::close_terminal_window,
+            iterminal::commands::window::get_terminal_window_data,
         ])
         .setup(|app| {
             if let Err(e) = iterminal::commands::db::init_database(app.handle().clone()) {

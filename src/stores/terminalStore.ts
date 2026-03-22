@@ -182,6 +182,10 @@ interface TerminalState {
 
   // 添加连接
   addConnection: (connection: Connection, shellId: string) => string
+  // 恢复连接（用于新窗口，包含分屏结构）
+  restoreConnection: (connection: Connection, rootPane: SplitPane) => void
+  // 更新会话的 shellId（用于新窗口重建 shell）
+  updateSessionShellId: (connectionId: string, sessionId: string, shellId: string) => void
   // 添加会话
   addSession: (connectionId: string, shellId: string) => string
   // 关闭会话
@@ -242,16 +246,6 @@ interface TerminalState {
   markConnectionDisconnected: (connectionId: string, reason: DisconnectedConnection['reason']) => void
   removeDisconnectedConnection: (connectionId: string) => void
   clearAllDisconnectedConnections: () => void
-}
-
-function countSessions(pane: SplitPane): number {
-  let count = pane.sessions.length
-  if (pane.children) {
-    for (const child of pane.children) {
-      count += countSessions(child)
-    }
-  }
-  return count
 }
 
 function getNextSessionNumber(pane: SplitPane): number {
@@ -353,6 +347,44 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }))
 
     return sessionId
+  },
+
+restoreConnection: (connection, rootPane) => {
+    set((state) => ({
+      connectedConnections: [
+        ...state.connectedConnections,
+        {
+          connectionId: connection.id,
+          connection,
+          rootPane,
+        }
+      ],
+      activeConnectionId: connection.id,
+      currentPaths: {
+        ...state.currentPaths,
+        [connection.id]: '/home/' + connection.username
+      }
+    }))
+  },
+
+  updateSessionShellId: (connectionId, sessionId, shellId) => {
+    const updatePaneShellIds = (pane: SplitPane): SplitPane => {
+      return {
+        ...pane,
+        sessions: pane.sessions.map(s =>
+          s.id === sessionId ? { ...s, shellId } : s
+        ),
+        children: pane.children?.map(updatePaneShellIds),
+      }
+    }
+
+    set((state) => ({
+      connectedConnections: state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, rootPane: updatePaneShellIds(c.rootPane) }
+          : c
+      ),
+    }))
   },
 
   addSession: (connectionId, shellId) => {
@@ -787,12 +819,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
       let newRootPane = removeSessionFromPane(conn.rootPane)
       if (!newRootPane) {
-        console.log('[moveSessionToSplitPane] removeSessionFromPane returned null')
         return state
       }
 
       newRootPane = createSplitWithSession(newRootPane)
-      console.log('[moveSessionToSplitPane] final newRootPane id:', newRootPane.id)
 
       return {
         connectedConnections: state.connectedConnections.map(c =>
@@ -929,9 +959,11 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       }
 
       const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
-      const hasChildren = conn?.rootPane.children && conn.rootPane.children.length > 0
+      if (!conn) return state
 
-      const newRootPane = updatePane(conn!.rootPane)
+      const hasChildren = conn.rootPane.children && conn.rootPane.children.length > 0
+
+      const newRootPane = updatePane(conn.rootPane)
       
       return {
         connectedConnections: state.connectedConnections.map(c =>

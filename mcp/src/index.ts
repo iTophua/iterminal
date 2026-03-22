@@ -326,6 +326,117 @@ const tools: Tool[] = [
       required: ["id"],
     },
   },
+  {
+    name: "iter_network_stats",
+    description: "获取远程服务器网络接口统计信息。参数: id(连接标识)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "iter_list_processes",
+    description: "获取远程服务器进程列表（按内存排序）。参数: id(连接标识)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "iter_kill_process",
+    description: "终止远程服务器上的进程。参数: id(连接标识), pid(进程ID)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        pid: { type: "number", description: "要终止的进程ID" },
+      },
+      required: ["id", "pid"],
+    },
+  },
+  {
+    name: "iter_compress",
+    description: "压缩远程服务器上的文件或目录。参数: id(连接标识), source_path(源路径), target_path(目标压缩文件路径)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        source_path: { type: "string", description: "要压缩的文件或目录路径" },
+        target_path: { type: "string", description: "压缩后的目标文件路径(.tar.gz)" },
+      },
+      required: ["id", "source_path", "target_path"],
+    },
+  },
+  {
+    name: "iter_extract",
+    description: "解压远程服务器上的压缩文件。参数: id(连接标识), file_path(压缩文件路径), target_dir(目标目录)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        file_path: { type: "string", description: "压缩文件路径" },
+        target_dir: { type: "string", description: "解压目标目录" },
+      },
+      required: ["id", "file_path", "target_dir"],
+    },
+  },
+  {
+    name: "iter_search_files",
+    description: "在远程服务器上搜索文件。参数: id(连接标识), path(搜索起始路径), pattern(搜索模式), max_results(最大结果数,默认100)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        path: { type: "string", description: "搜索起始路径" },
+        pattern: { type: "string", description: "搜索模式(支持通配符)" },
+        max_results: { type: "number", description: "最大返回结果数,默认100" },
+      },
+      required: ["id", "path", "pattern"],
+    },
+  },
+  {
+    name: "iter_upload_folder",
+    description: "上传本地文件夹到远程服务器。参数: id(连接标识), local_path(本地文件夹路径), remote_path(远程目标路径)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        local_path: { type: "string", description: "本地文件夹路径" },
+        remote_path: { type: "string", description: "远程目标路径" },
+      },
+      required: ["id", "local_path", "remote_path"],
+    },
+  },
+  {
+    name: "iter_create_file",
+    description: "在远程服务器创建空文件。参数: id(连接标识), path(文件路径)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        path: { type: "string", description: "要创建的文件路径" },
+      },
+      required: ["id", "path"],
+    },
+  },
+  {
+    name: "iter_delete_directory",
+    description: "删除远程服务器上的目录。参数: id(连接标识), path(目录路径)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: { type: "string", description: "连接标识符" },
+        path: { type: "string", description: "要删除的目录路径" },
+      },
+      required: ["id", "path"],
+    },
+  },
 ];
 
 const server = new Server(
@@ -473,6 +584,79 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "iter_quick_connect": {
         result = await apiCall<string>("POST", `/api/saved-connections/${params.id}/connect`);
+        break;
+      }
+
+      case "iter_network_stats": {
+        result = await apiCall<{ interfaces: Array<{ name: string; rx_bytes: number; rx_packets: number; rx_errors: number; tx_bytes: number; tx_packets: number; tx_errors: number }> }>(
+          "GET",
+          `/api/connections/${params.id}/network-stats`
+        );
+        break;
+      }
+
+      case "iter_list_processes": {
+        result = await apiCall<Array<{ pid: number; user: string; cpu: number; mem: number; vsz: number; rss: number; command: string }>>(
+          "GET",
+          `/api/connections/${params.id}/processes`
+        );
+        break;
+      }
+
+      case "iter_kill_process": {
+        result = await apiCall<boolean>("POST", `/api/connections/${params.id}/kill-process`, {
+          pid: params.pid,
+        });
+        break;
+      }
+
+      case "iter_compress": {
+        result = await apiCall<{ success: boolean; error?: string }>("POST", `/api/connections/${params.id}/compress`, {
+          source_path: params.source_path,
+          target_path: params.target_path,
+        });
+        break;
+      }
+
+      case "iter_extract": {
+        result = await apiCall<{ success: boolean; error?: string }>("POST", `/api/connections/${params.id}/extract`, {
+          file_path: params.file_path,
+          target_dir: params.target_dir,
+        });
+        break;
+      }
+
+      case "iter_search_files": {
+        result = await apiCall<Array<{ name: string; path: string; is_directory: boolean; size: number; modified: string }>>(
+          "GET",
+          `/api/connections/${params.id}/search-files?path=${encodeURIComponent(params.path as string)}&pattern=${encodeURIComponent(params.pattern as string)}&max_results=${params.max_results || 100}`
+        );
+        break;
+      }
+
+      case "iter_upload_folder": {
+        result = await apiCall<{ success: boolean; bytes_transferred: number; error?: string }>(
+          "POST",
+          `/api/connections/${params.id}/upload-folder`,
+          {
+            local_path: params.local_path,
+            remote_path: params.remote_path,
+          }
+        );
+        break;
+      }
+
+      case "iter_create_file": {
+        result = await apiCall<boolean>("POST", `/api/connections/${params.id}/create-file`, {
+          path: params.path,
+        });
+        break;
+      }
+
+      case "iter_delete_directory": {
+        result = await apiCall<boolean>("POST", `/api/connections/${params.id}/delete-directory`, {
+          path: params.path,
+        });
         break;
       }
 

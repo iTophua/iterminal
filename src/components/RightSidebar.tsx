@@ -3,6 +3,8 @@ import {
   DashboardOutlined,
   FolderOutlined,
   ApiOutlined,
+  FullscreenOutlined,
+  FullscreenExitOutlined,
 } from '@ant-design/icons'
 
 interface RightSidebarProps {
@@ -11,9 +13,12 @@ interface RightSidebarProps {
   fileManagerVisible: boolean
   apiLogVisible: boolean
   mcpEnabled: boolean
+  isFullscreen?: boolean
+  showFullscreen?: boolean
   onMonitorToggle: () => void
   onFileManagerToggle: () => void
   onApiLogToggle: () => void
+  onFullscreenToggle?: () => void
 }
 
 export function RightSidebar({
@@ -22,9 +27,12 @@ export function RightSidebar({
   fileManagerVisible,
   apiLogVisible,
   mcpEnabled,
+  isFullscreen,
+  showFullscreen,
   onMonitorToggle,
   onFileManagerToggle,
   onApiLogToggle,
+  onFullscreenToggle,
 }: RightSidebarProps) {
   return (
     <div
@@ -38,12 +46,40 @@ export function RightSidebar({
         flexShrink: 0,
       }}
     >
+      {showFullscreen && onFullscreenToggle && (
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            padding: '8px 0',
+          }}
+        >
+          <Tooltip title={isFullscreen ? '退出全屏' : '全屏'} placement="left">
+            <Button
+              type="text"
+              size="small"
+              icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+              onClick={onFullscreenToggle}
+            />
+          </Tooltip>
+        </div>
+      )}
+      {showFullscreen && (
+        <div
+          style={{
+            height: 1,
+            background: 'var(--color-border)',
+            margin: '0 6px',
+          }}
+        />
+      )}
       <div
         style={{
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
-          padding: '36px 0 8px 0',
+          padding: showFullscreen ? '8px 0' : '36px 0 8px 0',
           gap: 8,
           background: 'var(--color-bg-elevated)',
         }}

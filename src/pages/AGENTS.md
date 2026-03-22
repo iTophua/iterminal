@@ -186,6 +186,32 @@ useEffect(() => {
 - **PaneToolbar:** 每个 pane 独立渲染，操作只影响当前 pane
 - **Fullscreen:** 全屏按钮在连接 tab 右侧，不在工具条中
 
+## 新窗口模式 (singleConnectionMode)
+
+Terminal 组件支持 `singleConnectionMode` prop，用于新窗口场景：
+
+```typescript
+<Terminal singleConnectionMode />
+```
+
+**行为差异**：
+
+| 功能 | 主窗口 | 新窗口 (singleConnectionMode) |
+|------|--------|------------------------------|
+| 连接 tab 栏 | 显示 | 隐藏 |
+| 全屏按钮 | tab 栏右侧 | 右侧工具栏顶部 |
+| 空状态 | 显示最近连接列表 | 不显示，直接关闭窗口 |
+| 关闭最后会话 | 清空终端 | 自动关闭窗口 |
+
+**窗口关闭逻辑**：
+```typescript
+useEffect(() => {
+  if (singleConnectionMode && connectedConnections.length === 0) {
+    getCurrentWindow().close()
+  }
+}, [singleConnectionMode, connectedConnections.length])
+```
+
 ## ANTI-PATTERNS
 
 - **Don't** forget to call `unlisten()` when closing terminal - memory leak

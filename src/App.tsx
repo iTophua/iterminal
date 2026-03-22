@@ -1,10 +1,9 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Modal, Button, Space, message } from 'antd'
 import Sidebar from './components/Sidebar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
-// 拖拽连接 tab 到新窗口功能（暂时禁用）
-// import TerminalWindowPage from './pages/TerminalWindow'
+import TerminalWindowPage from './pages/TerminalWindow'
 import Transfers from './pages/Transfers'
 import { useTerminalStore, type SplitPane } from './stores/terminalStore'
 import { invoke } from '@tauri-apps/api/core'
@@ -145,7 +144,6 @@ function SessionRestorer() {
   const [restoreModalVisible, setRestoreModalVisible] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const addConnection = useTerminalStore(s => s.addConnection)
-  const setActiveConnection = useTerminalStore(s => s.setActiveConnection)
 
   useEffect(() => {
     const saved = localStorage.getItem(SESSION_STORAGE_KEY)
@@ -338,13 +336,12 @@ function MainContent() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
-        {/* 拖拽连接 tab 到新窗口功能（暂时禁用） */}
-        {/* <Route path="/terminal-window" element={<TerminalWindowPage />} /> */}
+        <Route path="/terminal-window" element={<TerminalWindowPage />} />
         <Route path="/*" element={<MainApp />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 

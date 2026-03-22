@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capabilities for iTerminal",
-  "windows": ["main"],
+  "windows": ["*"],
   "permissions": [
     "core:default",
     "core:event:default",
@@ -14,6 +14,7 @@
     "core:window:allow-is-maximized",
     "core:window:allow-toggle-maximize",
     "core:window:allow-set-theme",
+    "core:window:allow-close",
     "core:app:allow-set-app-theme",
     "dialog:default",
     "dialog:allow-open",

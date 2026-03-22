@@ -16,12 +16,15 @@ interface LicenseState {
   licenseInfo: LicenseInfo | null
   loading: boolean
   error: string | null
+  bypassed: boolean
   
   fetchLicense: () => Promise<void>
   verifyLicense: (key: string) => Promise<boolean>
   clearLicense: () => Promise<void>
   isFeatureAvailable: (feature: string) => boolean
   getMaxConnections: () => number
+  setBypass: (bypass: boolean) => Promise<void>
+  fetchBypassStatus: () => Promise<void>
 }
 
 const DEFAULT_LICENSE: LicenseInfo = {
@@ -37,6 +40,7 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
   licenseInfo: null,
   loading: false,
   error: null,
+  bypassed: false,
 
   fetchLicense: async () => {
     set({ loading: true, error: null })
@@ -74,12 +78,32 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
   },
 
   isFeatureAvailable: (feature: string) => {
+    if (get().bypassed) return true
     const info = get().licenseInfo || DEFAULT_LICENSE
     return info.features.includes(feature) || info.features.includes('*')
   },
 
   getMaxConnections: () => {
+    if (get().bypassed) return 999
     const info = get().licenseInfo || DEFAULT_LICENSE
     return info.max_connections
+  },
+
+  setBypass: async (bypass: boolean) => {
+    try {
+      await invoke('set_license_bypass', { bypass })
+      set({ bypassed: bypass })
+    } catch (e) {
+      console.error('Failed to set license bypass:', e)
+    }
+  },
+
+  fetchBypassStatus: async () => {
+    try {
+      const bypassed = await invoke<boolean>('is_license_bypassed')
+      set({ bypassed })
+    } catch (e) {
+      console.error('Failed to fetch bypass status:', e)
+    }
   },
 }))

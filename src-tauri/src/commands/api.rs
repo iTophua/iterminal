@@ -138,6 +138,15 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
         .route("/api/connections/{id}/download", post(download_file_handler))
         .route("/api/saved-connections", get(list_saved_connections))
         .route("/api/saved-connections/{id}/connect", post(quick_connect_handler))
+        .route("/api/connections/{id}/network-stats", get(get_network_stats_handler))
+        .route("/api/connections/{id}/processes", get(list_processes_handler))
+        .route("/api/connections/{id}/kill-process", post(kill_process_handler))
+        .route("/api/connections/{id}/compress", post(compress_handler))
+        .route("/api/connections/{id}/extract", post(extract_handler))
+        .route("/api/connections/{id}/search-files", get(search_files_handler))
+        .route("/api/connections/{id}/upload-folder", post(upload_folder_handler))
+        .route("/api/connections/{id}/create-file", post(create_file_handler))
+        .route("/api/connections/{id}/delete-directory", post(delete_directory_handler))
         .layer(
             CorsLayer::new()
                 .allow_origin([
@@ -658,6 +667,254 @@ async fn quick_connect_handler(
                 "quick_connect",
                 Some(&id),
                 &details,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn get_network_stats_handler(
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<ssh::NetworkStats>>, (StatusCode, Json<ApiResponse<ssh::NetworkStats>>)> {
+    match ssh::get_network_stats(id).await {
+        Ok(stats) => Ok(Json(ApiResponse::success(stats))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+async fn list_processes_handler(
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<Vec<ssh::ProcessInfo>>>, (StatusCode, Json<ApiResponse<Vec<ssh::ProcessInfo>>>)> {
+    match ssh::list_processes(id).await {
+        Ok(processes) => Ok(Json(ApiResponse::success(processes))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KillProcessRequest {
+    pub pid: u32,
+}
+
+async fn kill_process_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<KillProcessRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match ssh::kill_process(id.clone(), payload.pid, None).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "kill_process",
+                Some(&id),
+                &format!("pid: {}", payload.pid),
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "kill_process",
+                Some(&id),
+                &format!("pid: {}", payload.pid),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CompressRequest {
+    pub source_path: String,
+    pub target_path: String,
+}
+
+async fn compress_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<CompressRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::compress_file(id.clone(), payload.source_path.clone(), payload.target_path.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "compress",
+                Some(&id),
+                &format!("{} -> {}", payload.source_path, payload.target_path),
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "compress",
+                Some(&id),
+                &format!("{} -> {}", payload.source_path, payload.target_path),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExtractRequest {
+    pub file_path: String,
+    pub target_dir: String,
+}
+
+async fn extract_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<ExtractRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::extract_file(id.clone(), payload.file_path.clone(), payload.target_dir.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "extract",
+                Some(&id),
+                &format!("{} -> {}", payload.file_path, payload.target_dir),
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "extract",
+                Some(&id),
+                &format!("{} -> {}", payload.file_path, payload.target_dir),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn search_files_handler(
+    Path(id): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<ApiResponse<Vec<sftp::SearchResult>>>, (StatusCode, Json<ApiResponse<Vec<sftp::SearchResult>>>)> {
+    let path = params.get("path").cloned().unwrap_or_else(|| "/".to_string());
+    let pattern = params.get("pattern").cloned().unwrap_or_else(|| "*".to_string());
+    let max_results: u32 = params.get("max_results").and_then(|s| s.parse().ok()).unwrap_or(100);
+
+    match sftp::search_files(id, path, pattern, Some(max_results)).await {
+        Ok(results) => Ok(Json(ApiResponse::success(results))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UploadFolderRequest {
+    pub local_path: String,
+    pub remote_path: String,
+}
+
+async fn upload_folder_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<UploadFolderRequest>,
+) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
+    let task_id = format!("mcp-upload-folder-{}", chrono::Utc::now().timestamp_millis());
+    let app_handle = state.app_handle.clone();
+    
+    match sftp::upload_folder(id, payload.local_path.clone(), payload.remote_path.clone(), task_id, app_handle).await {
+        Ok(result) => {
+            emit_operation(
+                &state.app_handle,
+                "upload_folder",
+                None,
+                &format!("{} -> {}", payload.local_path, payload.remote_path),
+                result.success,
+                result.error.as_deref(),
+            );
+            Ok(Json(ApiResponse::success(TransferResult {
+                success: result.success,
+                bytes_transferred: result.bytes_transferred,
+                error: result.error,
+            })))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "upload_folder",
+                None,
+                &format!("{} -> {}", payload.local_path, payload.remote_path),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn create_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<PathRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::create_file(id.clone(), payload.path.clone(), None).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "create_file",
+                Some(&id),
+                &payload.path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "create_file",
+                Some(&id),
+                &payload.path,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+async fn delete_directory_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Path(id): Path<String>,
+    Json(payload): Json<PathRequest>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match sftp::delete_directory(id.clone(), payload.path.clone()).await {
+        Ok(_) => {
+            emit_operation(
+                &state.app_handle,
+                "delete_directory",
+                Some(&id),
+                &payload.path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(true)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "delete_directory",
+                Some(&id),
+                &payload.path,
                 false,
                 Some(&e),
             );

@@ -13,7 +13,6 @@ interface McpOperation {
 }
 
 interface McpLogPanelProps {
-  visible: boolean
   onClose: () => void
 }
 
@@ -44,7 +43,7 @@ const getOperationColor = (operation: string): string => {
   return colorMap[operation] || 'var(--color-text-secondary)'
 }
 
-function McpLogPanel({ visible, onClose }: McpLogPanelProps) {
+function McpLogPanel({ onClose }: McpLogPanelProps) {
   const [logs, setLogs] = useState<McpOperation[]>([])
   const [filter, setFilter] = useState<string>('all')
   const unlistenRef = useRef<UnlistenFn | null>(null)

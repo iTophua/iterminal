@@ -59,6 +59,7 @@ impl Default for LicenseInfo {
 
 /// 全局 License 状态
 static LICENSE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static LICENSE_BYPASS: AtomicBool = AtomicBool::new(false);
 static LICENSE_INFO: Lazy<RwLock<Option<LicenseInfo>>> = Lazy::new(|| RwLock::new(None));
 
 /// 获取 License 信息
@@ -69,17 +70,22 @@ pub async fn get_license_info() -> LicenseInfo {
 
 /// 检查功能是否可用
 pub async fn check_feature(feature: &str) -> bool {
+    if LICENSE_BYPASS.load(Ordering::SeqCst) {
+        return true;
+    }
     let info = get_license_info().await;
     info.features.contains(&feature.to_string()) || info.features.contains(&"*".to_string())
 }
 
 /// 获取最大连接数
 pub async fn get_max_connections() -> u32 {
+    if LICENSE_BYPASS.load(Ordering::SeqCst) {
+        return 999;
+    }
     let info = get_license_info().await;
     info.max_connections
 }
 
-/// 获取功能列表
 fn get_features(license_type: &LicenseType) -> Vec<String> {
     match license_type {
         LicenseType::Free => vec![
@@ -253,6 +259,25 @@ pub async fn clear_license() {
     LICENSE_ACTIVE.store(false, Ordering::SeqCst);
     let mut guard = LICENSE_INFO.write().await;
     *guard = None;
+}
+
+/// 设置 License 限制跳过（开发/测试用）
+#[cfg(debug_assertions)]
+#[tauri::command]
+pub fn set_license_bypass(bypass: bool) {
+    LICENSE_BYPASS.store(bypass, Ordering::SeqCst);
+}
+
+#[cfg(not(debug_assertions))]
+#[tauri::command]
+pub fn set_license_bypass(_bypass: bool) {
+    eprintln!("set_license_bypass is only available in debug builds");
+}
+
+/// 获取 License 限制跳过状态
+#[tauri::command]
+pub fn is_license_bypassed() -> bool {
+    LICENSE_BYPASS.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]

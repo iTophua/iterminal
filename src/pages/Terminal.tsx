@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
 import { Tabs, App, Button, Tooltip } from 'antd'
 import { createPortal } from 'react-dom'
+import { useNavigate } from 'react-router-dom'
 import {
   CloseOutlined,
   PlusOutlined,
@@ -21,13 +22,13 @@ import { FitAddon } from 'xterm-addon-fit'
 import { SearchAddon } from 'xterm-addon-search'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates, useSortable, horizontalListSortingStrategy } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
+import { SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { Panel, Group, Separator } from 'react-resizable-panels'
 import 'xterm/css/xterm.css'
-import { useTerminalStore, DisconnectedConnection, SplitPane, Session } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectedConnection, SplitPane } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import { RightSidebar } from '../components/RightSidebar'
@@ -36,135 +37,20 @@ import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
 import { STORAGE_KEYS } from '../config/constants'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
-import { PaneToolbar } from './terminal/components'
+import { PaneToolbar, SortableTab, DraggableSessionTab } from './terminal/components'
+import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOverlay'
+import { useConnectionDragToNewWindow } from './terminal/hooks/useConnectionDrag'
+import { getAllSessions, getActiveSessionInPane, findPaneBySessionId, hasSplitChildren, getVisibleSessions } from '../utils/paneUtils'
+import { getRecentConnections, recordConnectionHistory } from '../services/database'
+import type { Connection } from '../types/shared'
 
-interface SortableTabProps {
-  id: string
-  label: React.ReactNode
-  connectionName?: string
+interface TerminalProps {
+  singleConnectionMode?: boolean
 }
 
-function SortableTab({ id, label, connectionName }: SortableTabProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    cursor: 'grab',
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 0,
-    lineHeight: 1,
-  }
-
-  return (
-    <span ref={setNodeRef} style={style} {...attributes} {...listeners} data-connection-tab-id={id} data-connection-name={connectionName}>
-      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
-      {label}
-    </span>
-  )
-}
-
-interface DraggableSessionTabProps {
-  sessionId: string
-  connectionId: string
-  title: string
-  onClose: () => void
-  onDragStart: (sessionId: string, connectionId: string, title: string) => void
-}
-
-function DraggableSessionTab({ sessionId, connectionId, title, onClose, onDragStart }: DraggableSessionTabProps) {
-  return (
-    <span
-      style={{ fontSize: 12, cursor: 'grab', display: 'inline-flex', alignItems: 'center', gap: 0, padding: '2px 0' }}
-      onPointerDown={(e) => {
-        if (e.button !== 0) return
-        const target = e.target as HTMLElement
-        if (target.closest('.session-tab-close')) return
-        e.stopPropagation()
-        e.preventDefault()
-        onDragStart(sessionId, connectionId, title)
-      }}
-    >
-      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
-      <span style={{ lineHeight: '16px' }}>{title}</span>
-      <CloseOutlined
-        className="session-tab-close"
-        style={{ marginLeft: 4, fontSize: 9, cursor: 'pointer' }}
-        onClick={e => { e.stopPropagation(); onClose() }}
-      />
-    </span>
-  )
-}
-
-function getAllSessions(pane: SplitPane): Session[] {
-  if (pane.children) {
-    return pane.children.flatMap(child => getAllSessions(child))
-  }
-  return pane.sessions
-}
-
-function getActiveSessionInPane(pane: SplitPane): Session | null {
-  if (pane.children) {
-    const targetPaneId = pane.activePaneId
-    if (targetPaneId) {
-      const findPaneById = (p: SplitPane): SplitPane | null => {
-        if (p.id === targetPaneId) return p
-        if (p.children) {
-          for (const child of p.children) {
-            const found = findPaneById(child)
-            if (found) return found
-          }
-        }
-        return null
-      }
-      const targetPane = findPaneById(pane)
-      if (targetPane) {
-        if (targetPane.activeSessionId) {
-          return targetPane.sessions.find(s => s.id === targetPane.activeSessionId) || null
-        }
-        return targetPane.sessions[0] || null
-      }
-    }
-    for (const child of pane.children) {
-      const active = getActiveSessionInPane(child)
-      if (active) return active
-    }
-    return null
-  }
-  if (pane.activeSessionId) {
-    return pane.sessions.find(s => s.id === pane.activeSessionId) || null
-  }
-  return pane.sessions[0] || null
-}
-
-function findPaneBySessionId(pane: SplitPane, sessionId: string): SplitPane | null {
-  if (pane.sessions.some(s => s.id === sessionId)) {
-    return pane
-  }
-  if (pane.children) {
-    for (const child of pane.children) {
-      const found = findPaneBySessionId(child, sessionId)
-      if (found) return found
-    }
-  }
-  return null
-}
-
-function hasSplitChildren(pane: SplitPane | null): boolean {
-  return !!(pane?.children && pane.children.length > 0)
-}
-
-function getVisibleSessions(pane: SplitPane): Session[] {
-  if (pane.children && pane.children.length > 0) {
-    return pane.children.flatMap(child => getVisibleSessions(child))
-  }
-  return pane.sessions
-}
-
-function Terminal() {
+function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const { message } = App.useApp()
+  const navigate = useNavigate()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const disconnectedConnections = useTerminalStore(state => state.disconnectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
@@ -195,6 +81,12 @@ function Terminal() {
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
+
+  const [recentConnections, setRecentConnections] = useState<Connection[]>([])
+
+  useEffect(() => {
+    getRecentConnections(5).then(setRecentConnections).catch(() => {})
+  }, [])
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -230,9 +122,8 @@ function Terminal() {
     setMonitorVisible,
     apiLogVisible,
     setApiLogVisible,
-    rightPanelWidth,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
-  
+
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
@@ -241,15 +132,16 @@ function Terminal() {
   const [draggedSession, setDraggedSession] = useState<{ sessionId: string; connectionId: string; title: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null)
-  // 拖拽连接 tab 到新窗口功能（暂时禁用）
-  // const [connectionTabDragToNewWindow, setConnectionTabDragToNewWindow] = useState(false)
-  // const [isConnectionDragging, setIsConnectionDragging] = useState(false)
-  // const connectionDragIdRef = useRef<string | null>(null)
   const paneRefs = useRef<Map<string, HTMLDivElement>>(new Map())
   const draggedSessionRef = useRef<{ sessionId: string; connectionId: string; title: string } | null>(null)
   const dropTargetRef = useRef<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
   const dragStartRef = useRef<{ sessionId: string; connectionId: string; title: string } | null>(null)
   const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 拖拽连接 tab 到新窗口功能
+  const [isConnectionDragging, setIsConnectionDragging] = useState(false)
+  const connectionDragIdRef = useRef<string | null>(null)
+  const { isDragToNewWindow, setIsDragToNewWindow } = useConnectionDragToNewWindow(isConnectionDragging)
 
   useEffect(() => {
     draggedSessionRef.current = draggedSession
@@ -258,30 +150,6 @@ function Terminal() {
   useEffect(() => {
     dropTargetRef.current = dropTarget
   }, [dropTarget])
-  
-  // 拖拽连接 tab 到新窗口功能（暂时禁用）
-  // useEffect(() => {
-  //   if (!isConnectionDragging) return
-  //   
-  //   const handleConnectionPointerMove = (e: PointerEvent) => {
-  //     const clientX = e.clientX
-  //     const clientY = e.clientY
-  //     const windowWidth = window.innerWidth
-  //     const windowHeight = window.innerHeight
-  //     const edgeThreshold = 60
-  //     
-  //     const atEdge = clientX <= edgeThreshold || clientX >= windowWidth - edgeThreshold ||
-  //                    clientY <= edgeThreshold || clientY >= windowHeight - edgeThreshold
-  //     
-  //     setConnectionTabDragToNewWindow(atEdge)
-  //   }
-  //   
-  //   window.addEventListener('pointermove', handleConnectionPointerMove)
-  //   
-  //   return () => {
-  //     window.removeEventListener('pointermove', handleConnectionPointerMove)
-  //   }
-  // }, [isConnectionDragging])
 
   useEffect(() => {
     apiLogVisibleRef.current = apiLogVisible
@@ -428,6 +296,14 @@ const handlePointerUp = () => {
   
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
   const visibleSessions = activeConnection ? getVisibleSessions(activeConnection.rootPane) : []
+  
+  // 强制在新窗口模式下等待 store 数据
+  const [storeReady, setStoreReady] = useState(false)
+  useEffect(() => {
+    if (singleConnectionMode && connectedConnections.length > 0 && activeConnectionId) {
+      setStoreReady(true)
+    }
+  }, [singleConnectionMode, connectedConnections.length, activeConnectionId])
 
   // 切换连接时重置搜索状态
   useEffect(() => {
@@ -458,271 +334,299 @@ const handlePointerUp = () => {
   }, [activeConnection, activeConnection?.rootPane])
 
   useEffect(() => {
-    if (!activeConnection) return
+    // 在 singleConnectionMode 下等待 store 数据准备好
+    if (singleConnectionMode && !storeReady) {
+      return
+    }
+    
+    if (visibleSessions.length === 0) {
+      return
+    }
 
     const sessionsToInit = visibleSessions
     
-    for (const session of sessionsToInit) {
-      if (!session.shellId) continue
+    // setTimeout 确保 ref 回调已执行
+    const timerId = setTimeout(() => {
+      for (const session of sessionsToInit) {
+        if (!session.shellId) {
+          continue
+        }
 
-      const key = `${session.connectionId}_${session.id}`
-      const shellId = session.shellId
+        const key = `${session.connectionId}_${session.id}`
+        const shellId = session.shellId
 
-      if (initializedRef.current.has(key)) {
-        const term = terminalInstances.current[key]
+        if (initializedRef.current.has(key)) {
+          const term = terminalInstances.current[key]
+          const existingContainer = terminalRefs.current[key]
+
+          if (term && existingContainer && term.element && !existingContainer.contains(term.element)) {
+            existingContainer.innerHTML = ''
+            existingContainer.appendChild(term.element)
+            requestAnimationFrame(() => {
+              try { term.focus() } catch {}
+            })
+          }
+          continue
+        }
+
         const container = terminalRefs.current[key]
-
-        if (term && container && term.element && !container.contains(term.element)) {
-          container.innerHTML = ''
-          container.appendChild(term.element)
-          requestAnimationFrame(() => {
-            try { term.focus() } catch {}
-          })
+        if (!container) {
+          continue
         }
-        continue
-      }
 
-      const container = terminalRefs.current[key]
-      if (!container) continue
-
-      const initTerminal = async () => {
-        const waitForContainerSize = (): Promise<void> => {
-          return new Promise((resolve) => {
-            const checkSize = () => {
-              const rect = container.getBoundingClientRect()
-              if (rect.width > 0 && rect.height > 0) {
-                resolve()
-              } else {
-                requestAnimationFrame(checkSize)
+        const initTerminal = async () => {
+          const waitForContainerSize = (): Promise<void> => {
+            return new Promise((resolve, reject) => {
+              let attempts = 0
+              const maxAttempts = 100
+              const checkSize = () => {
+                const rect = container.getBoundingClientRect()
+                if (rect.width > 0 && rect.height > 0) {
+                  resolve()
+                } else {
+                  attempts++
+                  if (attempts >= maxAttempts) {
+                    reject(new Error(`Container size timeout: ${rect.width}x${rect.height}`))
+                  } else {
+                    requestAnimationFrame(checkSize)
+                  }
+                }
               }
-            }
-            checkSize()
+              checkSize()
+            })
+          }
+
+          try {
+            await waitForContainerSize()
+          } catch (err) {
+            console.error('[Terminal] waitForContainerSize failed:', err)
+            throw err
+          }
+
+          const terminal = new XTerm({
+            cursorBlink: terminalSettings.cursorBlink,
+            cursorStyle: terminalSettings.cursorStyle,
+            fontSize: terminalSettings.fontSize,
+            fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
+            theme: resolveTerminalTheme(appTheme, terminalThemeKey),
+            convertEol: true,
+            disableStdin: false,
+            scrollback: terminalSettings.scrollback,
+            macOptionIsMeta: true,
           })
-        }
 
-        await waitForContainerSize()
+          const fitAddon = new FitAddon()
+          terminal.loadAddon(fitAddon)
+          container.innerHTML = ''
+          terminal.open(container)
 
-        const terminal = new XTerm({
-          cursorBlink: terminalSettings.cursorBlink,
-          cursorStyle: terminalSettings.cursorStyle,
-          fontSize: terminalSettings.fontSize,
-          fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-          theme: resolveTerminalTheme(appTheme, terminalThemeKey),
-          convertEol: true,
-          disableStdin: false,
-          scrollback: terminalSettings.scrollback,
-          macOptionIsMeta: true,
-        })
+          const textarea = terminal.element?.querySelector('textarea')
+          if (textarea) {
+            textarea.addEventListener('paste', (e: Event) => {
+              e.preventDefault()
+              e.stopPropagation()
+            }, true)
+          }
 
-        const fitAddon = new FitAddon()
-        terminal.loadAddon(fitAddon)
-        container.innerHTML = ''
-        terminal.open(container)
-
-        const textarea = terminal.element?.querySelector('textarea')
-        if (textarea) {
-          textarea.addEventListener('paste', (e: Event) => {
-            e.preventDefault()
-            e.stopPropagation()
-          }, true)
-        }
-
-        const matchShortcut = (event: KeyboardEvent, shortcut: string): boolean => {
-          if (!shortcut) return false
-          
-          const parts = shortcut.toUpperCase().split('+')
-          const modifiers = ['CTRL', 'CMD', 'SHIFT', 'ALT', 'META']
-          const hasModifiers = parts.some(p => modifiers.includes(p))
-          
-          const hasCtrl = parts.includes('CTRL')
-          const hasCmd = parts.includes('CMD')
-          const hasShift = parts.includes('SHIFT')
-          const hasAlt = parts.includes('ALT')
-          const hasMeta = parts.includes('META')
-          const keyPart = parts.find(p => !modifiers.includes(p))
-          
-          const ctrlMatch = hasCtrl ? event.ctrlKey : (!hasModifiers ? !event.ctrlKey : true)
-          const cmdMatch = hasCmd ? event.metaKey : (!hasModifiers ? !event.metaKey : true)
-          const shiftMatch = hasShift ? event.shiftKey : (!hasModifiers ? !event.shiftKey : true)
-          const altMatch = hasAlt ? event.altKey : (!hasModifiers ? !event.altKey : true)
-          const metaMatch = hasMeta ? event.metaKey : (hasCmd ? true : (!hasModifiers ? !event.metaKey : true))
-          
-          let keyMatch = false
-          if (keyPart) {
-            const eventKey = event.key.toUpperCase()
-            const eventCode = event.code.toUpperCase()
+          const matchShortcut = (event: KeyboardEvent, shortcut: string): boolean => {
+            if (!shortcut) return false
             
-            keyMatch = eventKey === keyPart ||
-              eventCode === 'KEY' + keyPart ||
-              eventCode === keyPart ||
-              (keyPart === 'ENTER' && (eventKey === 'ENTER' || eventCode === 'ENTER')) ||
-              ((keyPart === 'ARROWRIGHT' || keyPart === 'RIGHT') && (eventKey === 'ARROWRIGHT' || eventCode === 'ARROWRIGHT')) ||
-              ((keyPart === 'ARROWLEFT' || keyPart === 'LEFT') && (eventKey === 'ARROWLEFT' || eventCode === 'ARROWLEFT')) ||
-              ((keyPart === 'ARROWUP' || keyPart === 'UP') && (eventKey === 'ARROWUP' || eventCode === 'ARROWUP')) ||
-              ((keyPart === 'ARROWDOWN' || keyPart === 'DOWN') && (eventKey === 'ARROWDOWN' || eventCode === 'ARROWDOWN')) ||
-              (keyPart === 'SPACE' && (eventKey === ' ' || eventCode === 'SPACE')) ||
-              (keyPart === 'TAB' && (eventKey === 'TAB' || eventCode === 'TAB')) ||
-              (keyPart === 'ESCAPE' && (eventKey === 'ESCAPE' || eventCode === 'ESCAPE')) ||
-              (keyPart === 'BACKSPACE' && (eventKey === 'BACKSPACE' || eventCode === 'BACKSPACE')) ||
-              (keyPart === 'DELETE' && (eventKey === 'DELETE' || eventCode === 'DELETE')) ||
-              (keyPart === 'F1' && eventCode === 'F1') ||
-              (keyPart === 'F2' && eventCode === 'F2') ||
-              (keyPart === 'F3' && eventCode === 'F3') ||
-              (keyPart === 'F4' && eventCode === 'F4') ||
-              (keyPart === 'F5' && eventCode === 'F5') ||
-              (keyPart === 'F6' && eventCode === 'F6') ||
-              (keyPart === 'F7' && eventCode === 'F7') ||
-              (keyPart === 'F8' && eventCode === 'F8') ||
-              (keyPart === 'F9' && eventCode === 'F9') ||
-              (keyPart === 'F10' && eventCode === 'F10') ||
-              (keyPart === 'F11' && eventCode === 'F11') ||
-              (keyPart === 'F12' && eventCode === 'F12')
-          }
-          
-          return ctrlMatch && cmdMatch && shiftMatch && altMatch && metaMatch && keyMatch
-        }
-        
-        terminal.attachCustomKeyEventHandler(event => {
-          if (event.type !== 'keydown') return true
-          
-          const settings = shortcutSettingsRef.current
-          
-          // 拦截所有使用 Alt/Option 的应用级快捷键，防止 macOS 产生特殊字符
-          if (matchShortcut(event, settings.splitHorizontal)) {
-            return false
-          }
-          if (matchShortcut(event, settings.splitVertical)) {
-            return false
-          }
-          if (matchShortcut(event, settings.newSession)) {
-            return false
-          }
-          if (matchShortcut(event, settings.closeSession)) {
-            return false
-          }
-          if (matchShortcut(event, settings.nextSession)) {
-            return false
-          }
-          if (matchShortcut(event, settings.prevSession)) {
-            return false
-          }
-          if (matchShortcut(event, settings.fullscreen)) {
-            return false
-          }
-          
-          if (matchShortcut(event, settings.clearScreen)) {
-            terminal.clear()
-            return false
-          }
-          
-          if (matchShortcut(event, settings.copy)) {
-            const selection = terminal.getSelection()
-            if (selection) {
-              writeText(selection).catch(err => {
-                console.error('复制失败:', err)
-              })
+            const parts = shortcut.toUpperCase().split('+')
+            const modifiers = ['CTRL', 'CMD', 'SHIFT', 'ALT', 'META']
+            const hasModifiers = parts.some(p => modifiers.includes(p))
+            
+            const hasCtrl = parts.includes('CTRL')
+            const hasCmd = parts.includes('CMD')
+            const hasShift = parts.includes('SHIFT')
+            const hasAlt = parts.includes('ALT')
+            const hasMeta = parts.includes('META')
+            const keyPart = parts.find(p => !modifiers.includes(p))
+            
+            const ctrlMatch = hasCtrl ? event.ctrlKey : (!hasModifiers ? !event.ctrlKey : true)
+            const cmdMatch = hasCmd ? event.metaKey : (!hasModifiers ? !event.metaKey : true)
+            const shiftMatch = hasShift ? event.shiftKey : (!hasModifiers ? !event.shiftKey : true)
+            const altMatch = hasAlt ? event.altKey : (!hasModifiers ? !event.altKey : true)
+            const metaMatch = hasMeta ? event.metaKey : (hasCmd ? true : (!hasModifiers ? !event.metaKey : true))
+            
+            let keyMatch = false
+            if (keyPart) {
+              const eventKey = event.key.toUpperCase()
+              const eventCode = event.code.toUpperCase()
+              
+              keyMatch = eventKey === keyPart ||
+                eventCode === 'KEY' + keyPart ||
+                eventCode === keyPart ||
+                (keyPart === 'ENTER' && (eventKey === 'ENTER' || eventCode === 'ENTER')) ||
+                ((keyPart === 'ARROWRIGHT' || keyPart === 'RIGHT') && (eventKey === 'ARROWRIGHT' || eventCode === 'ARROWRIGHT')) ||
+                ((keyPart === 'ARROWLEFT' || keyPart === 'LEFT') && (eventKey === 'ARROWLEFT' || eventCode === 'ARROWLEFT')) ||
+                ((keyPart === 'ARROWUP' || keyPart === 'UP') && (eventKey === 'ARROWUP' || eventCode === 'ARROWUP')) ||
+                ((keyPart === 'ARROWDOWN' || keyPart === 'DOWN') && (eventKey === 'ARROWDOWN' || eventCode === 'ARROWDOWN')) ||
+                (keyPart === 'SPACE' && (eventKey === ' ' || eventCode === 'SPACE')) ||
+                (keyPart === 'TAB' && (eventKey === 'TAB' || eventCode === 'TAB')) ||
+                (keyPart === 'ESCAPE' && (eventKey === 'ESCAPE' || eventCode === 'ESCAPE')) ||
+                (keyPart === 'BACKSPACE' && (eventKey === 'BACKSPACE' || eventCode === 'BACKSPACE')) ||
+                (keyPart === 'DELETE' && (eventKey === 'DELETE' || eventCode === 'DELETE')) ||
+                (keyPart === 'F1' && eventCode === 'F1') ||
+                (keyPart === 'F2' && eventCode === 'F2') ||
+                (keyPart === 'F3' && eventCode === 'F3') ||
+                (keyPart === 'F4' && eventCode === 'F4') ||
+                (keyPart === 'F5' && eventCode === 'F5') ||
+                (keyPart === 'F6' && eventCode === 'F6') ||
+                (keyPart === 'F7' && eventCode === 'F7') ||
+                (keyPart === 'F8' && eventCode === 'F8') ||
+                (keyPart === 'F9' && eventCode === 'F9') ||
+                (keyPart === 'F10' && eventCode === 'F10') ||
+                (keyPart === 'F11' && eventCode === 'F11') ||
+                (keyPart === 'F12' && eventCode === 'F12')
             }
-            return false
+            
+            return ctrlMatch && cmdMatch && shiftMatch && altMatch && metaMatch && keyMatch
           }
           
-          if (matchShortcut(event, settings.paste)) {
-            terminal.clearSelection()
-            readText().then(text => {
-              if (text) {
-                invoke('write_shell', { id: shellId, data: text }).catch(err => {
-                  console.error('写入终端失败:', err)
+          terminal.attachCustomKeyEventHandler(event => {
+            if (event.type !== 'keydown') return true
+            
+            const settings = shortcutSettingsRef.current
+            
+            if (matchShortcut(event, settings.splitHorizontal)) {
+              return false
+            }
+            if (matchShortcut(event, settings.splitVertical)) {
+              return false
+            }
+            if (matchShortcut(event, settings.newSession)) {
+              return false
+            }
+            if (matchShortcut(event, settings.closeSession)) {
+              return false
+            }
+            if (matchShortcut(event, settings.nextSession)) {
+              return false
+            }
+            if (matchShortcut(event, settings.prevSession)) {
+              return false
+            }
+            if (matchShortcut(event, settings.fullscreen)) {
+              return false
+            }
+            
+            if (matchShortcut(event, settings.clearScreen)) {
+              terminal.clear()
+              return false
+            }
+            
+            if (matchShortcut(event, settings.copy)) {
+              const selection = terminal.getSelection()
+              if (selection) {
+                writeText(selection).catch(err => {
+                  console.error('复制失败:', err)
                 })
               }
-            }).catch(err => {
-              console.error('粘贴失败:', err)
-              message.error('粘贴失败')
-            })
-            return false
-          }
-          
-          return true
-        })
-
-        terminal.onData(data => {
-          invoke('write_shell', { id: shellId, data }).catch(err => {
-            console.error('写入终端失败:', err)
-          })
-        })
-
-        terminal.onResize(({ cols, rows }) => {
-          invoke('resize_shell', { id: shellId, cols, rows }).catch(err => {
-            console.error('调整终端大小失败:', err)
-          })
-        })
-
-        terminal.onSelectionChange(() => {
-          if (terminalSettings.copyOnSelect && terminal.hasSelection()) {
-            const selection = terminal.getSelection()
-            if (selection) {
-              writeText(selection).catch(err => {
-                console.error('复制失败:', err)
+              return false
+            }
+            
+            if (matchShortcut(event, settings.paste)) {
+              terminal.clearSelection()
+              readText().then(text => {
+                if (text) {
+                  invoke('write_shell', { id: shellId, data: text }).catch(err => {
+                    console.error('写入终端失败:', err)
+                  })
+                }
+              }).catch(err => {
+                console.error('粘贴失败:', err)
+                message.error('粘贴失败')
               })
+              return false
             }
-          }
-        })
+            
+            return true
+          })
 
-        terminalInstances.current[key] = terminal
-        fitAddons.current[key] = fitAddon
+          terminal.onData(data => {
+            invoke('write_shell', { id: shellId, data }).catch(err => {
+              console.error('写入终端失败:', err)
+            })
+          })
 
-        const searchAddon = new SearchAddon()
-        terminal.loadAddon(searchAddon)
-        searchAddons.current[key] = searchAddon
+          terminal.onResize(({ cols, rows }) => {
+            invoke('resize_shell', { id: shellId, cols, rows }).catch(err => {
+              console.error('调整终端大小失败:', err)
+            })
+          })
 
-        const eventName = `shell-output-${shellId}`
-        const unlisten = await listen<string>(eventName, (event) => {
-          const term = terminalInstances.current[key]
-          if (term && event.payload) {
-            if (typeof event.payload === 'object' && (event.payload as any).eof) {
-              return
+          terminal.onSelectionChange(() => {
+            if (terminalSettings.copyOnSelect && terminal.hasSelection()) {
+              const selection = terminal.getSelection()
+              if (selection) {
+                writeText(selection).catch(err => {
+                  console.error('复制失败:', err)
+                })
+              }
             }
-            term.write(event.payload)
-          }
-        })
+          })
 
-        unlistenersRef.current[key] = unlisten
+          terminalInstances.current[key] = terminal
+          fitAddons.current[key] = fitAddon
 
-        let resizeTimer: ReturnType<typeof setTimeout> | null = null
-        const resizeObserver = new ResizeObserver(() => {
-          if (resizeTimer) {
-            clearTimeout(resizeTimer)
-          }
-          resizeTimer = setTimeout(() => {
-            const addon = fitAddons.current[key]
-            if (addon) {
-              try { addon.fit() } catch {}
+          const searchAddon = new SearchAddon()
+          terminal.loadAddon(searchAddon)
+          searchAddons.current[key] = searchAddon
+
+          const eventName = `shell-output-${shellId}`
+          const unlisten = await listen<string>(eventName, (event) => {
+            const term = terminalInstances.current[key]
+            if (term && event.payload) {
+              if (typeof event.payload === 'object' && (event.payload as any).eof) {
+                return
+              }
+              term.write(event.payload)
             }
-            resizeTimer = null
-          }, 150)
-        })
-        resizeObserver.observe(container)
-        resizeObserversRef.current[key] = resizeObserver
+          })
 
-        requestAnimationFrame(() => {
-          try { fitAddon.fit() } catch {}
-          try { terminal.focus() } catch {}
-        })
+          unlistenersRef.current[key] = unlisten
 
-        initializedRef.current.add(key)
+          let resizeTimer: ReturnType<typeof setTimeout> | null = null
+          const resizeObserver = new ResizeObserver(() => {
+            if (resizeTimer) {
+              clearTimeout(resizeTimer)
+            }
+            resizeTimer = setTimeout(() => {
+              const addon = fitAddons.current[key]
+              if (addon) {
+                try { addon.fit() } catch {}
+              }
+              resizeTimer = null
+            }, 150)
+          })
+          resizeObserver.observe(container)
+          resizeObserversRef.current[key] = resizeObserver
 
-        try {
-          await invoke('start_shell_reader', { id: shellId })
-        } catch (err) {
-          console.error('启动终端读取器失败:', err)
-          message.error('启动终端失败，请重试')
+          requestAnimationFrame(() => {
+            try { fitAddon.fit() } catch {}
+            try { terminal.focus() } catch {}
+          })
+
+          initializedRef.current.add(key)
+
+          try {
+            await invoke('start_shell_reader', { id: shellId })
+          } catch (err) {
+            console.error('启动终端读取器失败:', err)
+            message.error('启动终端失败，请重试')
+          }
         }
-      }
 
-      initTerminal().catch(err => {
-        console.error('终端初始化失败:', err)
-        message.error('终端初始化失败')
-      })
-    }
-  }, [visibleSessions, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message, activeConnection])
+        initTerminal().catch(err => {
+            const errorMsg = '终端初始化失败: ' + String(err)
+            console.error('[Terminal] initTerminal failed for', key, ':', err)
+            message.error(errorMsg)
+          })
+      }
+    }, 0)
+
+    return () => clearTimeout(timerId)
+  }, [connectedConnections.length, activeConnectionId, visibleSessions, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode])
 
   const disconnectListenersRef = useRef<{ [key: string]: UnlistenFn }>({})
 
@@ -1200,11 +1104,88 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     return () => window.removeEventListener('keydown', handleKeyDown, true)
   }, [activeConnectionId, connectedConnections, shortcutSettings, splitPane, addSessionToPane, setActiveSessionInPane, handleCloseSession, handleToggleFullscreen, message])
 
+  const handleQuickConnect = useCallback(async (conn: Connection) => {
+    const isConnected = connectedConnections.some(c => c.connectionId === conn.id)
+    if (isConnected) {
+      setActiveConnection(conn.id)
+      return
+    }
+
+    message.info(`正在连接 ${conn.name}...`)
+
+    try {
+      await invoke('connect_ssh', {
+        id: conn.id,
+        connection: {
+          host: conn.host,
+          port: conn.port,
+          username: conn.username,
+          password: conn.password || null,
+          key_file: conn.keyFile || null,
+        }
+      })
+
+      const shellId = await invoke<string>('get_shell', { id: conn.id })
+      addConnection(conn, shellId)
+      recordConnectionHistory(conn.id).catch(() => {})
+      message.success(`已连接到 ${conn.name}`)
+    } catch (error) {
+      message.error(`连接失败: ${error}`)
+    }
+  }, [connectedConnections, addConnection, setActiveConnection, message])
+
+  useEffect(() => {
+    if (singleConnectionMode && connectedConnections.length === 0) {
+      getCurrentWindow().close()
+    }
+  }, [singleConnectionMode, connectedConnections.length])
+
   if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
+    if (singleConnectionMode) {
+      return null
+    }
+    
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', background: 'var(--color-bg-container)', gap: 16 }}>
         <p style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }}>没有活动的会话</p>
-        <p style={{ color: 'var(--color-text-quaternary)', fontSize: 14 }}>请先在连接管理中连接服务器</p>
+        
+        {recentConnections.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 400, width: '100%' }}>
+            <p style={{ color: 'var(--color-text-quaternary)', fontSize: 12, marginBottom: 4 }}>最近连接</p>
+            {recentConnections.map(conn => (
+              <Button
+                key={conn.id}
+                type="text"
+                style={{ 
+                  display: 'flex', 
+                  justifyContent: 'space-between', 
+                  alignItems: 'center',
+                  background: 'var(--color-bg-elevated)',
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  width: '100%',
+                }}
+                onClick={() => handleQuickConnect(conn)}
+              >
+                <span style={{ color: conn.group === '生产环境' ? '#E65100' : 'var(--color-text)' }}>
+                  {conn.name}
+                </span>
+                <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
+                  {conn.username}@{conn.host}
+                </span>
+              </Button>
+            ))}
+          </div>
+        )}
+        
+        <Button 
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => navigate('/connections')}
+          style={{ marginTop: 8 }}
+        >
+          连接管理
+        </Button>
       </div>
     )
   }
@@ -1507,81 +1488,76 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     }
   })
 
-  // 拖拽连接 tab 到新窗口功能（暂时禁用）
-  // const handleConnectionDragStart = (event: DragStartEvent) => {
-  //   connectionDragIdRef.current = String(event.active.id)
-  //   setIsConnectionDragging(true)
-  //   setConnectionTabDragToNewWindow(false)
-  // }
+  const handleConnectionDragStart = (event: DragStartEvent) => {
+    connectionDragIdRef.current = String(event.active.id)
+    setIsConnectionDragging(true)
+    setIsDragToNewWindow(false)
+  }
 
-  // const handleConnectionDragEnd = async (event: DragEndEvent) => {
-  //   const { active, over } = event
-  //   const connectionId = connectionDragIdRef.current
-  //   
-  //   setIsConnectionDragging(false)
-  //   connectionDragIdRef.current = null
-  //   
-  //   if (connectionTabDragToNewWindow && connectionId) {
-  //     const conn = connectedConnections.find(c => c.connectionId === connectionId)
-  //     if (conn) {
-  //       try {
-  //         const sessions = getAllSessions(conn.rootPane)
-  //         const sessionsWithShell = sessions.filter(s => s.shellId)
-  //         
-  //         if (sessionsWithShell.length > 0) {
-  //           const sessionsJson = JSON.stringify(sessionsWithShell.map(s => ({
-  //             id: s.id,
-  //             shellId: s.shellId,
-  //             title: s.title,
-  //           })))
-  //           
-  //           await invoke<string>('create_terminal_window', {
-  //             connectionId: connectionId,
-  //             sessionsJson: sessionsJson,
-  //             connectionName: conn.connection.name,
-  //           })
-  //           
-  //           for (const s of sessions) {
-  //             const key = `${connectionId}_${s.id}`
-  //             if (unlistenersRef.current[key]) {
-  //               unlistenersRef.current[key]()
-  //               delete unlistenersRef.current[key]
-  //             }
-  //             if (terminalInstances.current[key]) {
-  //               terminalInstances.current[key].dispose()
-  //               delete terminalInstances.current[key]
-  //             }
-  //             delete fitAddons.current[key]
-  //             delete searchAddons.current[key]
-  //             delete resizeObserversRef.current[key]
-  //             initializedRef.current.delete(key)
-  //           }
-  //           
-  //           removeConnectionFromStore(connectionId)
-  //         } else {
-  //           message.warning('该连接没有活动的终端会话')
-  //         }
-  //       } catch (err) {
-  //         message.error(`创建新窗口失败: ${err}`)
-  //       }
-  //     }
-  //     setConnectionTabDragToNewWindow(false)
-  //     return
-  //   }
-  //   
-  //   if (over && active.id !== over.id) {
-  //     const oldIndex = connectedConnections.findIndex(c => c.connectionId === active.id)
-  //     const newIndex = connectedConnections.findIndex(c => c.connectionId === over.id)
-  //     if (oldIndex !== -1 && newIndex !== -1) {
-  //       reorderConnections(oldIndex, newIndex)
-  //     }
-  //   }
-  //   
-  //   setConnectionTabDragToNewWindow(false)
-  // }
-
-  const handleConnectionDragEnd = (event: DragEndEvent) => {
+  const handleConnectionDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event
+    const connectionId = connectionDragIdRef.current
+    
+    setIsConnectionDragging(false)
+    connectionDragIdRef.current = null
+    
+    if (isDragToNewWindow && connectionId) {
+      const conn = connectedConnections.find(c => c.connectionId === connectionId)
+      if (conn) {
+        try {
+          const sessions = getAllSessions(conn.rootPane)
+          const sessionsWithShell = sessions.filter(s => s.shellId)
+          
+          if (sessionsWithShell.length > 0) {
+            const connectionData = JSON.stringify({
+              connectionId: connectionId,
+              connection: conn.connection,
+              sessions: sessionsWithShell.map(s => ({
+                id: s.id,
+                title: s.title,
+              })),
+              rootPane: conn.rootPane,
+            })
+            
+            await invoke<string>('create_terminal_window', {
+              connectionId: connectionId,
+              connectionName: conn.connection.name,
+              username: conn.connection.username,
+              host: conn.connection.host,
+              connectionData: connectionData,
+            })
+            
+            for (const s of sessions) {
+              const key = `${connectionId}_${s.id}`
+              if (unlistenersRef.current[key]) {
+                unlistenersRef.current[key]()
+                delete unlistenersRef.current[key]
+              }
+              if (terminalInstances.current[key]) {
+                terminalInstances.current[key].dispose()
+                delete terminalInstances.current[key]
+              }
+              delete fitAddons.current[key]
+              delete searchAddons.current[key]
+              delete resizeObserversRef.current[key]
+              initializedRef.current.delete(key)
+              if (s.shellId) {
+                invoke('close_shell', { id: s.shellId }).catch(() => {})
+              }
+            }
+            
+            removeConnectionFromStore(connectionId)
+            message.success('已在新窗口中打开')
+          } else {
+            message.warning('该连接没有活动的终端会话')
+          }
+        } catch (err) {
+          message.error(`创建新窗口失败: ${err}`)
+        }
+      }
+      setIsDragToNewWindow(false)
+      return
+    }
     
     if (over && active.id !== over.id) {
       const oldIndex = connectedConnections.findIndex(c => c.connectionId === active.id)
@@ -1590,6 +1566,8 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         reorderConnections(oldIndex, newIndex)
       }
     }
+    
+    setIsDragToNewWindow(false)
   }
 
   return (
@@ -1601,42 +1579,54 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         flexDirection: 'column',
         overflow: 'hidden',
       }}>
-        <div style={{ 
-          display: 'flex', 
-          alignItems: 'center',
-          background: 'var(--color-bg-elevated)',
-          padding: '0 8px',
-          gap: 8,
-        }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleConnectionDragEnd}>
-              <SortableContext items={connectedConnections.map(c => c.connectionId)} strategy={horizontalListSortingStrategy}>
-                <Tabs
-                  activeKey={activeConnectionId || undefined}
-                  onChange={setActiveConnection}
-                  items={[...connectionItems, ...disconnectedItems]}
-                  style={{ height: 40 }}
-                  tabBarStyle={{ margin: 0, padding: '0 4px', background: 'transparent' }}
-                  destroyInactiveTabPane={false}
-                />
-              </SortableContext>
-            </DndContext>
+        {!singleConnectionMode && (
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center',
+            background: 'var(--color-bg-elevated)',
+            padding: '0 8px',
+            gap: 8,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <DndContext 
+                sensors={sensors} 
+                collisionDetection={closestCenter} 
+                onDragStart={handleConnectionDragStart}
+                onDragEnd={handleConnectionDragEnd}
+              >
+                <SortableContext items={connectedConnections.map(c => c.connectionId)} strategy={horizontalListSortingStrategy}>
+                  <Tabs
+                    activeKey={activeConnectionId || undefined}
+                    onChange={setActiveConnection}
+                    items={[...connectionItems, ...disconnectedItems]}
+                    style={{ height: 32 }}
+                    tabBarStyle={{ margin: 0, padding: '0 4px', background: 'transparent', minHeight: 32 }}
+                    size="small"
+                    destroyInactiveTabPane={false}
+                  />
+                </SortableContext>
+              </DndContext>
+            </div>
+            <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
+              <Button
+                type="text"
+                size="small"
+                icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
+                onClick={() => handleToggleFullscreen('')}
+                style={{ color: 'var(--color-text-tertiary)' }}
+              />
+            </Tooltip>
           </div>
-          <Tooltip title={isFullscreen ? '退出全屏' : '全屏'}>
-            <Button
-              type="text"
-              size="small"
-              icon={isFullscreen ? <FullscreenExitOutlined /> : <FullscreenOutlined />}
-              onClick={() => handleToggleFullscreen('')}
-              style={{ color: 'var(--color-text-tertiary)' }}
-            />
-          </Tooltip>
-        </div>
+        )}
         <div style={{ flex: 1, overflow: 'hidden' }}>
           {connectedConnections.map(conn => (
             <div 
               key={conn.connectionId} 
-              style={{ height: '100%', display: activeConnectionId === conn.connectionId ? 'flex' : 'none', flexDirection: 'column' }}
+              style={{ 
+                height: '100%', 
+                display: (singleConnectionMode || activeConnectionId === conn.connectionId) ? 'flex' : 'none', 
+                flexDirection: 'column' 
+              }}
             >
               {renderSplitPane(conn.rootPane, conn.connectionId)}
             </div>
@@ -1662,7 +1652,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           />
         )}
         {apiLogVisible && (
-          <McpLogPanel visible={apiLogVisible} onClose={() => setApiLogVisible(false)} />
+          <McpLogPanel onClose={() => setApiLogVisible(false)} />
         )}
       </div>
 
@@ -1672,6 +1662,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         fileManagerVisible={activeConnectionId ? !!fileManagerVisible[activeConnectionId] : false}
         apiLogVisible={apiLogVisible}
         mcpEnabled={mcpEnabled}
+        isFullscreen={isFullscreen}
+        showFullscreen={singleConnectionMode}
+        onFullscreenToggle={() => handleToggleFullscreen('')}
         onMonitorToggle={() => {
           if (monitorVisible) {
             setMonitorVisible(false)
@@ -1819,37 +1812,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         document.body
       ) : null}
       
-      {/* 拖拽连接 tab 到新窗口功能（暂时禁用） */}
-      {/* {connectionTabDragToNewWindow && createPortal(
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          border: '4px solid var(--color-primary)',
-          pointerEvents: 'none',
-          zIndex: 9999,
-          boxShadow: 'inset 0 0 40px rgba(0, 185, 107, 0.4)',
-          background: 'rgba(0, 185, 107, 0.05)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-        }}>
-          <div style={{
-            background: 'var(--color-primary)',
-            color: '#fff',
-            padding: '12px 24px',
-            borderRadius: 8,
-            fontSize: 14,
-            fontWeight: 500,
-            boxShadow: '0 4px 12px rgba(0, 185, 107, 0.4)',
-          }}>
-            ↗ 释放以在新窗口打开
-          </div>
-        </div>,
-        document.body
-      )} */}
+      <DragToNewWindowOverlay visible={!singleConnectionMode && isDragToNewWindow} />
     </div>
   )
 }

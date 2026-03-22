@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
-import { useTerminalStore, Connection, DEFAULT_TERMINAL_SETTINGS, SplitPane } from '../terminalStore'
+import { useTerminalStore, Connection, DEFAULT_TERMINAL_SETTINGS, SplitPane, Session } from '../terminalStore'
 
 const mockLocalStorage = (() => {
   let store: Record<string, string> = {}
@@ -25,6 +25,17 @@ function countSessionsInPane(pane: SplitPane): number {
     return pane.children.reduce((sum, child) => sum + countSessionsInPane(child), 0)
   }
   return pane.sessions.length
+}
+
+function findPaneById(pane: SplitPane, paneId: string): SplitPane | null {
+  if (pane.id === paneId) return pane
+  if (pane.children) {
+    for (const child of pane.children) {
+      const found = findPaneById(child, paneId)
+      if (found) return found
+    }
+  }
+  return null
 }
 
 describe('terminalStore', () => {
@@ -636,6 +647,215 @@ describe('terminalStore', () => {
       const pane = useTerminalStore.getState().findPaneBySession('conn-1', rightSessionId)
 
       expect(pane?.id).toBe(rightPane.id)
+    })
+  })
+
+  describe('restoreConnection', () => {
+    it('should restore connection with existing rootPane', () => {
+      const rootPane: SplitPane = {
+        id: 'pane-restored',
+        sessions: [
+          { id: 'sess-1', connectionId: 'conn-1', shellId: 'shell-restored', title: 'Session 1' }
+        ],
+        activeSessionId: 'sess-1',
+      }
+
+      useTerminalStore.getState().restoreConnection(mockConnection, rootPane)
+
+      const state = useTerminalStore.getState()
+      expect(state.connectedConnections).toHaveLength(1)
+      expect(state.connectedConnections[0].connectionId).toBe('conn-1')
+      expect(state.connectedConnections[0].rootPane.sessions).toHaveLength(1)
+      expect(state.connectedConnections[0].rootPane.sessions[0].shellId).toBe('shell-restored')
+    })
+
+    it('should restore connection with split panes', () => {
+      const rootPane: SplitPane = {
+        id: 'pane-root',
+        splitDirection: 'horizontal',
+        children: [
+          { id: 'pane-left', sessions: [{ id: 'sess-1', connectionId: 'conn-1', shellId: 'shell-1', title: 'Left' }] },
+          { id: 'pane-right', sessions: [{ id: 'sess-2', connectionId: 'conn-1', shellId: 'shell-2', title: 'Right' }] }
+        ],
+        sizes: [50, 50],
+      }
+
+      useTerminalStore.getState().restoreConnection(mockConnection, rootPane)
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.splitDirection).toBe('horizontal')
+      expect(conn.rootPane.children).toHaveLength(2)
+      expect(countSessionsInPane(conn.rootPane)).toBe(2)
+    })
+  })
+
+  describe('moveSessionToSplitPane', () => {
+    it('should move session to new split pane within same pane', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      vi.useFakeTimers()
+      vi.advanceTimersByTime(100)
+      useTerminalStore.getState().addSession('conn-1', 'shell-2')
+      vi.useRealTimers()
+
+      const state1 = useTerminalStore.getState()
+      const paneId = state1.connectedConnections[0].rootPane.id
+      const sessionToMove = state1.connectedConnections[0].rootPane.sessions[1]
+
+      useTerminalStore.getState().moveSessionToSplitPane(
+        'conn-1',
+        paneId,
+        sessionToMove.id,
+        paneId,
+        'horizontal',
+        'first'
+      )
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.splitDirection).toBe('horizontal')
+      expect(conn.rootPane.children).toHaveLength(2)
+    })
+
+    it('should place moved session in first child when position is first', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      vi.useFakeTimers()
+      vi.advanceTimersByTime(100)
+      useTerminalStore.getState().addSession('conn-1', 'shell-2')
+      vi.useRealTimers()
+
+      const state1 = useTerminalStore.getState()
+      const paneId = state1.connectedConnections[0].rootPane.id
+      const sessionToMove = state1.connectedConnections[0].rootPane.sessions[1]
+
+      useTerminalStore.getState().moveSessionToSplitPane(
+        'conn-1',
+        paneId,
+        sessionToMove.id,
+        paneId,
+        'horizontal',
+        'first'
+      )
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.children![0].sessions[0].id).toBe(sessionToMove.id)
+    })
+  })
+
+  describe('updatePaneSizes', () => {
+    it('should update pane sizes', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
+
+      useTerminalStore.getState().splitPane('conn-1', rootPaneId, 'horizontal', 'pane-2', 'shell-2')
+
+      const state2 = useTerminalStore.getState()
+      const conn2 = state2.connectedConnections[0]
+      
+      useTerminalStore.getState().updatePaneSizes('conn-1', conn2.rootPane.id, [30, 70])
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.sizes).toEqual([30, 70])
+    })
+  })
+
+  describe('closeSessionInPane - edge cases', () => {
+    it('should leave empty pane when last session is closed', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
+
+      useTerminalStore.getState().splitPane('conn-1', rootPaneId, 'horizontal', 'pane-2', 'shell-2')
+
+      const state2 = useTerminalStore.getState()
+      const rightPane = state2.connectedConnections[0].rootPane.children![1]
+      const rightSessionId = rightPane.sessions[0].id
+
+      useTerminalStore.getState().closeSessionInPane('conn-1', rightPane.id, rightSessionId)
+
+      const state = useTerminalStore.getState()
+      const rightPaneAfter = state.connectedConnections[0].rootPane.children![1]
+      expect(rightPaneAfter.sessions).toHaveLength(0)
+    })
+
+    it('should close pane when using closePane', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
+
+      useTerminalStore.getState().splitPane('conn-1', rootPaneId, 'horizontal', 'pane-2', 'shell-2')
+
+      const state2 = useTerminalStore.getState()
+      const rightPaneId = state2.connectedConnections[0].rootPane.children![1].id
+
+      useTerminalStore.getState().closePane('conn-1', rightPaneId)
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.children).toBeUndefined()
+      expect(conn.rootPane.sessions).toHaveLength(1)
+    })
+  })
+
+  describe('splitPaneWithPosition', () => {
+    it('should split pane with position first', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
+
+      useTerminalStore.getState().splitPaneWithPosition(
+        'conn-1',
+        rootPaneId,
+        'horizontal',
+        'pane-new',
+        'shell-2',
+        'first'
+      )
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.splitDirection).toBe('horizontal')
+      expect(conn.rootPane.children).toHaveLength(2)
+      const firstChild = conn.rootPane.children![0]
+      expect(firstChild.sessions[0].shellId).toBe('shell-2')
+    })
+
+    it('should split pane with position second', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const rootPaneId = state1.connectedConnections[0].rootPane.id
+
+      useTerminalStore.getState().splitPaneWithPosition(
+        'conn-1',
+        rootPaneId,
+        'vertical',
+        'pane-new',
+        'shell-2',
+        'second'
+      )
+
+      const state = useTerminalStore.getState()
+      const conn = state.connectedConnections[0]
+      expect(conn.rootPane.splitDirection).toBe('vertical')
+      const secondChild = conn.rootPane.children![1]
+      expect(secondChild.sessions[0].shellId).toBe('shell-2')
+    })
+  })
+
+  describe('updateSessionShellId', () => {
+    it('should update session shellId', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const sessionId = state1.connectedConnections[0].rootPane.sessions[0].id
+
+      useTerminalStore.getState().updateSessionShellId('conn-1', sessionId, 'shell-new')
+
+      const state = useTerminalStore.getState()
+      const session = state.connectedConnections[0].rootPane.sessions[0]
+      expect(session.shellId).toBe('shell-new')
     })
   })
 })
