@@ -1,5 +1,5 @@
-use crate::db::crypto::{decrypt_password, encrypt_password};
-use rusqlite::{Connection, Result as SqlResult};
+use crate::db::crypto::{decrypt_password, encrypt_password, migrate_encrypted_password};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -49,18 +49,17 @@ lazy_static::lazy_static! {
     static ref DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 }
 
-fn get_db() -> SqlResult<Connection> {
+fn get_db() -> Result<Connection, String> {
     if !DB_INITIALIZED.load(Ordering::SeqCst) {
-        panic!("Database not initialized. Call init_database() first.");
+        return Err("Database not initialized. Call init_database() first.".to_string());
     }
-    let guard = DB_PATH.lock().unwrap();
-    let path = guard.as_ref().expect("Database path not set");
-    Connection::open(path)
+    let guard = DB_PATH.lock().map_err(|e| e.to_string())?;
+    let path = guard.as_ref().ok_or("Database path not set")?;
+    Connection::open(path).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
-    // 如果已初始化，直接返回
     if DB_INITIALIZED.load(Ordering::SeqCst) {
         return Ok(true);
     }
@@ -71,7 +70,14 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
         .map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
 
-    let db_path = app_dir.join("iterminal.db");
+    // 开发模式使用独立的数据库文件，避免污染生产数据
+    #[cfg(debug_assertions)]
+    let db_name = "iterminal-dev.db";
+
+    #[cfg(not(debug_assertions))]
+    let db_name = "iterminal.db";
+
+    let db_path = app_dir.join(db_name);
     let path_str = db_path.to_string_lossy().to_string();
 
     {
@@ -80,6 +86,14 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     }
 
     let conn = Connection::open(&path_str).map_err(|e| e.to_string())?;
+
+    // 启用 WAL 模式提升并发性能
+    conn.pragma_update(None, "journal_mode", &"WAL")
+        .map_err(|e| format!("Failed to enable WAL mode: {}", e))?;
+
+    // 设置 busy_timeout，并发访问时等待而非立即失败
+    conn.pragma_update(None, "busy_timeout", &5000)
+        .map_err(|e| format!("Failed to set busy_timeout: {}", e))?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS connections (
@@ -142,15 +156,91 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
         }
     }
 
+    // 密码迁移：将旧密钥加密的密码迁移到新密钥
+    migrate_passwords_if_needed(&conn)?;
+
     // 标记初始化完成
     DB_INITIALIZED.store(true, Ordering::SeqCst);
 
     Ok(true)
 }
 
+fn migrate_passwords_if_needed(conn: &Connection) -> Result<(), String> {
+    // 检查是否已完成迁移
+    let migrated: bool = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'password_migration_v2'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "false".to_string())
+        == "true";
+
+    if migrated {
+        return Ok(());
+    }
+
+    // 获取所有连接的 id 和 password
+    let mut stmt = conn
+        .prepare("SELECT id, password FROM connections WHERE password IS NOT NULL")
+        .map_err(|e| e.to_string())?;
+
+    let records: Vec<(String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if records.is_empty() {
+        // 没有需要迁移的密码，直接标记完成
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('password_migration_v2', 'true')",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let mut migrated_count = 0;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    for (id, encrypted) in records {
+        let (needs_migrate, new_encrypted) = migrate_encrypted_password(Some(&encrypted));
+
+        if needs_migrate {
+            if let Some(new_pass) = new_encrypted {
+                tx.execute(
+                    "UPDATE connections SET password = ?1 WHERE id = ?2",
+                    rusqlite::params![new_pass, id],
+                )
+                .map_err(|e| e.to_string())?;
+                migrated_count += 1;
+            }
+        }
+    }
+
+    // 标记迁移完成
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('password_migration_v2', 'true')",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    if migrated_count > 0 {
+        println!(
+            "[Database] Migrated {} passwords to new encryption key",
+            migrated_count
+        );
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
 
     let mut stmt = conn.prepare(
         "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order FROM connections ORDER BY sort_order, name"
@@ -179,13 +269,19 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
         })
         .map_err(|e| e.to_string())?;
 
-    let result: Vec<ConnectionRecord> = connections.filter_map(|c| c.ok()).collect();
+    let mut result = Vec::new();
+    for c in connections {
+        match c {
+            Ok(record) => result.push(record),
+            Err(e) => eprintln!("[Database] Failed to parse connection row: {}", e),
+        }
+    }
     Ok(result)
 }
 
 #[tauri::command]
 pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
 
     let encrypted_password = connection.password.as_ref().map(|p| encrypt_password(p));
 
@@ -210,7 +306,7 @@ pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn delete_connection(id: String) -> Result<bool, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
 
     conn.execute("DELETE FROM connections WHERE id = ?1", [&id])
         .map_err(|e| e.to_string())?;
@@ -220,7 +316,7 @@ pub fn delete_connection(id: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn get_setting(key: String) -> Result<Option<String>, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
 
     let result: Option<String> = conn
         .query_row("SELECT value FROM settings WHERE key = ?1", [&key], |row| {
@@ -233,7 +329,7 @@ pub fn get_setting(key: String) -> Result<Option<String>, String> {
 
 #[tauri::command]
 pub fn save_setting(key: String, value: String) -> Result<bool, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
 
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
@@ -262,18 +358,36 @@ pub fn export_connections() -> Result<String, String> {
 pub fn import_connections(json_data: String, merge: bool) -> Result<usize, String> {
     let import_data: ExportData = serde_json::from_str(&json_data).map_err(|e| e.to_string())?;
 
+    let conn = get_db()?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
     if !merge {
-        let conn = get_db().map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM connections", [])
+        tx.execute("DELETE FROM connections", [])
             .map_err(|e| e.to_string())?;
     }
 
     let mut imported_count = 0;
-    for conn in import_data.connections {
-        save_connection(conn)?;
+    for record in import_data.connections {
+        let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
+        tx.execute(
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            rusqlite::params![
+                record.id,
+                record.name,
+                record.host,
+                record.port,
+                record.username,
+                encrypted_password,
+                record.key_file,
+                record.group_name,
+                record.tags,
+            ],
+        ).map_err(|e| e.to_string())?;
         imported_count += 1;
     }
 
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(imported_count)
 }
 
@@ -310,57 +424,165 @@ pub fn export_all_data() -> Result<String, String> {
 pub fn import_all_data(json_data: String) -> Result<usize, String> {
     let import_data: ExportData = serde_json::from_str(&json_data).map_err(|e| e.to_string())?;
 
-    let conn = get_db().map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM connections", [])
+    let conn = get_db()?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    tx.execute("DELETE FROM connections", [])
         .map_err(|e| e.to_string())?;
-    conn.execute("DELETE FROM settings", [])
+    tx.execute("DELETE FROM settings", [])
         .map_err(|e| e.to_string())?;
 
     let mut imported_count = 0;
-    for c in import_data.connections {
-        save_connection(c)?;
+    for record in import_data.connections.clone() {
+        let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
+        tx.execute(
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            rusqlite::params![
+                record.id,
+                record.name,
+                record.host,
+                record.port,
+                record.username,
+                encrypted_password,
+                record.key_file,
+                record.group_name,
+                record.tags,
+            ],
+        ).map_err(|e| e.to_string())?;
         imported_count += 1;
     }
 
     if let Some(settings) = import_data.settings {
-        if let Some(v) = settings.theme {
-            save_setting("theme".to_string(), v)?;
+        for (key, value) in [
+            ("theme", settings.theme),
+            ("terminal_font", settings.terminal_font),
+            ("terminal_cursor_style", settings.terminal_cursor_style),
+            ("terminal_theme", settings.terminal_theme),
+        ] {
+            if let Some(v) = value {
+                tx.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                    [key, &v],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
-        if let Some(v) = settings.terminal_font {
-            save_setting("terminal_font".to_string(), v)?;
-        }
-        if let Some(v) = settings.terminal_font_size {
-            save_setting("terminal_font_size".to_string(), v.to_string())?;
-        }
-        if let Some(v) = settings.terminal_scrollback {
-            save_setting("terminal_scrollback".to_string(), v.to_string())?;
-        }
-        if let Some(v) = settings.terminal_cursor_style {
-            save_setting("terminal_cursor_style".to_string(), v)?;
-        }
-        if let Some(v) = settings.terminal_cursor_blink {
-            save_setting("terminal_cursor_blink".to_string(), v.to_string())?;
-        }
-        if let Some(v) = settings.terminal_copy_on_select {
-            save_setting("terminal_copy_on_select".to_string(), v.to_string())?;
-        }
-        if let Some(v) = settings.terminal_theme {
-            save_setting("terminal_theme".to_string(), v)?;
+
+        for (key, value) in [
+            (
+                "terminal_font_size",
+                settings.terminal_font_size.map(|v| v.to_string()),
+            ),
+            (
+                "terminal_scrollback",
+                settings.terminal_scrollback.map(|v| v.to_string()),
+            ),
+            (
+                "terminal_cursor_blink",
+                settings.terminal_cursor_blink.map(|v| v.to_string()),
+            ),
+            (
+                "terminal_copy_on_select",
+                settings.terminal_copy_on_select.map(|v| v.to_string()),
+            ),
+        ] {
+            if let Some(v) = value {
+                tx.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                    [key, &v],
+                )
+                .map_err(|e| e.to_string())?;
+            }
         }
     }
 
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(imported_count)
 }
 
 #[tauri::command]
 pub fn migrate_from_localstorage(connections_json: String) -> Result<usize, String> {
+    let conn = get_db()?;
+
+    // 检查是否已迁移过
+    let migrated: bool = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'localstorage_migrated'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap_or_else(|_| "false".to_string())
+        == "true";
+
+    if migrated {
+        return Ok(0); // 已迁移过，不再重复迁移
+    }
+
     let connections: Vec<ConnectionRecord> =
         serde_json::from_str(&connections_json).map_err(|e| e.to_string())?;
 
+    if connections.is_empty() {
+        return Ok(0);
+    }
+
+    let total_count = connections.len();
+
+    // 检查数据库是否已有连接数据
+    let existing_count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM connections", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
     let mut migrated_count = 0;
-    for conn in connections {
-        save_connection(conn)?;
-        migrated_count += 1;
+    for record in connections {
+        let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
+
+        // 使用 INSERT OR IGNORE 避免覆盖已有数据
+        let result = tx.execute(
+            "INSERT OR IGNORE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            rusqlite::params![
+                record.id,
+                record.name,
+                record.host,
+                record.port,
+                record.username,
+                encrypted_password,
+                record.key_file,
+                record.group_name,
+                record.tags,
+            ],
+        );
+
+        if let Ok(rows_affected) = result {
+            if rows_affected > 0 {
+                migrated_count += 1;
+            }
+        }
+    }
+
+    // 标记迁移完成
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('localstorage_migrated', 'true')",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
+
+    if migrated_count > 0 {
+        println!(
+            "[Database] Migrated {} connections from localStorage ({} skipped, already exist)",
+            migrated_count,
+            total_count - migrated_count
+        );
+    } else if existing_count > 0 {
+        println!(
+            "[Database] Skipped localStorage migration: {} connections already in database",
+            existing_count
+        );
     }
 
     Ok(migrated_count)
@@ -368,7 +590,7 @@ pub fn migrate_from_localstorage(connections_json: String) -> Result<usize, Stri
 
 #[tauri::command]
 pub fn record_connection_history(id: String) -> Result<(), String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
@@ -382,7 +604,7 @@ pub fn record_connection_history(id: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionRecord>, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
     let limit = limit.unwrap_or(10);
 
     let mut stmt = conn.prepare(
@@ -419,7 +641,7 @@ pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionReco
 
 #[tauri::command]
 pub fn update_connection_order(order: Vec<(String, i32)>) -> Result<bool, String> {
-    let conn = get_db().map_err(|e| e.to_string())?;
+    let conn = get_db()?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
 
     for (id, sort_order) in order {

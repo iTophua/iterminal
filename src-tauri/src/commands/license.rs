@@ -136,7 +136,7 @@ fn get_max_connections_for_type(license_type: &LicenseType) -> u32 {
 fn calculate_checksum(parts: &[&str]) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     for part in parts {
         part.hash(&mut hasher);
@@ -181,7 +181,7 @@ fn validate_license_format(key: &str) -> Result<(String, LicenseType, String), S
 #[allow(dead_code)]
 fn generate_license_key(license_type: &LicenseType) -> String {
     use rand::Rng;
-    
+
     let version = "1";
     let type_str = match license_type {
         LicenseType::Free => "FREE",
@@ -189,15 +189,15 @@ fn generate_license_key(license_type: &LicenseType) -> String {
         LicenseType::Professional => "PRO",
         LicenseType::Enterprise => "ENTERPRISE",
     };
-    
+
     let random: String = rand::thread_rng()
         .sample_iter(&rand::distributions::Alphanumeric)
         .take(10)
         .map(char::from)
         .collect();
-    
+
     let checksum = calculate_checksum(&[version, type_str, &random]);
-    
+
     format!("IT-{}-{}-{}-{}", version, type_str, random, checksum)
 }
 

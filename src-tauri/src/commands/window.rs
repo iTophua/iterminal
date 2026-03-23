@@ -1,12 +1,11 @@
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use once_cell::sync::Lazy;
+use tokio::sync::RwLock;
 
-static WINDOW_DATA: Lazy<Arc<RwLock<HashMap<String, String>>>> = Lazy::new(|| {
-    Arc::new(RwLock::new(HashMap::new()))
-});
+static WINDOW_DATA: Lazy<Arc<RwLock<HashMap<String, String>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 #[tauri::command]
 pub async fn create_terminal_window(
@@ -21,12 +20,15 @@ pub async fn create_terminal_window(
     let window_title = format!("{} - {}@{}", connection_name, username, host);
 
     // 先存储数据，再创建窗口
-    WINDOW_DATA.write().await.insert(window_label.clone(), connection_data);
+    WINDOW_DATA
+        .write()
+        .await
+        .insert(window_label.clone(), connection_data);
 
     let builder = WebviewWindowBuilder::new(
         &app,
         &window_label,
-        WebviewUrl::App(format!("index.html#/terminal-window?label={}", window_label).into())
+        WebviewUrl::App(format!("index.html#/terminal-window?label={}", window_label).into()),
     )
     .title(&window_title)
     .inner_size(1200.0, 800.0)
@@ -42,9 +44,7 @@ pub async fn create_terminal_window(
 }
 
 #[tauri::command]
-pub async fn get_terminal_window_data(
-    window_label: String,
-) -> Result<String, String> {
+pub async fn get_terminal_window_data(window_label: String) -> Result<String, String> {
     let data = WINDOW_DATA.write().await.remove(&window_label);
     data.ok_or_else(|| "No data found for this window".to_string())
 }

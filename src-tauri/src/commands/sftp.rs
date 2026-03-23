@@ -9,31 +9,31 @@ use tokio::sync::RwLock;
 
 fn validate_path(path: &str) -> Result<String, String> {
     let path = path.trim();
-    
+
     if path.is_empty() {
         return Err("路径不能为空".to_string());
     }
-    
+
     if path.contains('\0') {
         return Err("路径包含非法字符".to_string());
     }
-    
+
     let normalized = path.replace('\\', "/");
-    
+
     let suspicious_patterns = ["../", "/..", "//..", "~/"];
     for pattern in suspicious_patterns {
         if normalized.contains(pattern) {
             return Err("路径包含非法序列".to_string());
         }
     }
-    
+
     let dangerous_starts = ["/etc/passwd", "/etc/shadow", "/root/.ssh"];
     for dangerous in dangerous_starts {
         if normalized.starts_with(dangerous) || normalized.starts_with(&format!("/{}", dangerous)) {
             return Err("禁止访问系统敏感目录".to_string());
         }
     }
-    
+
     Ok(normalized)
 }
 
@@ -68,7 +68,9 @@ static TRANSFER_CANCELLED: Lazy<RwLock<HashMap<String, bool>>> =
 static TRANSFER_PAUSED: Lazy<RwLock<HashMap<String, bool>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-async fn create_sftp_connection(connection: &super::ssh::SSHConnection) -> Result<Arc<SftpSession>, String> {
+async fn create_sftp_connection(
+    connection: &super::ssh::SSHConnection,
+) -> Result<Arc<SftpSession>, String> {
     use super::ssh::SshClientHandler;
     use std::net::ToSocketAddrs;
 
@@ -99,10 +101,7 @@ async fn create_sftp_connection(connection: &super::ssh::SSHConnection) -> Resul
         let key_path = shellexpand::tilde(key_file).into_owned();
         let key_pair = russh::keys::load_secret_key(&key_path, None)
             .map_err(|e| format!("加载密钥文件失败: {}", e))?;
-        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
-            Arc::new(key_pair),
-            None,
-        );
+        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
         let auth = handle
             .authenticate_publickey(&connection.username, key_with_hash)
             .await
@@ -145,12 +144,12 @@ async fn get_sftp_session(connection_id: &str) -> Result<Arc<SftpSession>, Strin
 
     let sftp = create_sftp_connection(&ssh_session.connection).await?;
 
-    SFTP_SESSIONS
-        .write()
-        .await
-        .insert(connection_id.to_string(), SftpSessionState {
+    SFTP_SESSIONS.write().await.insert(
+        connection_id.to_string(),
+        SftpSessionState {
             session: sftp.clone(),
-        });
+        },
+    );
 
     Ok(sftp)
 }
@@ -169,13 +168,13 @@ pub async fn list_directory(connection_id: String, path: String) -> Result<Vec<F
     for entry in entries {
         let metadata = entry.metadata();
         let is_dir = metadata.is_dir();
-        
+
         let size = if is_dir {
             0
         } else {
             metadata.size.unwrap_or(0)
         };
-        
+
         let modified = metadata
             .mtime
             .map(|t| {
@@ -185,9 +184,7 @@ pub async fn list_directory(connection_id: String, path: String) -> Result<Vec<F
             })
             .unwrap_or_else(|| "unknown".to_string());
 
-        let permissions = metadata
-            .permissions
-            .map(|p| format!("{:o}", p));
+        let permissions = metadata.permissions.map(|p| format!("{:o}", p));
 
         let file_name = entry.file_name();
         let full_path = if path.ends_with('/') {
@@ -221,7 +218,10 @@ pub async fn create_file(
     use russh_sftp::protocol::OpenFlags;
 
     let mut file = sftp
-        .open_with_flags(&path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .open_with_flags(
+            &path,
+            OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+        )
         .await
         .map_err(|e| format!("Failed to create file: {}", e))?;
 
@@ -340,22 +340,38 @@ pub async fn read_file_content(
     let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
-    let metadata = sftp.metadata(&path).await.map_err(|e| format!("获取文件信息失败: {}", e))?;
+    let metadata = sftp
+        .metadata(&path)
+        .await
+        .map_err(|e| format!("获取文件信息失败: {}", e))?;
     let file_size = metadata.size.unwrap_or(0);
 
     let max = max_size.unwrap_or(1024 * 1024);
     let truncated = file_size > max;
 
-    let read_size = if truncated { max as usize } else { file_size as usize };
+    let read_size = if truncated {
+        max as usize
+    } else {
+        file_size as usize
+    };
     let mut buffer = vec![0u8; read_size];
-    let mut file = sftp.open(&path).await.map_err(|e| format!("打开文件失败: {}", e))?;
-    let bytes_read = file.read(&mut buffer).await.map_err(|e| format!("读取文件失败: {}", e))?;
+    let mut file = sftp
+        .open(&path)
+        .await
+        .map_err(|e| format!("打开文件失败: {}", e))?;
+    let bytes_read = file
+        .read(&mut buffer)
+        .await
+        .map_err(|e| format!("读取文件失败: {}", e))?;
     buffer.truncate(bytes_read);
 
     let (content, encoding) = if is_binary(&buffer) {
         (hex_encode(&buffer), "binary".to_string())
     } else {
-        (String::from_utf8_lossy(&buffer).to_string(), "text".to_string())
+        (
+            String::from_utf8_lossy(&buffer).to_string(),
+            "text".to_string(),
+        )
     };
 
     Ok(FileContent {
@@ -377,7 +393,10 @@ fn is_binary(data: &[u8]) -> bool {
 }
 
 fn hex_encode(data: &[u8]) -> String {
-    data.iter().map(|b| format!("{:02x}", b)).collect::<Vec<_>>().join(" ")
+    data.iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[tauri::command]
@@ -389,9 +408,14 @@ pub async fn write_file_content(
     let path = validate_path(&path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
-    let mut file = sftp.create(&path).await.map_err(|e| format!("创建文件失败: {}", e))?;
+    let mut file = sftp
+        .create(&path)
+        .await
+        .map_err(|e| format!("创建文件失败: {}", e))?;
 
-    file.write_all(content.as_bytes()).await.map_err(|e| format!("写入文件失败: {}", e))?;
+    file.write_all(content.as_bytes())
+        .await
+        .map_err(|e| format!("写入文件失败: {}", e))?;
 
     Ok(true)
 }
@@ -435,7 +459,10 @@ pub async fn upload_file(
         };
 
         let mut remote_file = match sftp
-            .open_with_flags(&remote_path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+            .open_with_flags(
+                &remote_path,
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+            )
             .await
         {
             Ok(f) => f,
@@ -563,10 +590,7 @@ pub async fn download_file(
         use russh_sftp::protocol::OpenFlags;
         use tauri::Emitter;
 
-        let mut remote_file = match sftp
-            .open_with_flags(&remote_path, OpenFlags::READ)
-            .await
-        {
+        let mut remote_file = match sftp.open_with_flags(&remote_path, OpenFlags::READ).await {
             Ok(f) => f,
             Err(e) => {
                 let _ = app.emit(
@@ -766,9 +790,16 @@ pub async fn upload_folder(
             app: &'a tauri::AppHandle,
             last_progress_update: &'a mut std::time::Instant,
             cancelled: &'a mut bool,
-        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>
+        {
             Box::pin(async move {
-                if TRANSFER_CANCELLED.read().await.get(task_id).copied().unwrap_or(false) {
+                if TRANSFER_CANCELLED
+                    .read()
+                    .await
+                    .get(task_id)
+                    .copied()
+                    .unwrap_or(false)
+                {
                     *cancelled = true;
                     return Ok(());
                 }
@@ -821,7 +852,10 @@ pub async fn upload_folder(
                         let file_size = local_file.metadata().await.map(|m| m.len()).unwrap_or(0);
 
                         let mut remote_file = sftp
-                            .open_with_flags(&remote_sub, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+                            .open_with_flags(
+                                &remote_sub,
+                                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+                            )
                             .await
                             .map_err(|e| format!("Failed to create remote file: {}", e))?;
 
@@ -897,7 +931,9 @@ pub async fn compress_file(
     output_path: String,
 ) -> Result<bool, String> {
     let sessions = super::ssh::SESSIONS.read().await;
-    let session = sessions.get(&connection_id).ok_or("SSH session not found")?;
+    let session = sessions
+        .get(&connection_id)
+        .ok_or("SSH session not found")?;
     let mut channel = session
         .handle
         .channel_open_session()
@@ -921,7 +957,9 @@ pub async fn compress_file(
                     output.extend_from_slice(&data);
                 }
             }
-            russh::ChannelMsg::ExitStatus { exit_status: status } => {
+            russh::ChannelMsg::ExitStatus {
+                exit_status: status,
+            } => {
                 exit_status = status;
             }
             russh::ChannelMsg::Eof => break,
@@ -931,7 +969,10 @@ pub async fn compress_file(
 
     if exit_status != 0 {
         let error_msg = String::from_utf8_lossy(&output).to_string();
-        return Err(format!("压缩失败 (exit code {}): {}", exit_status, error_msg));
+        return Err(format!(
+            "压缩失败 (exit code {}): {}",
+            exit_status, error_msg
+        ));
     }
 
     Ok(true)
@@ -944,7 +985,9 @@ pub async fn extract_file(
     target_dir: String,
 ) -> Result<bool, String> {
     let sessions = super::ssh::SESSIONS.read().await;
-    let session = sessions.get(&connection_id).ok_or("SSH session not found")?;
+    let session = sessions
+        .get(&connection_id)
+        .ok_or("SSH session not found")?;
     let mut channel = session
         .handle
         .channel_open_session()
@@ -953,24 +996,57 @@ pub async fn extract_file(
     drop(sessions);
 
     let command = if file_path.ends_with(".tar.gz") || file_path.ends_with(".tgz") {
-        format!("mkdir -p \"{}\" && tar -xzf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+        format!(
+            "mkdir -p \"{}\" && tar -xzf \"{}\" -C \"{}\"",
+            target_dir, file_path, target_dir
+        )
     } else if file_path.ends_with(".tar.bz2") || file_path.ends_with(".tbz2") {
-        format!("mkdir -p \"{}\" && tar -xjf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+        format!(
+            "mkdir -p \"{}\" && tar -xjf \"{}\" -C \"{}\"",
+            target_dir, file_path, target_dir
+        )
     } else if file_path.ends_with(".tar.xz") || file_path.ends_with(".txz") {
-        format!("mkdir -p \"{}\" && tar -xJf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+        format!(
+            "mkdir -p \"{}\" && tar -xJf \"{}\" -C \"{}\"",
+            target_dir, file_path, target_dir
+        )
     } else if file_path.ends_with(".tar") {
-        format!("mkdir -p \"{}\" && tar -xf \"{}\" -C \"{}\"", target_dir, file_path, target_dir)
+        format!(
+            "mkdir -p \"{}\" && tar -xf \"{}\" -C \"{}\"",
+            target_dir, file_path, target_dir
+        )
     } else if file_path.ends_with(".zip") {
-        format!("mkdir -p \"{}\" && unzip -o \"{}\" -d \"{}\"", target_dir, file_path, target_dir)
+        format!(
+            "mkdir -p \"{}\" && unzip -o \"{}\" -d \"{}\"",
+            target_dir, file_path, target_dir
+        )
     } else if file_path.ends_with(".gz") {
         let output_file = file_path.trim_end_matches(".gz");
-        format!("mkdir -p \"{}\" && gunzip -c \"{}\" > \"{}/{}\"", target_dir, file_path, target_dir, output_file.rsplit('/').next().unwrap_or("file"))
+        format!(
+            "mkdir -p \"{}\" && gunzip -c \"{}\" > \"{}/{}\"",
+            target_dir,
+            file_path,
+            target_dir,
+            output_file.rsplit('/').next().unwrap_or("file")
+        )
     } else if file_path.ends_with(".bz2") {
         let output_file = file_path.trim_end_matches(".bz2");
-        format!("mkdir -p \"{}\" && bunzip2 -c \"{}\" > \"{}/{}\"", target_dir, file_path, target_dir, output_file.rsplit('/').next().unwrap_or("file"))
+        format!(
+            "mkdir -p \"{}\" && bunzip2 -c \"{}\" > \"{}/{}\"",
+            target_dir,
+            file_path,
+            target_dir,
+            output_file.rsplit('/').next().unwrap_or("file")
+        )
     } else if file_path.ends_with(".xz") {
         let output_file = file_path.trim_end_matches(".xz");
-        format!("mkdir -p \"{}\" && xz -dc \"{}\" > \"{}/{}\"", target_dir, file_path, target_dir, output_file.rsplit('/').next().unwrap_or("file"))
+        format!(
+            "mkdir -p \"{}\" && xz -dc \"{}\" > \"{}/{}\"",
+            target_dir,
+            file_path,
+            target_dir,
+            output_file.rsplit('/').next().unwrap_or("file")
+        )
     } else {
         return Err("不支持的压缩格式".to_string());
     };
@@ -990,7 +1066,9 @@ pub async fn extract_file(
                     output.extend_from_slice(&data);
                 }
             }
-            russh::ChannelMsg::ExitStatus { exit_status: status } => {
+            russh::ChannelMsg::ExitStatus {
+                exit_status: status,
+            } => {
                 exit_status = status;
             }
             russh::ChannelMsg::Eof => break,
@@ -1000,7 +1078,10 @@ pub async fn extract_file(
 
     if exit_status != 0 {
         let error_msg = String::from_utf8_lossy(&output).to_string();
-        return Err(format!("解压失败 (exit code {}): {}", exit_status, error_msg));
+        return Err(format!(
+            "解压失败 (exit code {}): {}",
+            exit_status, error_msg
+        ));
     }
 
     Ok(true)
@@ -1022,11 +1103,14 @@ pub async fn open_file_location(path: String) -> Result<bool, String> {
     Ok(true)
 }
 
-async fn ensure_remote_directory(sftp: &russh_sftp::client::SftpSession, path: &str) -> Result<(), String> {
+async fn ensure_remote_directory(
+    sftp: &russh_sftp::client::SftpSession,
+    path: &str,
+) -> Result<(), String> {
     if path.is_empty() || path == "/" {
         return Ok(());
     }
-    
+
     let mut current = String::new();
     for part in path.split('/') {
         if part.is_empty() {
@@ -1034,7 +1118,7 @@ async fn ensure_remote_directory(sftp: &russh_sftp::client::SftpSession, path: &
         }
         current.push('/');
         current.push_str(part);
-        
+
         match sftp.create_dir(&current).await {
             Ok(_) => {}
             Err(e) => {
@@ -1054,53 +1138,57 @@ pub async fn upload_file_sync(
     remote_path: String,
 ) -> Result<u64, String> {
     let sftp = get_sftp_session(&connection_id).await?;
-    
+
     let mut local_file = tokio::fs::File::open(&local_path)
         .await
         .map_err(|e| format!("无法打开本地文件: {}", e))?;
-    
-    let metadata = local_file.metadata()
+
+    let metadata = local_file
+        .metadata()
         .await
         .map_err(|e| format!("无法获取文件信息: {}", e))?;
     let _total_size = metadata.len();
-    
-    let remote_parent = remote_path.rfind('/').map(|i| &remote_path[..i]).unwrap_or("/");
+
+    let remote_parent = remote_path
+        .rfind('/')
+        .map(|i| &remote_path[..i])
+        .unwrap_or("/");
     ensure_remote_directory(&sftp, remote_parent).await?;
-    
+
     let mut remote_file = sftp
         .open(&remote_path)
         .await
         .map_err(|e| format!("无法创建远程文件: {}", e))?;
-    
+
     let mut buffer = vec![0u8; 65536];
     let mut transferred: u64 = 0;
-    
+
     loop {
         if TRANSFER_CANCELLED.read().await.contains_key(&task_id) {
             return Err("传输已取消".to_string());
         }
-        
+
         while TRANSFER_PAUSED.read().await.contains_key(&task_id) {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-        
+
         let n = local_file
             .read(&mut buffer)
             .await
             .map_err(|e| format!("读取失败: {}", e))?;
-        
+
         if n == 0 {
             break;
         }
-        
+
         remote_file
             .write_all(&buffer[..n])
             .await
             .map_err(|e| format!("写入失败: {}", e))?;
-        
+
         transferred += n as u64;
     }
-    
+
     Ok(transferred)
 }
 
@@ -1111,54 +1199,52 @@ pub async fn download_file_sync(
     local_path: String,
 ) -> Result<u64, String> {
     let sftp = get_sftp_session(&connection_id).await?;
-    
+
     let mut remote_file = sftp
         .open(&remote_path)
         .await
         .map_err(|e| format!("无法打开远程文件: {}", e))?;
-    
+
     let local_parent = std::path::Path::new(&local_path)
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| std::path::PathBuf::from("/"));
-    
-    tokio::fs::create_dir_all(&local_parent)
-        .await
-        .ok();
-    
+
+    tokio::fs::create_dir_all(&local_parent).await.ok();
+
     let mut local_file = tokio::fs::File::create(&local_path)
         .await
         .map_err(|e| format!("无法创建本地文件: {}", e))?;
-    
+
     let mut buffer = vec![0u8; 65536];
     let mut transferred: u64 = 0;
-    
+
     loop {
         if TRANSFER_CANCELLED.read().await.contains_key(&task_id) {
             return Err("传输已取消".to_string());
         }
-        
+
         while TRANSFER_PAUSED.read().await.contains_key(&task_id) {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
-        
+
         let n = remote_file
             .read(&mut buffer)
             .await
             .map_err(|e| format!("读取失败: {}", e))?;
-        
+
         if n == 0 {
             break;
         }
-        
+
         local_file
             .write_all(&buffer[..n])
             .await
             .map_err(|e| format!("写入失败: {}", e))?;
-        
+
         transferred += n as u64;
     }
-    
+
     Ok(transferred)
 }
 
@@ -1197,7 +1283,9 @@ pub async fn search_files(
     max_results: Option<u32>,
 ) -> Result<Vec<SearchResult>, String> {
     let sessions = super::ssh::SESSIONS.read().await;
-    let session = sessions.get(&connection_id).ok_or("SSH session not found")?;
+    let session = sessions
+        .get(&connection_id)
+        .ok_or("SSH session not found")?;
     let mut channel = session
         .handle
         .channel_open_session()
@@ -1208,13 +1296,13 @@ pub async fn search_files(
     let max = max_results.unwrap_or(100);
     let escaped_pattern = pattern.replace('"', "\\\"").replace('\'', "'\\''");
     let escaped_path = path.replace('"', "\\\"").replace('\'', "'\\''");
-    
+
     // 尝试使用 find，如果不存在则使用 ls -R 作为替代
     let command = format!(
         r#"command -v find >/dev/null 2>&1 && find "{}" -iname "*{}*" 2>/dev/null | head -n {} || ls -R "{}" 2>/dev/null | grep -i "{}" | head -n {}"#,
         escaped_path, escaped_pattern, max, escaped_path, escaped_pattern, max
     );
-    
+
     eprintln!("[search_files] Executing command: {}", command);
 
     channel
@@ -1248,8 +1336,12 @@ pub async fn search_files(
         if full_path.is_empty() {
             continue;
         }
-        let name = full_path.rsplit('/').next().unwrap_or(full_path).to_string();
-        
+        let name = full_path
+            .rsplit('/')
+            .next()
+            .unwrap_or(full_path)
+            .to_string();
+
         results.push(SearchResult {
             name,
             path: full_path.to_string(),

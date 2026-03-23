@@ -3,7 +3,7 @@
 **Generated:** 2026-03-22
 **Branch:** main
 
-**技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 5.3 + Rust (russh 0.50 + russh-sftp 2.1)
+**技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 6.0 + Rust (russh 0.50 + russh-sftp 2.1)
 
 ## 架构概览
 

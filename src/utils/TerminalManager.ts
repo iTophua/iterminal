@@ -1,8 +1,8 @@
-import { Terminal as XTerm, ITerminalOptions } from 'xterm'
-import { FitAddon } from 'xterm-addon-fit'
-import { SearchAddon } from 'xterm-addon-search'
-import type { FitAddon as FitAddonType } from 'xterm-addon-fit'
-import type { SearchAddon as SearchAddonType } from 'xterm-addon-search'
+import { Terminal as XTerm, ITerminalOptions } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import type { FitAddon as FitAddonType } from '@xterm/addon-fit'
+import type { SearchAddon as SearchAddonType } from '@xterm/addon-search'
 
 export interface TerminalConfig extends Partial<ITerminalOptions> {
   fontSize: number

@@ -76,6 +76,15 @@ function Connections() {
     connectedRef.current = connectedConnections
   }, [connectedConnections])
 
+  const refreshRecentConnections = async () => {
+    try {
+      const recent = await getRecentConnections(6)
+      setRecentConnections(recent)
+    } catch (error) {
+      console.error('[Connections] Failed to refresh recent connections:', error)
+    }
+  }
+
   // 初始化数据库并加载数据
   useEffect(() => {
     const loadData = async () => {
@@ -90,8 +99,7 @@ function Connections() {
         const conns = await getConnections()
         setConnections(conns)
         
-        const recent = await getRecentConnections(6)
-        setRecentConnections(recent)
+        await refreshRecentConnections()
       } catch (error) {
         console.error('[Connections] Failed to load data:', error)
         message.error('加载数据失败')
@@ -540,7 +548,8 @@ function Connections() {
 
       addConnection(conn, shellId)
       
-      recordConnectionHistory(conn.id).catch(console.error)
+      await recordConnectionHistory(conn.id)
+      await refreshRecentConnections()
 
       message.success(`已连接到 ${conn.name}`)
       navigate('/terminal')
@@ -1003,7 +1012,7 @@ function Connections() {
                         type="text"
                         size="small"
                         icon={<KeyOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password ? '******' : '无'}`, '信息')}
+                        onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
                         style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 4px', height: 18 }}
                       >
                         信息
@@ -1290,32 +1299,50 @@ function Connections() {
         </div>
         
         {!exportAll && (
-          <div style={{ 
-            maxHeight: 300, 
-            overflow: 'auto', 
-            border: '1px solid var(--color-border)', 
-            borderRadius: 4,
-            padding: 8 
-          }}>
-            <Checkbox.Group
-              value={selectedExportIds}
-              onChange={(values) => setSelectedExportIds(values.filter((v): v is string => typeof v === 'string'))}
-              style={{ width: '100%' }}
-            >
-              <Row gutter={[8, 8]}>
-                {connections.map(conn => (
-                  <Col span={12} key={conn.id}>
-                    <Checkbox value={conn.id}>
-                      <span style={{ fontSize: 13 }}>{conn.name}</span>
-                      <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11, marginLeft: 4 }}>
-                        ({conn.host})
-                      </span>
-                    </Checkbox>
-                  </Col>
-                ))}
-              </Row>
-            </Checkbox.Group>
-          </div>
+          <>
+            <div style={{ marginBottom: 8, display: 'flex', gap: 8 }}>
+              <Button 
+                size="small"
+                onClick={() => setSelectedExportIds(connections.map(c => c.id))}
+              >
+                全选
+              </Button>
+              <Button 
+                size="small"
+                onClick={() => setSelectedExportIds([])}
+              >
+                取消全选
+              </Button>
+            </div>
+            <div style={{ 
+              maxHeight: 300, 
+              overflow: 'auto', 
+              border: '1px solid var(--color-border)', 
+              borderRadius: 4,
+              padding: 8 
+            }}>
+              <Checkbox.Group
+                value={selectedExportIds}
+                onChange={(values) => setSelectedExportIds(values.filter((v): v is string => typeof v === 'string'))}
+                style={{ width: '100%' }}
+              >
+                <Row gutter={[8, 8]}>
+                  {connections.map(conn => (
+                    <Col span={24} key={conn.id}>
+                      <Checkbox value={conn.id} style={{ display: 'flex', alignItems: 'center' }}>
+                        <span style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {conn.name}
+                        </span>
+                        <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11, marginLeft: 8, whiteSpace: 'nowrap' }}>
+                          ({conn.host})
+                        </span>
+                      </Checkbox>
+                    </Col>
+                  ))}
+                </Row>
+              </Checkbox.Group>
+            </div>
+          </>
         )}
         
         <div style={{ marginTop: 12, color: 'var(--color-text-secondary)', fontSize: 12 }}>

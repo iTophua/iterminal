@@ -1,7 +1,8 @@
+use base64::Engine;
 use once_cell::sync::Lazy;
 use russh::client::{Handle, Handler};
-use russh::{ChannelMsg, Disconnect};
 use russh::keys::PublicKeyBase64;
+use russh::{ChannelMsg, Disconnect};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
@@ -9,7 +10,6 @@ use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Emitter;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use base64::Engine;
 
 use super::license::get_max_connections;
 
@@ -37,9 +37,12 @@ pub struct SshClientHandler {
 
 impl SshClientHandler {
     pub fn new(host: String, port: u16) -> Self {
-        let known_hosts_path = dirs::home_dir()
-            .map(|h| h.join(".ssh").join("known_hosts"));
-        Self { host, port, known_hosts_path }
+        let known_hosts_path = dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
+        Self {
+            host,
+            port,
+            known_hosts_path,
+        }
     }
 }
 
@@ -52,7 +55,7 @@ impl Handler for SshClientHandler {
     ) -> Result<bool, Self::Error> {
         let key_bytes = server_public_key.public_key_bytes();
         let key_fingerprint = base64::engine::general_purpose::STANDARD.encode(&key_bytes);
-        
+
         if let Some(ref path) = self.known_hosts_path {
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(path) {
@@ -61,11 +64,12 @@ impl Handler for SshClientHandler {
                         if parts.len() >= 3 {
                             let hosts = parts[0];
                             let stored_key = parts.get(2).unwrap_or(&"");
-                            
+
                             let host_with_port = format!("[{}]:{}", self.host, self.port);
                             let host_without_port = &self.host;
-                            
-                            if hosts.contains(host_without_port) || hosts.contains(&host_with_port) {
+
+                            if hosts.contains(host_without_port) || hosts.contains(&host_with_port)
+                            {
                                 if stored_key == &key_fingerprint {
                                     return Ok(true);
                                 }
@@ -75,23 +79,29 @@ impl Handler for SshClientHandler {
                 }
             }
         }
-        
+
         let host_key = format!("{}:{}", self.host, self.port);
-        eprintln!("WARN: Unknown host key for {}. Fingerprint: {}", host_key, key_fingerprint);
+        eprintln!(
+            "WARN: Unknown host key for {}. Fingerprint: {}",
+            host_key, key_fingerprint
+        );
         eprintln!("INFO: Auto-accepting host key (use --strict-host-key-checking for strict mode)");
-        
+
         if let Some(ref path) = self.known_hosts_path {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let entry = format!("[{}]:{} {} {}\n", self.host, self.port, "ssh-ed25519", key_fingerprint);
+            let entry = format!(
+                "[{}]:{} {} {}\n",
+                self.host, self.port, "ssh-ed25519", key_fingerprint
+            );
             let _ = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
                 .open(path)
                 .and_then(|mut f| std::io::Write::write_all(&mut f, entry.as_bytes()));
         }
-        
+
         Ok(true)
     }
 }
@@ -144,8 +154,9 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
 
     let connect_result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        russh::client::connect(config, &addr_str, handler)
-    ).await;
+        russh::client::connect(config, &addr_str, handler),
+    )
+    .await;
 
     let mut handle = match connect_result {
         Ok(Ok(handle)) => handle,
@@ -153,11 +164,12 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
         Err(_) => return Err("连接超时，请检查网络或服务器地址".to_string()),
     };
 
-let auth_success = if let Some(password) = &connection.password {
+    let auth_success = if let Some(password) = &connection.password {
         let auth_result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            handle.authenticate_password(&connection.username, password)
-        ).await;
+            handle.authenticate_password(&connection.username, password),
+        )
+        .await;
 
         match auth_result {
             Ok(Ok(auth)) => auth.success(),
@@ -166,18 +178,20 @@ let auth_success = if let Some(password) = &connection.password {
         }
     } else if let Some(key_file) = &connection.key_file {
         let key_path = shellexpand::tilde(key_file).into_owned();
-        let key_pair = russh::keys::load_secret_key(&key_path, None)
-            .map_err(|e| format!("加载密钥文件失败: {}。请确保文件路径正确且格式为 OpenSSH/PEM", e))?;
+        let key_pair = russh::keys::load_secret_key(&key_path, None).map_err(|e| {
+            format!(
+                "加载密钥文件失败: {}。请确保文件路径正确且格式为 OpenSSH/PEM",
+                e
+            )
+        })?;
 
-        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
-            Arc::new(key_pair),
-            None,
-        );
+        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
 
         let auth_result = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            handle.authenticate_publickey(&connection.username, key_with_hash)
-        ).await;
+            handle.authenticate_publickey(&connection.username, key_with_hash),
+        )
+        .await;
 
         match auth_result {
             Ok(Ok(auth)) => auth.success(),
@@ -295,17 +309,15 @@ pub async fn test_connection(connection: SSHConnection) -> Result<bool, String> 
         let key_path = shellexpand::tilde(key_file).into_owned();
         match russh::keys::load_secret_key(&key_path, None) {
             Ok(key_pair) => {
-                let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(
-                    Arc::new(key_pair),
-                    None,
-                );
+                let key_with_hash =
+                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
                 handle
                     .authenticate_publickey(&connection.username, key_with_hash)
                     .await
                     .map(|auth| auth.success())
                     .unwrap_or(false)
             }
-            Err(_) => false
+            Err(_) => false,
         }
     } else {
         false
@@ -341,11 +353,7 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
     let (resize_tx, mut resize_rx) = mpsc::channel::<(u32, u32)>(10);
     let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(100);
 
-    let shell_id = format!(
-        "{}-shell-{}",
-        id,
-        chrono::Utc::now().timestamp_millis()
-    );
+    let shell_id = format!("{}-shell-{}", id, chrono::Utc::now().timestamp_millis());
 
     let shell_id_clone = shell_id.clone();
     let app_handle = app.clone();
@@ -574,8 +582,12 @@ echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
 
     let output_str = String::from_utf8_lossy(&output).to_string();
     let mut section = "";
-    let (mut hostname, mut os, mut kernel, mut uptime) =
-        ("unknown".to_string(), "Linux".to_string(), "unknown".to_string(), "unknown".to_string());
+    let (mut hostname, mut os, mut kernel, mut uptime) = (
+        "unknown".to_string(),
+        "Linux".to_string(),
+        "unknown".to_string(),
+        "unknown".to_string(),
+    );
     let (mut cores, mut load_avg, mut cpu_usage) = (1u32, "N/A".to_string(), 0.0f32);
     let mut per_core_usage: Vec<f32> = Vec::new();
     let (mut mem_total, mut mem_used, mut mem_free, mut swap_total, mut swap_used) =
@@ -584,23 +596,68 @@ echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
 
     for line in output_str.lines() {
         let trimmed = line.trim();
-        if trimmed.contains("<<H>>") { section = "h"; continue; }
-        if trimmed.contains("<<O>>") { section = "o"; continue; }
-        if trimmed.contains("<<K>>") { section = "k"; continue; }
-        if trimmed.contains("<<U>>") { section = "u"; continue; }
-        if trimmed.contains("<<C>>") { section = "c"; continue; }
-        if trimmed.contains("<<L>>") { section = "l"; continue; }
-        if trimmed.contains("<<P>>") { section = "p"; continue; }
-        if trimmed.contains("<<PC>>") { section = "pc"; continue; }
-        if trimmed.contains("<<M>>") { section = "m"; continue; }
-        if trimmed.contains("<<D>>") { section = "d"; continue; }
+        if trimmed.contains("<<H>>") {
+            section = "h";
+            continue;
+        }
+        if trimmed.contains("<<O>>") {
+            section = "o";
+            continue;
+        }
+        if trimmed.contains("<<K>>") {
+            section = "k";
+            continue;
+        }
+        if trimmed.contains("<<U>>") {
+            section = "u";
+            continue;
+        }
+        if trimmed.contains("<<C>>") {
+            section = "c";
+            continue;
+        }
+        if trimmed.contains("<<L>>") {
+            section = "l";
+            continue;
+        }
+        if trimmed.contains("<<P>>") {
+            section = "p";
+            continue;
+        }
+        if trimmed.contains("<<PC>>") {
+            section = "pc";
+            continue;
+        }
+        if trimmed.contains("<<M>>") {
+            section = "m";
+            continue;
+        }
+        if trimmed.contains("<<D>>") {
+            section = "d";
+            continue;
+        }
 
         match section {
-            "h" => { hostname = trimmed.to_string(); section = ""; }
-            "o" => { os = trimmed.to_string(); section = ""; }
-            "k" => { kernel = trimmed.to_string(); section = ""; }
-            "u" => { uptime = trimmed.to_string(); section = ""; }
-            "c" => { cores = trimmed.parse().unwrap_or(1); section = ""; }
+            "h" => {
+                hostname = trimmed.to_string();
+                section = "";
+            }
+            "o" => {
+                os = trimmed.to_string();
+                section = "";
+            }
+            "k" => {
+                kernel = trimmed.to_string();
+                section = "";
+            }
+            "u" => {
+                uptime = trimmed.to_string();
+                section = "";
+            }
+            "c" => {
+                cores = trimmed.parse().unwrap_or(1);
+                section = "";
+            }
             "l" => {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if parts.len() >= 3 {
@@ -608,8 +665,15 @@ echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
                 }
                 section = "";
             }
-            "p" => { cpu_usage = trimmed.parse().unwrap_or(0.0); section = ""; }
-            "pc" => { if let Ok(v) = trimmed.parse::<f32>() { per_core_usage.push(v); } }
+            "p" => {
+                cpu_usage = trimmed.parse().unwrap_or(0.0);
+                section = "";
+            }
+            "pc" => {
+                if let Ok(v) = trimmed.parse::<f32>() {
+                    per_core_usage.push(v);
+                }
+            }
             "m" => {
                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                 if trimmed.starts_with("Mem:") && parts.len() >= 4 {
@@ -639,17 +703,33 @@ echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
     }
 
     if per_core_usage.is_empty() {
-        for _ in 0..cores { per_core_usage.push(cpu_usage); }
+        for _ in 0..cores {
+            per_core_usage.push(cpu_usage);
+        }
     }
 
     Ok(MonitorData {
-        system: SystemInfo { hostname, os, kernel, uptime },
-        cpu: CpuInfo { usage: cpu_usage, cores, load_avg, per_core_usage },
+        system: SystemInfo {
+            hostname,
+            os,
+            kernel,
+            uptime,
+        },
+        cpu: CpuInfo {
+            usage: cpu_usage,
+            cores,
+            load_avg,
+            per_core_usage,
+        },
         memory: MemoryInfo {
             total: mem_total,
             used: mem_used,
             free: mem_free,
-            usage_percent: if mem_total > 0 { (mem_used as f64 / mem_total as f64 * 100.0) as f32 } else { 0.0 },
+            usage_percent: if mem_total > 0 {
+                (mem_used as f64 / mem_total as f64 * 100.0) as f32
+            } else {
+                0.0
+            },
             swap_total,
             swap_used,
         },
@@ -810,11 +890,11 @@ pub async fn list_processes(id: String) -> Result<Vec<ProcessInfo>, String> {
 #[tauri::command]
 pub async fn kill_process(id: String, pid: u32, signal: Option<String>) -> Result<(), String> {
     let sig = signal.unwrap_or_else(|| "TERM".to_string());
-    
+
     if !sig.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err("Invalid signal name".to_string());
     }
-    
+
     let sessions = SESSIONS.read().await;
     let session = sessions.get(&id).ok_or("Session not found")?;
     let mut channel = session
@@ -833,13 +913,19 @@ pub async fn kill_process(id: String, pid: u32, signal: Option<String>) -> Resul
 
     let mut exit_status: u32 = 0;
     while let Some(msg) = channel.wait().await {
-        if let ChannelMsg::ExitStatus { exit_status: status } = msg {
+        if let ChannelMsg::ExitStatus {
+            exit_status: status,
+        } = msg
+        {
             exit_status = status;
         }
     }
 
     if exit_status != 0 {
-        return Err(format!("kill command failed with exit code {}", exit_status));
+        return Err(format!(
+            "kill command failed with exit code {}",
+            exit_status
+        ));
     }
 
     Ok(())

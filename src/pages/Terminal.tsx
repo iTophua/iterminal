@@ -17,9 +17,9 @@ import {
   FullscreenOutlined,
   FullscreenExitOutlined,
 } from '@ant-design/icons'
-import { Terminal as XTerm } from 'xterm'
-import { FitAddon } from 'xterm-addon-fit'
-import { SearchAddon } from 'xterm-addon-search'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -27,7 +27,7 @@ import { readText, writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import { SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { Panel, Group, Separator } from 'react-resizable-panels'
-import 'xterm/css/xterm.css'
+import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore, DisconnectedConnection, SplitPane } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
@@ -84,9 +84,18 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
 
   const [recentConnections, setRecentConnections] = useState<Connection[]>([])
 
-  useEffect(() => {
-    getRecentConnections(5).then(setRecentConnections).catch(() => {})
+  const refreshRecentConnections = useCallback(async () => {
+    try {
+      const recent = await getRecentConnections(5)
+      setRecentConnections(recent)
+    } catch (error) {
+      console.error('[Terminal] Failed to refresh recent connections:', error)
+    }
   }, [])
+
+  useEffect(() => {
+    refreshRecentConnections()
+  }, [refreshRecentConnections])
 
   const terminalRefs = useRef<{ [key: string]: HTMLDivElement | null }>({})
   const terminalInstances = useRef<{ [key: string]: XTerm }>({})
@@ -97,10 +106,15 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const searchAddons = useRef<{ [key: string]: SearchAddon }>({})
   const apiLogVisibleRef = useRef(false)
   const shortcutSettingsRef = useRef(shortcutSettings)
+  const terminalSettingsRef = useRef(terminalSettings)
   
   useEffect(() => {
     shortcutSettingsRef.current = shortcutSettings
   }, [shortcutSettings])
+
+  useEffect(() => {
+    terminalSettingsRef.current = terminalSettings
+  }, [terminalSettings])
   
   const {
     isFullscreen,
@@ -556,7 +570,7 @@ const handlePointerUp = () => {
           })
 
           terminal.onSelectionChange(() => {
-            if (terminalSettings.copyOnSelect && terminal.hasSelection()) {
+            if (terminalSettingsRef.current.copyOnSelect && terminal.hasSelection()) {
               const selection = terminal.getSelection()
               if (selection) {
                 writeText(selection).catch(err => {
@@ -773,6 +787,7 @@ const handlePointerUp = () => {
         term.options.fontSize = terminalSettings.fontSize
         term.options.cursorStyle = terminalSettings.cursorStyle
         term.options.cursorBlink = terminalSettings.cursorBlink
+        term.options.scrollback = terminalSettings.scrollback
       }
     })
     Object.values(fitAddons.current).forEach(addon => {
@@ -1127,12 +1142,13 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
 
       const shellId = await invoke<string>('get_shell', { id: conn.id })
       addConnection(conn, shellId)
-      recordConnectionHistory(conn.id).catch(() => {})
+      await recordConnectionHistory(conn.id)
+      await refreshRecentConnections()
       message.success(`已连接到 ${conn.name}`)
     } catch (error) {
       message.error(`连接失败: ${error}`)
     }
-  }, [connectedConnections, addConnection, setActiveConnection, message])
+  }, [connectedConnections, addConnection, setActiveConnection, message, refreshRecentConnections])
 
   useEffect(() => {
     if (singleConnectionMode && connectedConnections.length === 0) {

@@ -11,7 +11,7 @@ import {
   ToolOutlined,
 } from '@ant-design/icons'
 import { useCallback, useState } from 'react'
-import { SearchAddon } from 'xterm-addon-search'
+import { SearchAddon } from '@xterm/addon-search'
 import type { ShortcutSettings } from '../../../stores/terminalStore'
 
 interface PaneToolbarProps {

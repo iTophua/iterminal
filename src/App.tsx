@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
 import './styles/global.css'
 
 const { Content } = Layout
@@ -85,9 +86,24 @@ function MenuActionHandler() {
         case 'copy':
           document.execCommand('copy')
           break
-        case 'paste':
-          document.execCommand('paste')
-          break
+        case 'paste': {
+            const activeElement = document.activeElement
+            const isEditable = activeElement && (
+              activeElement.tagName === 'INPUT' ||
+              activeElement.tagName === 'TEXTAREA' ||
+              (activeElement as HTMLElement).isContentEditable
+            )
+            if (isEditable) {
+              readClipboardText().then(text => {
+                if (text) {
+                  document.execCommand('insertText', false, text)
+                }
+              }).catch(() => {})
+            } else {
+              document.execCommand('paste')
+            }
+            break
+          }
         case 'select-all':
           document.execCommand('selectAll')
           break
@@ -237,8 +253,6 @@ function SessionSaver() {
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))
         savedRef.current = true
       }
-      
-      await invoke('save_window_state').catch(() => {})
       
       for (const conn of connectedConnections) {
         await invoke('disconnect_ssh', { id: conn.connectionId }).catch(() => {})

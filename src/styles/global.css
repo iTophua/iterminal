@@ -102,8 +102,8 @@ body {
 
 /* Scrollbar styling */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -112,7 +112,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--color-border);
-  border-radius: 4px;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -234,6 +234,21 @@ body {
 .xterm-viewport {
   overflow-y: auto !important;
   background: var(--color-bg-container) !important;
+}
+
+/* xterm.js v6 自定义滚动条样式 */
+.xterm .scrollbar {
+  width: 6px !important;
+}
+
+.xterm .scrollbar .slider {
+  width: 6px !important;
+  border-radius: 3px !important;
+  background: var(--color-text-quaternary) !important;
+}
+
+.xterm .scrollbar .slider:hover {
+  background: var(--color-text-tertiary) !important;
 }
 
 .xterm-screen {

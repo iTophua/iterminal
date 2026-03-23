@@ -8,19 +8,20 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
-use tower_http::cors::CorsLayer;
 use tokio_util::sync::CancellationToken;
+use tower_http::cors::CorsLayer;
 
-use super::ssh::{self, SSHConnection, CommandResult, MonitorData};
-use super::sftp::{self, FileEntry};
 use super::db::{self, ConnectionRecord};
+use super::sftp::{self, FileEntry};
+use super::ssh::{self, CommandResult, MonitorData, SSHConnection};
 
 use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 static API_RUNNING: AtomicBool = AtomicBool::new(false);
-static API_CANCELLATION_TOKEN: Lazy<RwLock<Option<CancellationToken>>> = Lazy::new(|| RwLock::new(None));
+static API_CANCELLATION_TOKEN: Lazy<RwLock<Option<CancellationToken>>> =
+    Lazy::new(|| RwLock::new(None));
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ConnectionState {
@@ -105,15 +106,18 @@ fn emit_operation(
         success,
         error: error.map(|s| s.to_string()),
     };
-    
+
     let _ = app.emit("api-operation", &log);
-    
+
     if let Some(id) = connection_id {
-        let _ = app.emit("connection-state-changed", serde_json::json!({
-            "connectionId": id,
-            "operation": operation,
-            "success": success
-        }));
+        let _ = app.emit(
+            "connection-state-changed",
+            serde_json::json!({
+                "connectionId": id,
+                "operation": operation,
+                "success": success
+            }),
+        );
     }
 }
 
@@ -129,24 +133,54 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
         .route("/api/connections/{id}/exec", post(execute_command_handler))
         .route("/api/connections/{id}/monitor", get(get_monitor_handler))
         .route("/api/connections/{id}/files", get(list_files_handler))
-        .route("/api/connections/{id}/mkdir", post(create_directory_handler))
+        .route(
+            "/api/connections/{id}/mkdir",
+            post(create_directory_handler),
+        )
         .route("/api/connections/{id}/rm", post(delete_file_handler))
         .route("/api/connections/{id}/rename", post(rename_file_handler))
         .route("/api/connections/{id}/read_file", post(read_file_handler))
         .route("/api/connections/{id}/write_file", post(write_file_handler))
         .route("/api/connections/{id}/upload", post(upload_file_handler))
-        .route("/api/connections/{id}/download", post(download_file_handler))
+        .route(
+            "/api/connections/{id}/download",
+            post(download_file_handler),
+        )
         .route("/api/saved-connections", get(list_saved_connections))
-        .route("/api/saved-connections/{id}/connect", post(quick_connect_handler))
-        .route("/api/connections/{id}/network-stats", get(get_network_stats_handler))
-        .route("/api/connections/{id}/processes", get(list_processes_handler))
-        .route("/api/connections/{id}/kill-process", post(kill_process_handler))
+        .route(
+            "/api/saved-connections/{id}/connect",
+            post(quick_connect_handler),
+        )
+        .route(
+            "/api/connections/{id}/network-stats",
+            get(get_network_stats_handler),
+        )
+        .route(
+            "/api/connections/{id}/processes",
+            get(list_processes_handler),
+        )
+        .route(
+            "/api/connections/{id}/kill-process",
+            post(kill_process_handler),
+        )
         .route("/api/connections/{id}/compress", post(compress_handler))
         .route("/api/connections/{id}/extract", post(extract_handler))
-        .route("/api/connections/{id}/search-files", get(search_files_handler))
-        .route("/api/connections/{id}/upload-folder", post(upload_folder_handler))
-        .route("/api/connections/{id}/create-file", post(create_file_handler))
-        .route("/api/connections/{id}/delete-directory", post(delete_directory_handler))
+        .route(
+            "/api/connections/{id}/search-files",
+            get(search_files_handler),
+        )
+        .route(
+            "/api/connections/{id}/upload-folder",
+            post(upload_folder_handler),
+        )
+        .route(
+            "/api/connections/{id}/create-file",
+            post(create_file_handler),
+        )
+        .route(
+            "/api/connections/{id}/delete-directory",
+            post(delete_directory_handler),
+        )
         .layer(
             CorsLayer::new()
                 .allow_origin([
@@ -156,7 +190,7 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
                     "http://127.0.0.1:27149".parse().unwrap(),
                 ])
                 .allow_methods([Method::GET, Method::POST, Method::DELETE])
-                .allow_headers(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
         )
         .with_state(state)
 }
@@ -197,8 +231,13 @@ async fn create_connection(
         key_file: None,
     };
 
-    let details = format!("{}@{}:{}", payload.username, payload.host, payload.port.unwrap_or(22));
-    
+    let details = format!(
+        "{}@{}:{}",
+        payload.username,
+        payload.host,
+        payload.port.unwrap_or(22)
+    );
+
     match ssh::connect_ssh(payload.id.clone(), connection).await {
         Ok(_) => {
             emit_operation(
@@ -231,10 +270,13 @@ async fn delete_connection(
 ) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
     let sessions = ssh::SESSIONS.read().await;
     let info = sessions.get(&id).map(|s| {
-        format!("{}@{}:{}", s.connection.username, s.connection.host, s.connection.port)
+        format!(
+            "{}@{}:{}",
+            s.connection.username, s.connection.host, s.connection.port
+        )
     });
     drop(sessions);
-    
+
     match ssh::disconnect_ssh(id.clone()).await {
         Ok(_) => {
             emit_operation(
@@ -284,7 +326,7 @@ async fn execute_command_handler(
     Json(payload): Json<ExecRequest>,
 ) -> Result<Json<ApiResponse<CommandResult>>, (StatusCode, Json<ApiResponse<CommandResult>>)> {
     let full_command = payload.command.clone();
-    
+
     match ssh::execute_command(id.clone(), payload.command).await {
         Ok(result) => {
             emit_operation(
@@ -325,18 +367,14 @@ async fn list_files_handler(
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<Json<ApiResponse<Vec<FileEntry>>>, (StatusCode, Json<ApiResponse<Vec<FileEntry>>>)> {
-    let path = params.get("path").cloned().unwrap_or_else(|| "/".to_string());
-    
+    let path = params
+        .get("path")
+        .cloned()
+        .unwrap_or_else(|| "/".to_string());
+
     match sftp::list_directory(id.clone(), path.clone()).await {
         Ok(entries) => {
-            emit_operation(
-                &state.app_handle,
-                "list_dir",
-                Some(&id),
-                &path,
-                true,
-                None,
-            );
+            emit_operation(&state.app_handle, "list_dir", Some(&id), &path, true, None);
             Ok(Json(ApiResponse::success(entries)))
         }
         Err(e) => {
@@ -420,9 +458,15 @@ async fn rename_file_handler(
     Path(id): Path<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
-    let old_path = payload.get("old_path").and_then(|v| v.as_str()).unwrap_or("");
-    let new_path = payload.get("new_path").and_then(|v| v.as_str()).unwrap_or("");
-    
+    let old_path = payload
+        .get("old_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let new_path = payload
+        .get("new_path")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
     match sftp::rename_file(id.clone(), old_path.to_string(), new_path.to_string()).await {
         Ok(_) => {
             emit_operation(
@@ -458,9 +502,10 @@ pub struct ReadFileRequest {
 async fn read_file_handler(
     Path(id): Path<String>,
     Json(payload): Json<ReadFileRequest>,
-) -> Result<Json<ApiResponse<sftp::FileContent>>, (StatusCode, Json<ApiResponse<sftp::FileContent>>)> {
+) -> Result<Json<ApiResponse<sftp::FileContent>>, (StatusCode, Json<ApiResponse<sftp::FileContent>>)>
+{
     let max_size = payload.max_size.unwrap_or(1024 * 1024);
-    
+
     match sftp::read_file_content(id.clone(), payload.path.clone(), Some(max_size)).await {
         Ok(content) => Ok(Json(ApiResponse::success(content))),
         Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
@@ -478,7 +523,8 @@ async fn write_file_handler(
     Path(id): Path<String>,
     Json(payload): Json<WriteFileRequest>,
 ) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
-    match sftp::write_file_content(id.clone(), payload.path.clone(), payload.content.clone()).await {
+    match sftp::write_file_content(id.clone(), payload.path.clone(), payload.content.clone()).await
+    {
         Ok(_) => {
             emit_operation(
                 &state.app_handle,
@@ -523,26 +569,20 @@ async fn upload_file_handler(
     Json(payload): Json<UploadRequest>,
 ) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
     let task_id = format!("mcp-upload-{}", chrono::Utc::now().timestamp_millis());
-    
+
     let result = sftp::upload_file_sync(
         id.clone(),
         task_id.clone(),
         payload.local_path.clone(),
         payload.remote_path.clone(),
-    ).await;
-    
+    )
+    .await;
+
     let details = format!("{} -> {}", payload.local_path, payload.remote_path);
-    
+
     match result {
         Ok(bytes) => {
-            emit_operation(
-                &state.app_handle,
-                "upload",
-                Some(&id),
-                &details,
-                true,
-                None,
-            );
+            emit_operation(&state.app_handle, "upload", Some(&id), &details, true, None);
             Ok(Json(ApiResponse::success(TransferResult {
                 success: true,
                 bytes_transferred: bytes,
@@ -575,16 +615,17 @@ async fn download_file_handler(
     Json(payload): Json<DownloadRequest>,
 ) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
     let task_id = format!("mcp-download-{}", chrono::Utc::now().timestamp_millis());
-    
+
     let result = sftp::download_file_sync(
         id.clone(),
         task_id.clone(),
         payload.remote_path.clone(),
         payload.local_path.clone(),
-    ).await;
-    
+    )
+    .await;
+
     let details = format!("{} -> {}", payload.remote_path, payload.local_path);
-    
+
     match result {
         Ok(bytes) => {
             emit_operation(
@@ -628,12 +669,14 @@ async fn quick_connect_handler(
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
     let connections = db::get_connections()
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
-    
-    let record = connections
-        .iter()
-        .find(|c| c.id == id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ApiResponse::error("连接未找到"))))?;
-    
+
+    let record = connections.iter().find(|c| c.id == id).ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error("连接未找到")),
+        )
+    })?;
+
     let password = record.password.clone().unwrap_or_default();
     let connection = SSHConnection {
         host: record.host.clone(),
@@ -642,9 +685,9 @@ async fn quick_connect_handler(
         password: Some(password),
         key_file: record.key_file.clone(),
     };
-    
+
     let details = format!("{}@{}:{}", record.username, record.host, record.port);
-    
+
     match ssh::connect_ssh(id.clone(), connection).await {
         Ok(_) => {
             emit_operation(
@@ -673,7 +716,8 @@ async fn quick_connect_handler(
 
 async fn get_network_stats_handler(
     Path(id): Path<String>,
-) -> Result<Json<ApiResponse<ssh::NetworkStats>>, (StatusCode, Json<ApiResponse<ssh::NetworkStats>>)> {
+) -> Result<Json<ApiResponse<ssh::NetworkStats>>, (StatusCode, Json<ApiResponse<ssh::NetworkStats>>)>
+{
     match ssh::get_network_stats(id).await {
         Ok(stats) => Ok(Json(ApiResponse::success(stats))),
         Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
@@ -682,7 +726,10 @@ async fn get_network_stats_handler(
 
 async fn list_processes_handler(
     Path(id): Path<String>,
-) -> Result<Json<ApiResponse<Vec<ssh::ProcessInfo>>>, (StatusCode, Json<ApiResponse<Vec<ssh::ProcessInfo>>>)> {
+) -> Result<
+    Json<ApiResponse<Vec<ssh::ProcessInfo>>>,
+    (StatusCode, Json<ApiResponse<Vec<ssh::ProcessInfo>>>),
+> {
     match ssh::list_processes(id).await {
         Ok(processes) => Ok(Json(ApiResponse::success(processes))),
         Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
@@ -736,7 +783,13 @@ async fn compress_handler(
     Path(id): Path<String>,
     Json(payload): Json<CompressRequest>,
 ) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
-    match sftp::compress_file(id.clone(), payload.source_path.clone(), payload.target_path.clone()).await {
+    match sftp::compress_file(
+        id.clone(),
+        payload.source_path.clone(),
+        payload.target_path.clone(),
+    )
+    .await
+    {
         Ok(_) => {
             emit_operation(
                 &state.app_handle,
@@ -773,7 +826,13 @@ async fn extract_handler(
     Path(id): Path<String>,
     Json(payload): Json<ExtractRequest>,
 ) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
-    match sftp::extract_file(id.clone(), payload.file_path.clone(), payload.target_dir.clone()).await {
+    match sftp::extract_file(
+        id.clone(),
+        payload.file_path.clone(),
+        payload.target_dir.clone(),
+    )
+    .await
+    {
         Ok(_) => {
             emit_operation(
                 &state.app_handle,
@@ -802,10 +861,22 @@ async fn extract_handler(
 async fn search_files_handler(
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
-) -> Result<Json<ApiResponse<Vec<sftp::SearchResult>>>, (StatusCode, Json<ApiResponse<Vec<sftp::SearchResult>>>)> {
-    let path = params.get("path").cloned().unwrap_or_else(|| "/".to_string());
-    let pattern = params.get("pattern").cloned().unwrap_or_else(|| "*".to_string());
-    let max_results: u32 = params.get("max_results").and_then(|s| s.parse().ok()).unwrap_or(100);
+) -> Result<
+    Json<ApiResponse<Vec<sftp::SearchResult>>>,
+    (StatusCode, Json<ApiResponse<Vec<sftp::SearchResult>>>),
+> {
+    let path = params
+        .get("path")
+        .cloned()
+        .unwrap_or_else(|| "/".to_string());
+    let pattern = params
+        .get("pattern")
+        .cloned()
+        .unwrap_or_else(|| "*".to_string());
+    let max_results: u32 = params
+        .get("max_results")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(100);
 
     match sftp::search_files(id, path, pattern, Some(max_results)).await {
         Ok(results) => Ok(Json(ApiResponse::success(results))),
@@ -824,10 +895,21 @@ async fn upload_folder_handler(
     Path(id): Path<String>,
     Json(payload): Json<UploadFolderRequest>,
 ) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
-    let task_id = format!("mcp-upload-folder-{}", chrono::Utc::now().timestamp_millis());
+    let task_id = format!(
+        "mcp-upload-folder-{}",
+        chrono::Utc::now().timestamp_millis()
+    );
     let app_handle = state.app_handle.clone();
-    
-    match sftp::upload_folder(id, payload.local_path.clone(), payload.remote_path.clone(), task_id, app_handle).await {
+
+    match sftp::upload_folder(
+        id,
+        payload.local_path.clone(),
+        payload.remote_path.clone(),
+        task_id,
+        app_handle,
+    )
+    .await
+    {
         Ok(result) => {
             emit_operation(
                 &state.app_handle,
@@ -921,14 +1003,14 @@ async fn delete_directory_handler(
 
 pub async fn start_api_server(app_handle: AppHandle) {
     let cancel_token = CancellationToken::new();
-    
+
     {
         let mut token_guard = API_CANCELLATION_TOKEN.write().await;
         *token_guard = Some(cancel_token.clone());
     }
-    
+
     API_RUNNING.store(true, Ordering::SeqCst);
-    
+
     let app = create_api_router(app_handle);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 27149));
 
@@ -942,7 +1024,7 @@ pub async fn start_api_server(app_handle: AppHandle) {
             return;
         }
     };
-    
+
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             cancel_token.cancelled().await;
@@ -950,7 +1032,7 @@ pub async fn start_api_server(app_handle: AppHandle) {
         })
         .await
         .ok();
-    
+
     API_RUNNING.store(false, Ordering::SeqCst);
     println!("API Server stopped");
 }
@@ -965,19 +1047,19 @@ pub async fn stop_api_server() -> Result<bool, String> {
     if !API_RUNNING.load(Ordering::SeqCst) {
         return Ok(false);
     }
-    
+
     let token_guard = API_CANCELLATION_TOKEN.read().await;
     if let Some(token) = token_guard.as_ref() {
         token.cancel();
     }
-    
+
     for _ in 0..50 {
         if !API_RUNNING.load(Ordering::SeqCst) {
             break;
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-    
+
     Ok(true)
 }
 
@@ -986,7 +1068,7 @@ pub async fn start_api_server_command(app_handle: AppHandle) -> Result<bool, Str
     if API_RUNNING.load(Ordering::SeqCst) {
         return Ok(true);
     }
-    
+
     {
         let token_guard = API_CANCELLATION_TOKEN.read().await;
         if let Some(token) = token_guard.as_ref() {
@@ -997,21 +1079,21 @@ pub async fn start_api_server_command(app_handle: AppHandle) -> Result<bool, Str
             }
         }
     }
-    
+
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             start_api_server(app_handle).await;
         });
     });
-    
+
     for _ in 0..50 {
         if API_RUNNING.load(Ordering::SeqCst) {
             return Ok(true);
         }
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
-    
+
     Err("Failed to start API server".to_string())
 }
 

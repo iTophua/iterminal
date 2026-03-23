@@ -8,6 +8,14 @@ use tauri_plugin_opener::OpenerExt;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(
+                    tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
+                )
+                .build(),
+        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -53,8 +61,6 @@ fn main() {
             iterminal::commands::sftp::extract_file,
             iterminal::commands::system::get_system_fonts,
             iterminal::commands::system::get_monospace_fonts,
-            iterminal::commands::system::save_window_state,
-            iterminal::commands::system::restore_window_state,
             iterminal::commands::api::is_api_server_running,
             iterminal::commands::api::stop_api_server,
             iterminal::commands::api::start_api_server_command,
@@ -89,31 +95,7 @@ fn main() {
             }
 
             if let Some(window) = app.webview_windows().get("main") {
-                if let Ok(state_json) =
-                    iterminal::commands::db::get_setting("window_state".to_string())
-                {
-                    if let Some(json) = state_json {
-                        if let Ok(state) =
-                            serde_json::from_str::<iterminal::commands::system::WindowState>(&json)
-                        {
-                            if state.maximized {
-                                let _ = window.maximize();
-                            } else {
-                                let _ =
-                                    window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                                        width: state.width,
-                                        height: state.height,
-                                    }));
-                                let _ = window.set_position(tauri::Position::Physical(
-                                    tauri::PhysicalPosition {
-                                        x: state.x,
-                                        y: state.y,
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
+                // window-state 插件会自动恢复窗口位置和大小
                 let _ = window.show();
             }
 
