@@ -123,6 +123,27 @@ pub static SESSIONS: Lazy<RwLock<HashMap<String, SshSession>>> =
 static SHELLS: Lazy<RwLock<HashMap<String, ShellSession>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+async fn cleanup_connection(connection_id: &str) {
+    let prefix = format!("{}-shell", connection_id);
+    {
+        let mut shells = SHELLS.write().await;
+        let shell_ids: Vec<String> = shells
+            .keys()
+            .filter(|k| k.starts_with(&prefix))
+            .cloned()
+            .collect();
+        for shell_id in shell_ids {
+            if let Some(shell) = shells.remove(&shell_id) {
+                let _ = shell.cancel_tx.send(());
+            }
+        }
+    }
+    
+    super::sftp::close_sftp_session(connection_id).await;
+    
+    SESSIONS.write().await.remove(connection_id);
+}
+
 #[tauri::command]
 pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String> {
     {
@@ -373,6 +394,7 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
                 Some(data) = write_rx.recv() => {
                     if let Err(e) = channel.data(&data[..]).await {
                         eprintln!("Write error for {}: {}", shell_id_clone, e);
+                        cleanup_connection(&connection_id).await;
                         let _ = app_handle.emit(
                             &format!("connection-disconnected-{}", connection_id),
                             serde_json::json!({ "reason": "write_failed", "shell_id": shell_id_clone })
@@ -394,6 +416,7 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
                             break;
                         }
                         None => {
+                            cleanup_connection(&connection_id).await;
                             let _ = app_handle.emit(
                                 &format!("connection-disconnected-{}", connection_id),
                                 serde_json::json!({ "reason": "channel_closed", "shell_id": shell_id_clone })
@@ -401,6 +424,7 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
                             break;
                         }
                         Some(ChannelMsg::Close) => {
+                            cleanup_connection(&connection_id).await;
                             let _ = app_handle.emit(
                                 &format!("connection-disconnected-{}", connection_id),
                                 serde_json::json!({ "reason": "server_close", "shell_id": shell_id_clone })
