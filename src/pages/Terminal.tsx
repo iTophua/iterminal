@@ -7,7 +7,6 @@ import {
   PlusOutlined,
   HolderOutlined,
   DisconnectOutlined,
-  ReloadOutlined,
   CopyOutlined,
   SnippetsOutlined,
   CheckCircleOutlined,
@@ -28,7 +27,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { SortableContext, sortableKeyboardCoordinates, horizontalListSortingStrategy } from '@dnd-kit/sortable'
 import { Panel, Group, Separator } from 'react-resizable-panels'
 import '@xterm/xterm/css/xterm.css'
-import { useTerminalStore, DisconnectedConnection, SplitPane } from '../stores/terminalStore'
+import { useTerminalStore, DisconnectReason, SplitPane } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import { RightSidebar } from '../components/RightSidebar'
@@ -52,15 +51,16 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const { message } = App.useApp()
   const navigate = useNavigate()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
-  const disconnectedConnections = useTerminalStore(state => state.disconnectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
   const removeConnectionFromStore = useTerminalStore(state => state.removeConnectionFromStore)
   const markConnectionDisconnected = useTerminalStore(state => state.markConnectionDisconnected)
-  const removeDisconnectedConnection = useTerminalStore(state => state.removeDisconnectedConnection)
+  const clearConnectionDisconnected = useTerminalStore(state => state.clearConnectionDisconnected)
+  const setConnectionReconnecting = useTerminalStore(state => state.setConnectionReconnecting)
   const addConnection = useTerminalStore(state => state.addConnection)
+  const updateSessionShellId = useTerminalStore(state => state.updateSessionShellId)
   const splitPane = useTerminalStore(state => state.splitPane)
   const splitPaneWithPosition = useTerminalStore(state => state.splitPaneWithPosition)
   const moveSessionToSplitPane = useTerminalStore(state => state.moveSessionToSplitPane)
@@ -104,9 +104,11 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const unlistenersRef = useRef<{ [key: string]: UnlistenFn }>({})
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
   const searchAddons = useRef<{ [key: string]: SearchAddon }>({})
+  const shellIdsRef = useRef<{ [key: string]: string }>({})
   const apiLogVisibleRef = useRef(false)
   const shortcutSettingsRef = useRef(shortcutSettings)
   const terminalSettingsRef = useRef(terminalSettings)
+  const connectedConnectionsRef = useRef(connectedConnections)
   
   useEffect(() => {
     shortcutSettingsRef.current = shortcutSettings
@@ -115,6 +117,10 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   useEffect(() => {
     terminalSettingsRef.current = terminalSettings
   }, [terminalSettings])
+
+  useEffect(() => {
+    connectedConnectionsRef.current = connectedConnections
+  }, [connectedConnections])
   
   const {
     isFullscreen,
@@ -558,16 +564,33 @@ const handlePointerUp = () => {
           })
 
           terminal.onData(data => {
-            invoke('write_shell', { id: shellId, data }).catch(err => {
-              console.error('写入终端失败:', err)
-            })
+            const [connId] = key.split('_')
+            const conn = connectedConnectionsRef.current.find(c => c.connectionId === connId)
+            
+            if (conn?.disconnected && !conn.reconnecting) {
+              if (data === '\r' || data === '\n') {
+                handleReconnect(connId)
+              }
+              return
+            }
+            
+            if (conn?.reconnecting) {
+              return
+            }
+            
+            const currentShellId = shellIdsRef.current[key]
+            if (currentShellId) {
+              invoke('write_shell', { id: currentShellId, data }).catch(err => {
+                console.error('写入终端失败:', err)
+              })
+            }
           })
 
           terminal.onResize(({ cols, rows }) => {
             invoke('resize_shell', { id: shellId, cols, rows }).catch(err => {
               console.error('调整终端大小失败:', err)
             })
-          })
+})
 
           terminal.onSelectionChange(() => {
             if (terminalSettingsRef.current.copyOnSelect && terminal.hasSelection()) {
@@ -582,6 +605,7 @@ const handlePointerUp = () => {
 
           terminalInstances.current[key] = terminal
           fitAddons.current[key] = fitAddon
+          shellIdsRef.current[key] = shellId
 
           const searchAddon = new SearchAddon()
           terminal.loadAddon(searchAddon)
@@ -642,6 +666,115 @@ const handlePointerUp = () => {
     return () => clearTimeout(timerId)
   }, [connectedConnections.length, activeConnectionId, visibleSessions, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode])
 
+  const reconnectTimersRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
+
+  const getReconnectDelay = useCallback((attempt: number): number => {
+    if (attempt === 1) return 3000
+    if (attempt === 2) return 10000
+    if (attempt === 3) return 20000
+    if (attempt === 4) return 30000
+    if (attempt === 5) return 45000
+    return 60000
+  }, [])
+
+  const disconnectHandledRef = useRef<Set<string>>(new Set())
+
+  const handleReconnect = useCallback(async (connectionId: string, isManual: boolean = true) => {
+    const conn = connectedConnections.find(c => c.connectionId === connectionId)
+    if (!conn || conn.reconnecting) return
+
+    setConnectionReconnecting(connectionId, true)
+
+    const sessions = getAllSessions(conn.rootPane)
+    const sessionsWithShell = sessions.filter(s => s.shellId)
+
+    try {
+      await invoke('connect_ssh', {
+        id: connectionId,
+        connection: {
+          host: conn.connection.host,
+          port: conn.connection.port,
+          username: conn.connection.username,
+          password: conn.connection.password,
+          key_file: conn.connection.keyFile,
+        }
+      })
+
+      for (const session of sessionsWithShell) {
+        const key = `${connectionId}_${session.id}`
+        
+        if (unlistenersRef.current[key]) {
+          unlistenersRef.current[key]()
+          delete unlistenersRef.current[key]
+        }
+        if (session.shellId) {
+          await invoke('close_shell', { id: session.shellId }).catch(() => {})
+        }
+
+        const newShellId = await invoke<string>('get_shell', { id: connectionId })
+        updateSessionShellId(connectionId, session.id, newShellId)
+        shellIdsRef.current[key] = newShellId
+
+        const eventName = `shell-output-${newShellId}`
+        const unlisten = await listen<string>(eventName, (event) => {
+          const term = terminalInstances.current[key]
+          if (term && event.payload) {
+            if (typeof event.payload === 'object' && (event.payload as any).eof) {
+              return
+            }
+            term.write(event.payload)
+          }
+        })
+        unlistenersRef.current[key] = unlisten
+
+        await invoke('start_shell_reader', { id: newShellId })
+      }
+
+      clearConnectionDisconnected(connectionId)
+      disconnectHandledRef.current.delete(connectionId)
+      if (isManual) {
+        message.success('重连成功')
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err)
+      if (isManual) {
+        message.error(`重连失败: ${errorMsg}`)
+      }
+      const nextAttempt = (conn.reconnectAttempt || 1) + 1
+      const nextDelay = getReconnectDelay(nextAttempt)
+      setConnectionReconnecting(connectionId, false, nextAttempt, nextDelay)
+    }
+  }, [connectedConnections, setConnectionReconnecting, clearConnectionDisconnected, updateSessionShellId, message, getReconnectDelay])
+
+  useEffect(() => {
+    const disconnectedConns = connectedConnections.filter(c => c.disconnected && !c.reconnecting)
+    
+    disconnectedConns.forEach(conn => {
+      if (reconnectTimersRef.current[conn.connectionId]) return
+
+      const attempt = conn.reconnectAttempt || 1
+      const delay = conn.reconnectNextDelay || getReconnectDelay(attempt)
+      
+      reconnectTimersRef.current[conn.connectionId] = setTimeout(() => {
+        handleReconnect(conn.connectionId, false)
+        delete reconnectTimersRef.current[conn.connectionId]
+      }, delay)
+    })
+
+    const connectedIds = new Set(connectedConnections.filter(c => !c.disconnected).map(c => c.connectionId))
+    Object.keys(reconnectTimersRef.current).forEach(id => {
+      if (connectedIds.has(id)) {
+        clearTimeout(reconnectTimersRef.current[id])
+        delete reconnectTimersRef.current[id]
+      }
+    })
+
+    return () => {
+      Object.values(reconnectTimersRef.current).forEach(timer => clearTimeout(timer))
+      reconnectTimersRef.current = {}
+    }
+  }, [connectedConnections, handleReconnect, getReconnectDelay])
+
   const disconnectListenersRef = useRef<{ [key: string]: UnlistenFn }>({})
 
   useEffect(() => {
@@ -655,14 +788,29 @@ const handlePointerUp = () => {
     })
     
     connectedConnections.forEach(conn => {
-      const eventName = `connection-disconnected-${conn.connectionId}`
-      if (!disconnectListenersRef.current[conn.connectionId]) {
+      const connectionId = conn.connectionId
+      const eventName = `connection-disconnected-${connectionId}`
+      if (!disconnectListenersRef.current[connectionId]) {
         listen<{ reason: string; shell_id: string }>(eventName, (event) => {
-          const reason = event.payload.reason as DisconnectedConnection['reason']
-          markConnectionDisconnected(conn.connectionId, reason)
-          message.warning(`连接 ${conn.connection.name} 已断开`)
+          const currentConn = connectedConnectionsRef.current.find(c => c.connectionId === connectionId)
+          if (!currentConn || currentConn.disconnected || disconnectHandledRef.current.has(connectionId)) return
+          disconnectHandledRef.current.add(connectionId)
+          
+          const reason = event.payload.reason as DisconnectReason
+          markConnectionDisconnected(connectionId, reason)
+          message.warning(`连接 ${currentConn.connection.name} 已断开，按回车键重连`)
+
+          const sessions = getAllSessions(currentConn.rootPane)
+          sessions.forEach(s => {
+            const key = `${connectionId}_${s.id}`
+            const term = terminalInstances.current[key]
+            if (term) {
+              term.writeln('')
+              term.writeln('\x1b[33m[!] 连接已断开，按回车键重连\x1b[0m')
+            }
+          })
         }).then(unlisten => {
-          disconnectListenersRef.current[conn.connectionId] = unlisten
+          disconnectListenersRef.current[connectionId] = unlisten
         })
       }
     })
@@ -672,36 +820,6 @@ const handlePointerUp = () => {
       disconnectListenersRef.current = {}
     }
   }, [connectedConnections, markConnectionDisconnected, message])
-
-  const handleReconnect = useCallback(async (disconnectedConn: DisconnectedConnection) => {
-    try {
-      await invoke('connect_ssh', {
-        id: disconnectedConn.connectionId,
-        connection: {
-          host: disconnectedConn.connection.host,
-          port: disconnectedConn.connection.port,
-          username: disconnectedConn.connection.username,
-          password: disconnectedConn.connection.password,
-          key_file: disconnectedConn.connection.keyFile,
-        }
-      })
-
-      const shellId = await invoke<string>('get_shell', { id: disconnectedConn.connectionId })
-      
-      removeDisconnectedConnection(disconnectedConn.connectionId)
-      
-      addConnection(disconnectedConn.connection, shellId)
-      
-      message.success('重连成功')
-    } catch (err) {
-      message.error(`重连失败: ${err}`)
-    }
-  }, [addConnection, removeDisconnectedConnection, message])
-
-  const handleRemoveDisconnected = useCallback((connectionId: string) => {
-    removeDisconnectedConnection(connectionId)
-  }, [removeDisconnectedConnection])
-
 
   const handleCloseSession = useCallback(async (connId: string, sessId: string, paneId?: string) => {
     const conn = connectedConnections.find(c => c.connectionId === connId)
@@ -770,6 +888,7 @@ const handlePointerUp = () => {
 
     await invoke('disconnect_ssh', { id: connId }).catch(() => {})
     closeConnection(connId)
+    disconnectHandledRef.current.delete(connId)
   }, [connectedConnections, closeConnection])
 
   // 清理所有事件监听
@@ -1156,7 +1275,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     }
   }, [singleConnectionMode, connectedConnections.length])
 
-  if (connectedConnections.length === 0 && disconnectedConnections.length === 0) {
+  if (connectedConnections.length === 0) {
     if (singleConnectionMode) {
       return null
     }
@@ -1450,37 +1569,6 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     )
   }
 
-  const disconnectedItems = disconnectedConnections.map(dc => ({
-    key: dc.connectionId,
-    label: (
-      <span style={{ color: 'var(--color-error)' }}>
-        <DisconnectOutlined style={{ marginRight: 4 }} />
-        {dc.connection.name}
-        <CloseOutlined style={{ marginLeft: 6, fontSize: 10 }} onClick={e => { e.stopPropagation(); handleRemoveDisconnected(dc.connectionId) }} />
-      </span>
-    ),
-    children: (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, background: 'var(--color-bg-container)' }}>
-        <DisconnectOutlined style={{ fontSize: 48, color: 'var(--color-error)' }} />
-        <p style={{ color: 'var(--color-text-tertiary)', fontSize: 16 }}>连接已断开</p>
-        <p style={{ color: 'var(--color-text-quaternary)', fontSize: 14 }}>
-          {dc.reason === 'write_failed' && '写入失败，可能是网络中断'}
-          {dc.reason === 'channel_closed' && 'SSH Channel 被关闭'}
-          {dc.reason === 'server_close' && '服务器主动关闭连接'}
-          {dc.reason === 'unknown' && '原因未知'}
-        </p>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button type="primary" icon={<ReloadOutlined />} onClick={() => handleReconnect(dc)}>
-            重新连接
-          </Button>
-          <Button onClick={() => handleRemoveDisconnected(dc.connectionId)}>
-            关闭
-          </Button>
-        </div>
-      </div>
-    ),
-  }))
-
   const connectionItems = connectedConnections.map(conn => {
     return {
       key: conn.connectionId,
@@ -1489,8 +1577,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           id={conn.connectionId}
           connectionName={conn.connection.name}
           label={
-            <span style={{ color: conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
+            <span style={{ color: conn.disconnected ? 'var(--color-error)' : (conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)'), fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
+              {conn.disconnected && <DisconnectOutlined style={{ marginRight: 4 }} />}
               {conn.connection.username}@{conn.connection.host}
+              {conn.reconnecting && <span style={{ marginLeft: 4, fontSize: 10 }}>重连中...</span>}
               <CloseOutlined 
                 style={{ marginLeft: 4, fontSize: 9 }} 
                 onPointerDown={e => e.stopPropagation()}
@@ -1614,7 +1704,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
                   <Tabs
                     activeKey={activeConnectionId || undefined}
                     onChange={setActiveConnection}
-                    items={[...connectionItems, ...disconnectedItems]}
+                    items={connectionItems}
                     style={{ height: 32 }}
                     tabBarStyle={{ margin: 0, padding: '0 4px', background: 'transparent', minHeight: 32 }}
                     size="small"

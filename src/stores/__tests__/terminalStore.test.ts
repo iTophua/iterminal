@@ -420,17 +420,16 @@ describe('terminalStore', () => {
     })
   })
 
-  describe('disconnectedConnections', () => {
+  describe('connection disconnected state', () => {
     it('should mark connection as disconnected', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
 
       useTerminalStore.getState().markConnectionDisconnected('conn-1', 'server_close')
 
       const state = useTerminalStore.getState()
-      expect(state.connectedConnections).toHaveLength(0)
-      expect(state.disconnectedConnections).toHaveLength(1)
-      expect(state.disconnectedConnections[0].connectionId).toBe('conn-1')
-      expect(state.disconnectedConnections[0].reason).toBe('server_close')
+      expect(state.connectedConnections).toHaveLength(1)
+      expect(state.connectedConnections[0].disconnected).toBe(true)
+      expect(state.connectedConnections[0].disconnectReason).toBe('server_close')
     })
 
     it('should preserve sessions when disconnecting', () => {
@@ -440,28 +439,30 @@ describe('terminalStore', () => {
       useTerminalStore.getState().markConnectionDisconnected('conn-1', 'channel_closed')
 
       const state = useTerminalStore.getState()
-      expect(countSessionsInPane(state.disconnectedConnections[0].rootPane)).toBe(2)
+      expect(countSessionsInPane(state.connectedConnections[0].rootPane)).toBe(2)
     })
 
-    it('should remove disconnected connection', () => {
+    it('should clear disconnected state', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
       useTerminalStore.getState().markConnectionDisconnected('conn-1', 'unknown')
 
-      useTerminalStore.getState().removeDisconnectedConnection('conn-1')
+      useTerminalStore.getState().clearConnectionDisconnected('conn-1')
 
-      expect(useTerminalStore.getState().disconnectedConnections).toHaveLength(0)
+      const state = useTerminalStore.getState()
+      expect(state.connectedConnections[0].disconnected).toBeFalsy()
+      expect(state.connectedConnections[0].disconnectReason).toBeUndefined()
     })
 
-    it('should clear all disconnected connections', () => {
-      const conn2: Connection = { ...mockConnection, id: 'conn-2' }
+    it('should set reconnecting state', () => {
       useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
-      useTerminalStore.getState().addConnection(conn2, 'shell-2')
-      useTerminalStore.getState().markConnectionDisconnected('conn-1', 'unknown')
-      useTerminalStore.getState().markConnectionDisconnected('conn-2', 'unknown')
+      useTerminalStore.getState().markConnectionDisconnected('conn-1', 'server_close')
 
-      useTerminalStore.getState().clearAllDisconnectedConnections()
+      useTerminalStore.getState().setConnectionReconnecting('conn-1', true, 2, 10)
 
-      expect(useTerminalStore.getState().disconnectedConnections).toHaveLength(0)
+      const state = useTerminalStore.getState()
+      expect(state.connectedConnections[0].reconnecting).toBe(true)
+      expect(state.connectedConnections[0].reconnectAttempt).toBe(2)
+      expect(state.connectedConnections[0].reconnectNextDelay).toBe(10)
     })
   })
 

@@ -1,17 +1,18 @@
 # Stores - Zustand State Management
 
-**Files:** terminalStore.ts (~1080 lines), transferStore.ts (~100 lines), licenseStore.ts (~80 lines), themeStore.ts (~50 lines)
+**Files:** terminalStore.ts (~1170 lines), transferStore.ts (~100 lines), licenseStore.ts (~80 lines), themeStore.ts (~50 lines)
 
 ## WHERE TO LOOK
 
 | Task | Location | Notes |
 |------|----------|-------|
 | Add new state slice | terminalStore.ts | Add to TerminalState interface + implementation |
-| Connection management | terminalStore.ts:263-318 | addConnection, closeConnection |
-| Session management | terminalStore.ts:320-350 | addSession, closeSession |
-| Split pane operations | terminalStore.ts:490-750 | splitPane, splitPaneWithPosition, moveSessionToSplitPane, closePane |
-| Transfer tasks | terminalStore.ts:850-920 | File upload/download tracking |
-| File manager state | terminalStore.ts:820-850 | Path, expanded keys, visibility |
+| Connection management | terminalStore.ts | addConnection, closeConnection |
+| Session management | terminalStore.ts | addSession, closeSession |
+| Split pane operations | terminalStore.ts | splitPane, splitPaneWithPosition, moveSessionToSplitPane, closePane |
+| Connection disconnect state | terminalStore.ts | markConnectionDisconnected, clearConnectionDisconnected, setConnectionReconnecting |
+| Transfer tasks | terminalStore.ts | File upload/download tracking |
+| File manager state | terminalStore.ts | Path, expanded keys, visibility |
 | License validation | licenseStore.ts | verifyLicense, isFeatureAvailable, getMaxConnections |
 | Theme mode | themeStore.ts | appThemeMode, terminalTheme |
 
@@ -21,21 +22,21 @@
 connectedConnections: ConnectedConnection[]
 ├── connectionId: string
 ├── connection: Connection
-└── rootPane: SplitPane
-    ├── id: string
-    ├── sessions: Session[]
-    │   ├── id, connectionId, shellId, title
-    ├── activeSessionId: string | null
-    ├── splitDirection?: 'horizontal' | 'vertical'
-    ├── children?: SplitPane[]      // 嵌套分屏
-    └── sizes?: number[]            // 分屏尺寸比例
+├── rootPane: SplitPane
+│   ├── id: string
+│   ├── sessions: Session[]
+│   │   ├── id, connectionId, shellId, title
+│   ├── activeSessionId: string | null
+│   ├── splitDirection?: 'horizontal' | 'vertical'
+│   ├── children?: SplitPane[]      // 嵌套分屏
+│   └── sizes?: number[]            // 分屏尺寸比例
+├── disconnected?: boolean          // 断开状态
+├── disconnectReason?: DisconnectReason  // 断开原因
+├── reconnecting?: boolean          // 正在重连
+├── reconnectAttempt?: number       // 重连尝试次数
+└── reconnectNextDelay?: number     // 下次重连延迟(ms)
 
-disconnectedConnections: DisconnectedConnection[]
-├── connectionId: string
-├── connection: Connection
-├── rootPane: SplitPane             // 保留断开时的会话结构
-├── disconnectedAt: number
-└── reason: 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
+DisconnectReason = 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
 
 transferTasks: { [connectionId]: TransferTask[] }
 ├── id, type (upload/download), localPath, remotePath
@@ -52,6 +53,37 @@ licenseInfo: LicenseInfo | null (licenseStore.ts)
 ├── max_connections: number (3 for Free, 999 for paid)
 └── is_valid: boolean
 ```
+
+## 断开重连机制
+
+连接断开时，保持在 `connectedConnections` 中，只标记状态：
+
+```typescript
+// 断开时
+markConnectionDisconnected(connectionId, reason)
+// → connectedConnections[0].disconnected = true
+// → connectedConnections[0].disconnectReason = 'server_close'
+
+// 重连中
+setConnectionReconnecting(connectionId, true, attempt, nextDelay)
+// → connectedConnections[0].reconnecting = true
+// → connectedConnections[0].reconnectAttempt = 3
+// → connectedConnections[0].reconnectNextDelay = 20000
+
+// 重连成功
+clearConnectionDisconnected(connectionId)
+// → 清除断开状态，恢复正常交互
+```
+
+**重试间隔策略**（指数退避）：
+- 第 1 次: 3 秒
+- 第 2 次: 10 秒
+- 第 3 次: 20 秒
+- 第 4 次: 30 秒
+- 第 5 次: 45 秒
+- 第 6 次+: 60 秒（上限）
+
+无限重试，直到用户关闭会话或重连成功。
 
 ## SplitPane 分屏模型
 
@@ -148,8 +180,6 @@ function countSessions(pane: SplitPane): number
 
 // 获取下一个会话编号（避免重复）
 function getNextSessionNumber(pane: SplitPane): number
-  // 遍历所有会话标题，找到最大编号 +1
-  // 确保会话名称不重复
 ```
 
 ## 关闭会话逻辑
@@ -177,6 +207,7 @@ handleCloseSession(connId, sessId, paneId):
 - **License default:** Free tier, 3 connections max
 - **SplitPane ID:** 使用 `baseTime + counter` 生成唯一 ID
 - **分屏渲染:** 使用 `react-resizable-panels` 的 Group/Panel 组件
+- **断开重连:** 连接断开时保持在 connectedConnections，标记状态而非移动
 
 ## ANTI-PATTERNS
 

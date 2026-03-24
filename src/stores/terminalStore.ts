@@ -30,18 +30,17 @@ export interface SplitPane {
   activePaneId?: string
 }
 
-export interface DisconnectedConnection {
-  connectionId: string
-  connection: Connection
-  rootPane: SplitPane
-  disconnectedAt: number
-  reason: 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
-}
+export type DisconnectReason = 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
 
 export interface ConnectedConnection {
   connectionId: string
   connection: Connection
   rootPane: SplitPane
+  disconnected?: boolean
+  disconnectReason?: DisconnectReason
+  reconnecting?: boolean
+  reconnectAttempt?: number
+  reconnectNextDelay?: number
 }
 
 export type TransferStatus = 'pending' | 'transferring' | 'paused' | 'completed' | 'failed' | 'cancelled'
@@ -155,7 +154,6 @@ export function formatShortcutForDisplay(shortcut: string): string {
 
 interface TerminalState {
   connectedConnections: ConnectedConnection[]
-  disconnectedConnections: DisconnectedConnection[]
   activeConnectionId: string | null
   // 侧边栏折叠状态
   sidebarCollapsed: boolean
@@ -243,9 +241,9 @@ interface TerminalState {
   // 设置字体加载状态
   setFontsLoading: (loading: boolean) => void
 
-  markConnectionDisconnected: (connectionId: string, reason: DisconnectedConnection['reason']) => void
-  removeDisconnectedConnection: (connectionId: string) => void
-  clearAllDisconnectedConnections: () => void
+  markConnectionDisconnected: (connectionId: string, reason: DisconnectReason) => void
+  clearConnectionDisconnected: (connectionId: string) => void
+  setConnectionReconnecting: (connectionId: string, reconnecting: boolean, attempt?: number, nextDelay?: number) => void
 }
 
 function getNextSessionNumber(pane: SplitPane): number {
@@ -273,7 +271,6 @@ function getNextSessionNumber(pane: SplitPane): number {
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   connectedConnections: [],
-  disconnectedConnections: [],
   activeConnectionId: null,
   sidebarCollapsed: false,
   fileManagerVisible: {},
@@ -1141,54 +1138,33 @@ restoreConnection: (connection, rootPane) => {
     set({ fontsLoading: loading })
   },
 
-  markConnectionDisconnected: (connectionId: string, reason: DisconnectedConnection['reason']) => {
-    set((state) => {
-      const conn = state.connectedConnections.find(c => c.connectionId === connectionId)
-      if (!conn) return state
-
-      const disconnected: DisconnectedConnection = {
-        connectionId,
-        connection: conn.connection,
-        rootPane: conn.rootPane,
-        disconnectedAt: Date.now(),
-        reason,
-      }
-
-      const newTransferTasks = { ...state.transferTasks }
-      delete newTransferTasks[connectionId]
-      const newFileManagerVisible = { ...state.fileManagerVisible }
-      delete newFileManagerVisible[connectionId]
-      const newTransferManagerVisible = { ...state.transferManagerVisible }
-      delete newTransferManagerVisible[connectionId]
-      const newCurrentPaths = { ...state.currentPaths }
-      delete newCurrentPaths[connectionId]
-      const newExpandedKeys = { ...state.expandedKeys }
-      delete newExpandedKeys[connectionId]
-
-      return {
-        connectedConnections: state.connectedConnections.filter(c => c.connectionId !== connectionId),
-        disconnectedConnections: [...state.disconnectedConnections.filter(c => c.connectionId !== connectionId), disconnected],
-        activeConnectionId: state.activeConnectionId === connectionId
-          ? (state.connectedConnections.length > 1
-            ? state.connectedConnections.find(c => c.connectionId !== connectionId)?.connectionId || null
-            : null)
-          : state.activeConnectionId,
-        transferTasks: newTransferTasks,
-        fileManagerVisible: newFileManagerVisible,
-        transferManagerVisible: newTransferManagerVisible,
-        currentPaths: newCurrentPaths,
-        expandedKeys: newExpandedKeys,
-      }
-    })
-  },
-
-  removeDisconnectedConnection: (connectionId: string) => {
+  markConnectionDisconnected: (connectionId: string, reason: DisconnectReason) => {
     set((state) => ({
-      disconnectedConnections: state.disconnectedConnections.filter(c => c.connectionId !== connectionId),
+      connectedConnections: state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, disconnected: true, disconnectReason: reason, reconnecting: false }
+          : c
+      ),
     }))
   },
 
-  clearAllDisconnectedConnections: () => {
-    set({ disconnectedConnections: [] })
+  clearConnectionDisconnected: (connectionId: string) => {
+    set((state) => ({
+      connectedConnections: state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, disconnected: false, disconnectReason: undefined, reconnecting: false, reconnectAttempt: undefined, reconnectNextDelay: undefined }
+          : c
+      ),
+    }))
+  },
+
+  setConnectionReconnecting: (connectionId: string, reconnecting: boolean, attempt?: number, nextDelay?: number) => {
+    set((state) => ({
+      connectedConnections: state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, reconnecting, reconnectAttempt: attempt, reconnectNextDelay: nextDelay }
+          : c
+      ),
+    }))
   },
 }))
