@@ -6,6 +6,7 @@ import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleO
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
+import { useHistoryStore } from '../stores/historyStore'
 import { PORT_CHECK_CONFIG } from '../config/constants'
 import { generateUniqueId } from '../types/shared'
 import { 
@@ -56,6 +57,7 @@ function Connections() {
   const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null)
   const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [isReorderMode, setIsReorderMode] = useState(false)
+  const clearConnectionHistory = useHistoryStore(state => state.clearConnectionHistory)
   const [isDraggingActive, setIsDraggingActive] = useState(false)
   const draggedConnection = draggedId ? connections.find(c => c.id === draggedId) : null
   
@@ -280,6 +282,7 @@ function Connections() {
       onOk: async () => {
         try {
           await deleteConnectionFromDb(id)
+          clearConnectionHistory(id)
           setConnections(prev => prev.filter(c => c.id !== id))
           message.success('连接已删除')
           window.dispatchEvent(new CustomEvent('connections-updated'))
@@ -303,6 +306,7 @@ function Connections() {
         try {
           for (const id of selectedIds) {
             await deleteConnectionFromDb(id)
+            clearConnectionHistory(id)
           }
           setConnections(prev => prev.filter(c => !selectedIds.includes(c.id)))
           setSelectedIds([])

@@ -12,6 +12,7 @@ fn main() {
             tauri_plugin_window_state::Builder::new()
                 .with_state_flags(
                     tauri_plugin_window_state::StateFlags::POSITION
+                        | tauri_plugin_window_state::StateFlags::SIZE
                         | tauri_plugin_window_state::StateFlags::MAXIMIZED,
                 )
                 .build(),
@@ -85,6 +86,9 @@ fn main() {
             iterminal::commands::db::record_connection_history,
             iterminal::commands::db::get_recent_connections,
             iterminal::commands::db::update_connection_order,
+            iterminal::commands::db::get_command_history,
+            iterminal::commands::db::save_command,
+            iterminal::commands::db::clear_command_history,
             iterminal::commands::window::create_terminal_window,
             iterminal::commands::window::close_terminal_window,
             iterminal::commands::window::get_terminal_window_data,

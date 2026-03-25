@@ -107,6 +107,9 @@ export interface ShortcutSettings {
   splitVertical: string
   nextSession: string
   prevSession: string
+  nextSuggestion: string
+  prevSuggestion: string
+  showHistory: string
 }
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -128,6 +131,9 @@ export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = isMac
       splitVertical: 'Alt+Shift+D',
       nextSession: 'Alt+ArrowRight',
       prevSession: 'Alt+ArrowLeft',
+      nextSuggestion: 'Alt+ArrowDown',
+      prevSuggestion: 'Alt+ArrowUp',
+      showHistory: 'Alt+H',
     }
   : {
       clearScreen: 'Ctrl+L',
@@ -141,6 +147,9 @@ export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = isMac
       splitVertical: 'Alt+Shift+D',
       nextSession: 'Alt+ArrowRight',
       prevSession: 'Alt+ArrowLeft',
+      nextSuggestion: 'Alt+ArrowDown',
+      prevSuggestion: 'Alt+ArrowUp',
+      showHistory: 'Alt+H',
     }
 
 export function formatShortcutForDisplay(shortcut: string): string {

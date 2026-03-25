@@ -110,7 +110,8 @@
 │   │   ├── terminalStore.ts    # 连接/会话状态（含 restoreConnection）
 │   │   └── transferStore.ts    # 传输记录/进度状态
 │   ├── utils/                  # 工具函数
-│   │   └── paneUtils.ts        # SplitPane 辅助函数
+│   │   ├── paneUtils.ts        # SplitPane 辅助函数
+│   │   └── shellOutputParser.ts # Shell 输出解析器（命令历史追踪）
 │   └── styles/                 # 全局 CSS
 │       └── global.css          # xterm.js 样式覆盖
 ├── src-tauri/                  # Rust 后端
@@ -162,6 +163,9 @@
 | 修改终端样式 | `src/styles/global.css` | xterm.js CSS 覆盖 |
 | 添加 Tauri 命令 | `src-tauri/src/commands/` + `main.rs` | 创建命令 + 注册 |
 | MCP 工具定义 | `mcp/src/index.ts` | iter_* 工具 (iter_connect, iter_exec 等) |
+| 命令历史追踪 | `src/utils/shellOutputParser.ts` | Shell 输出解析、命令提取、提示符检测 |
+| 历史命令存储 | `src/stores/historyStore.ts` | 命令历史状态管理 (Zustand) |
+| 历史算法权重 | `src/services/historyService.ts` | 70% 最近使用 + 30% 频率 |
 
 ## 代码映射
 
@@ -221,6 +225,12 @@
 | `getAllSessions` | fn | `paneUtils.ts` | 获取 pane 中所有会话 |
 | `findPaneBySessionId` | fn | `paneUtils.ts` | 根据会话 ID 查找 pane |
 | `useConnectionDragToNewWindow` | hook | `useConnectionDrag.ts` | 拖拽到边缘检测 |
+| `CommandTracker` | class | `shellOutputParser.ts` | 命令追踪器（提取终端执行的命令） |
+| `extractLastCommand` | fn | `shellOutputParser.ts` | 从终端缓冲区提取最后命令 |
+| `isPromptLine` | fn | `shellOutputParser.ts` | 检测一行是否为 Shell 提示符 |
+| `stripAnsi` | fn | `shellOutputParser.ts` | 清理 ANSI 转义序列 |
+| `useHistoryStore` | hook | `historyStore.ts` | 命令历史状态 (Zustand) |
+| `calculateScore` | fn | `historyService.ts` | 命令历史评分算法 (70% recency + 30% frequency) |
 
 ## 核心设计
 
@@ -349,6 +359,41 @@ ShellSession {
 - `/connections?group=生产环境` - 指定分组
 
 **原因**: 避免 `location.state` 在相同 URL 下不触发重新渲染的问题。
+
+### 7. 命令历史追踪
+
+**架构**:
+```
+Terminal.tsx
+    └── commandTrackersRef: { [sessionId]: CommandTracker }
+    └── shell-output 事件 → CommandTracker.processOutput()
+                              ├── 检测 Shell 提示符
+                              ├── 提取执行的命令
+                              └── 过滤控制字符 (^C/^D/^Z)
+                              ↓
+historyStore.ts (Zustand)
+    └── caches: Map<connectionId, CommandHistory[]>
+    └── addCommand() → 计算评分 → 存储
+                              ↓
+historyService.ts
+    └── calculateScore(): 70% 最近使用 + 30% 频率
+```
+
+**提示符检测**:
+- 支持多种 Shell 提示符格式：`[user@host path]$`、`user@host:path$`、`❯`
+- 使用严格正则匹配，避免误识别日志输出中的命令
+- 支持 OSC 133 Shell Integration 序列（如果 Shell 支持）
+
+**命令过滤**:
+- 自动过滤 `^C`、`^D`、`^Z` 控制字符
+- 黑名单命令：空命令、`exit`、`logout`、`clear`、`cd`（无参数）
+- 命令数量封顶 999 条
+
+**Ghost Text 自动补全**:
+- 根据当前输入匹配历史命令
+- 显示最多 10 条建议
+- 按 70% 最近使用 + 30% 频率排序
+- 使用主题色显示建议文本
 
 ## 约定
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react'
-import { Tabs, App, Button, Tooltip } from 'antd'
+import { Tabs, App, Button, Tooltip, Input, Modal, List, Popconfirm } from 'antd'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -15,6 +15,7 @@ import {
   BorderVerticleOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
+  HistoryOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -29,7 +30,49 @@ import { Panel, Group, Separator } from 'react-resizable-panels'
 import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore, DisconnectReason, SplitPane } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
+import { useHistoryStore } from '../stores/historyStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
+import type { TerminalThemeColors } from '../types/theme'
+
+const GhostTextOverlay = React.forwardRef<HTMLDivElement, {
+  sessionKey: string
+  fontFamily?: string
+  fontSize?: number
+  themeColors: TerminalThemeColors
+}>(function GhostTextOverlay({
+  sessionKey,
+  fontFamily,
+  fontSize,
+  themeColors,
+}, ref) {
+  const ghostColor = React.useMemo(() => {
+    return `${themeColors.foreground}99`
+  }, [themeColors.foreground])
+
+  return (
+    <div
+      ref={ref}
+      data-session-key={sessionKey}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        color: ghostColor,
+        fontFamily: fontFamily || 'Menlo, Monaco, monospace',
+        fontSize: fontSize || 14,
+        pointerEvents: 'none',
+        zIndex: 1000,
+        whiteSpace: 'pre',
+        display: 'none',
+        overflow: 'visible',
+        maxWidth: 'none',
+        width: 'auto',
+        transform: 'translateY(-0.02em)',
+      }}
+    />
+  )
+})
+
 import { RightSidebar } from '../components/RightSidebar'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
@@ -41,6 +84,7 @@ import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOve
 import { useConnectionDragToNewWindow } from './terminal/hooks/useConnectionDrag'
 import { getAllSessions, getActiveSessionInPane, findPaneBySessionId, hasSplitChildren, getVisibleSessions } from '../utils/paneUtils'
 import { getRecentConnections, recordConnectionHistory } from '../services/database'
+import { createCommandTracker, CommandTracker } from '../utils/shellOutputParser'
 import type { Connection } from '../types/shared'
 
 interface TerminalProps {
@@ -109,6 +153,144 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const shortcutSettingsRef = useRef(shortcutSettings)
   const terminalSettingsRef = useRef(terminalSettings)
   const connectedConnectionsRef = useRef(connectedConnections)
+  const currentInputRef = useRef<{ [key: string]: string }>({})
+  const ghostTextRef = useRef<{ [key: string]: { input: string, suggestion: string, allSuggestions: string[], currentIndex: number } }>({})
+  const ghostTextOverlayRef = useRef<{ [key: string]: { top: number, left: number, text: string } }>({})
+  const ghostTextElementsRef = useRef<{ [key: string]: HTMLDivElement | null }>({})
+  const ghostTextCellHeightRef = useRef<{ [key: string]: number }>({})
+  const ghostTextStartXRef = useRef<{ [key: string]: number }>({})
+  const ghostTextLineRef = useRef<{ [key: string]: number }>({})
+  const commandTrackersRef = useRef<{ [key: string]: CommandTracker }>({})
+  
+  const updateGhostTextOverlay = useCallback((key: string, top: number, left: number, text: string, cellHeight?: number) => {
+    const el = ghostTextElementsRef.current[key]
+    if (el) {
+      el.style.top = top + 'px'
+      el.style.left = left + 'px'
+      el.textContent = text
+      el.style.display = text ? 'block' : 'none'
+      if (cellHeight) {
+        el.style.lineHeight = cellHeight + 'px'
+      }
+    }
+    ghostTextOverlayRef.current[key] = { top, left, text }
+  }, [])
+  
+const matchAndUpdateGhostText = useCallback((key: string, connId: string, input: string, suggestionIndex: number = 0) => {
+    if (!input) {
+      ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
+      updateGhostTextOverlay(key, 0, 0, '')
+      return
+    }
+
+    const { caches } = useHistoryStore.getState()
+    const cache = caches.get(connId) || []
+
+    if (cache.length === 0) {
+      ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
+      updateGhostTextOverlay(key, 0, 0, '')
+      return
+    }
+
+    const normalizedInput = input.toLowerCase().replace(/\s+/g, ' ')
+    const allMatches = cache.filter(cmd => {
+      const normalizedCmd = cmd.text.toLowerCase().replace(/\s+/g, ' ')
+      return normalizedCmd.startsWith(normalizedInput) && normalizedCmd.length > normalizedInput.length
+    }).slice(0, 10)
+
+    if (allMatches.length > 0) {
+      const safeIndex = Math.min(suggestionIndex, allMatches.length - 1)
+      const match = allMatches[safeIndex]
+      const normalizedMatch = match.text.toLowerCase().replace(/\s+/g, ' ')
+      const remainingPart = normalizedMatch.slice(normalizedInput.length)
+      const suggestion = remainingPart
+      const allSuggestions = allMatches.map(m => {
+        const nm = m.text.toLowerCase().replace(/\s+/g, ' ')
+        return nm.slice(normalizedInput.length)
+      })
+      ghostTextRef.current[key] = { input, suggestion, allSuggestions, currentIndex: safeIndex }
+
+      const term = terminalInstances.current[key]
+      const container = terminalRefs.current[key]
+
+      if (term && container && term.element) {
+        try {
+          const buffer = term.buffer.active
+          const cursorY = buffer.cursorY
+          const viewportY = cursorY - buffer.baseY
+
+          const xtermScreen = term.element.querySelector('.xterm-screen')
+          const xtermRows = term.element.querySelector('.xterm-rows')
+          const firstRow = term.element.querySelector('.xterm-row')
+          
+          if (!xtermScreen || !xtermRows) {
+            updateGhostTextOverlay(key, 0, 0, '')
+            return
+          }
+
+          const screenRect = xtermScreen.getBoundingClientRect()
+          const containerRect = container.getBoundingClientRect()
+
+          let actualCellHeight: number
+          if (firstRow) {
+            actualCellHeight = firstRow.getBoundingClientRect().height
+          } else {
+            actualCellHeight = screenRect.height / (term.rows || 24)
+          }
+
+          const actualCellWidth = screenRect.width / (term.cols || 80)
+
+          const offsetX = screenRect.left - containerRect.left
+          const screenOffsetTop = screenRect.top - containerRect.top
+
+          ghostTextCellHeightRef.current[key] = actualCellHeight
+
+          const startX = ghostTextStartXRef.current[key] ?? buffer.cursorX
+          
+          const ghostX = startX + input.length
+
+          updateGhostTextOverlay(
+            key,
+            screenOffsetTop + viewportY * actualCellHeight,
+            offsetX + ghostX * actualCellWidth,
+            suggestion,
+            actualCellHeight
+          )
+        } catch {
+          updateGhostTextOverlay(key, 0, 0, '')
+        }
+      }
+    } else {
+      ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
+      updateGhostTextOverlay(key, 0, 0, '')
+    }
+  }, [updateGhostTextOverlay])
+  
+  const clearGhostText = useCallback((key: string) => {
+    ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
+    delete ghostTextStartXRef.current[key]
+    delete ghostTextLineRef.current[key]
+    updateGhostTextOverlay(key, 0, 0, '')
+  }, [updateGhostTextOverlay])
+  
+  const switchSuggestion = useCallback((key: string, connId: string, direction: 'next' | 'prev') => {
+    const ghost = ghostTextRef.current[key]
+    if (!ghost || ghost.allSuggestions.length === 0) return
+    
+    let newIndex = ghost.currentIndex
+    if (direction === 'next') {
+      newIndex = (ghost.currentIndex + 1) % ghost.allSuggestions.length
+    } else {
+      newIndex = ghost.currentIndex === 0 ? ghost.allSuggestions.length - 1 : ghost.currentIndex - 1
+    }
+    
+    matchAndUpdateGhostText(key, connId, ghost.input, newIndex)
+  }, [matchAndUpdateGhostText])
+  
+  const loadHistory = useHistoryStore(state => state.loadHistory)
+  const addCommand = useHistoryStore(state => state.addCommand)
+  const historyCaches = useHistoryStore(state => state.caches)
+  const clearConnectionHistory = useHistoryStore(state => state.clearConnectionHistory)
   
   useEffect(() => {
     shortcutSettingsRef.current = shortcutSettings
@@ -126,6 +308,97 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
     isFullscreen,
     handleToggleFullscreen,
   } = useFullscreen(setSidebarCollapsed, fitAddons)
+
+  const [historyModalVisible, setHistoryModalVisible] = useState(false)
+  const [historyModalKey, setHistoryModalKey] = useState<string | null>(null)
+  const [historySearchText, setHistorySearchText] = useState('')
+  const [historySelectedIndex, setHistorySelectedIndex] = useState(0)
+
+  useEffect(() => {
+    if (historyModalVisible) {
+      const timer = setTimeout(() => {
+        const input = document.getElementById('history-search-input') as HTMLInputElement
+        if (input) {
+          input.focus()
+        }
+      }, 100)
+      return () => clearTimeout(timer)
+    }
+  }, [historyModalVisible])
+
+  const showHistoryModal = useCallback((key: string) => {
+    const [connId] = key.split('_')
+    loadHistory(connId)
+    setHistoryModalKey(key)
+    setHistoryModalVisible(true)
+    setHistorySearchText('')
+    setHistorySelectedIndex(0)
+  }, [loadHistory])
+
+  const hideHistoryModal = useCallback(() => {
+    const key = historyModalKey
+    setHistoryModalVisible(false)
+    setHistoryModalKey(null)
+    setHistorySearchText('')
+    setHistorySelectedIndex(0)
+    
+    if (key) {
+      requestAnimationFrame(() => {
+        const term = terminalInstances.current[key]
+        if (term) {
+          term.focus()
+        }
+      })
+    }
+  }, [historyModalKey])
+
+  const selectHistoryCommand = useCallback((command: string) => {
+    if (!historyModalKey) return
+    const key = historyModalKey
+    const currentShellId = shellIdsRef.current[key]
+    if (currentShellId) {
+      invoke('write_shell', { id: currentShellId, data: command }).catch(err => {
+        console.error('写入终端失败:', err)
+      })
+      currentInputRef.current[key] = command
+    }
+    hideHistoryModal()
+    requestAnimationFrame(() => {
+      const term = terminalInstances.current[key]
+      if (term) {
+        term.focus()
+      }
+    })
+  }, [historyModalKey, hideHistoryModal])
+
+  useEffect(() => {
+    if (!historyModalVisible || !historyModalKey) return
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const { caches } = useHistoryStore.getState()
+      const [connId] = historyModalKey.split('_')
+      const cache = caches.get(connId) || []
+      const filtered = historySearchText
+        ? cache.filter(c => c.text.toLowerCase().includes(historySearchText.toLowerCase()))
+        : cache
+      const maxIndex = Math.min(filtered.length, 50) - 1
+
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setHistorySelectedIndex(i => i > 0 ? i - 1 : maxIndex)
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setHistorySelectedIndex(i => i < maxIndex ? i + 1 : 0)
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        const item = filtered[historySelectedIndex]
+        if (item) selectHistoryCommand(item.text)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [historyModalVisible, historyModalKey, historySearchText, historySelectedIndex, selectHistoryCommand])
 
   const {
     contextMenu,
@@ -374,6 +647,7 @@ const handlePointerUp = () => {
 
         const key = `${session.connectionId}_${session.id}`
         const shellId = session.shellId
+        const connId = session.connectionId
 
         if (initializedRef.current.has(key)) {
           const term = terminalInstances.current[key]
@@ -437,8 +711,15 @@ const handlePointerUp = () => {
 
           const fitAddon = new FitAddon()
           terminal.loadAddon(fitAddon)
+          
+          const ghostOverlayElement = ghostTextElementsRef.current[key]
+          
           container.innerHTML = ''
           terminal.open(container)
+          
+          if (ghostOverlayElement) {
+            container.appendChild(ghostOverlayElement)
+          }
 
           const textarea = terminal.element?.querySelector('textarea')
           if (textarea) {
@@ -560,6 +841,27 @@ const handlePointerUp = () => {
               return false
             }
             
+            if (matchShortcut(event, settings.showHistory)) {
+              showHistoryModal(key)
+              return false
+            }
+            
+            if (matchShortcut(event, settings.nextSuggestion)) {
+              const ghost = ghostTextRef.current[key]
+              if (ghost && ghost.allSuggestions.length > 0) {
+                switchSuggestion(key, key.split('_')[0], 'next')
+              }
+              return false
+            }
+            
+            if (matchShortcut(event, settings.prevSuggestion)) {
+              const ghost = ghostTextRef.current[key]
+              if (ghost && ghost.allSuggestions.length > 0) {
+                switchSuggestion(key, key.split('_')[0], 'prev')
+              }
+              return false
+            }
+            
             return true
           })
 
@@ -576,6 +878,75 @@ const handlePointerUp = () => {
             
             if (conn?.reconnecting) {
               return
+            }
+
+            const ghost = ghostTextRef.current[key]
+            
+            if (data === '\x1b[C') {
+              if (ghost && ghost.suggestion) {
+                const currentShellId = shellIdsRef.current[key]
+                if (currentShellId) {
+                  invoke('write_shell', { id: currentShellId, data: ghost.suggestion }).catch(err => {
+                    console.error('写入终端失败:', err)
+                  })
+                  currentInputRef.current[key] = ghost.input + ghost.suggestion
+                  ghostTextRef.current[key] = { input: ghost.input + ghost.suggestion, suggestion: '', allSuggestions: [], currentIndex: 0 }
+                  updateGhostTextOverlay(key, 0, 0, '')
+                }
+                return
+              }
+            }
+            
+            // 处理 Ctrl+C / Ctrl+U - 清除输入和建议
+            if (data === '\x03' || data === '\x15') {
+              clearGhostText(key)
+              currentInputRef.current[key] = ''
+            }
+            else if (data === '\t') {
+              clearGhostText(key)
+              currentInputRef.current[key] = ''
+            }
+            else if (data === '\x1b') {
+              const ghost = ghostTextRef.current[key]
+              if (ghost && ghost.suggestion) {
+                clearGhostText(key)
+                return
+              }
+            }
+            else if (data === '\r' || data === '\n') {
+              clearGhostText(key)
+              currentInputRef.current[key] = ''
+              const tracker = commandTrackersRef.current[key]
+              if (tracker) {
+                tracker.clearPendingCommand()
+              }
+            }
+            // 处理退格
+            else if (data === '\x7f' || data === '\b') {
+              const current = currentInputRef.current[key] || ''
+              if (current.length > 0) {
+                const newInput = current.slice(0, -1)
+                currentInputRef.current[key] = newInput
+                if (newInput === '') {
+                  clearGhostText(key)
+                } else {
+                  requestAnimationFrame(() => {
+                    matchAndUpdateGhostText(key, connId, newInput)
+                  })
+                }
+              }
+            }
+            // 处理普通文本输入（包括粘贴）
+            else if (!data.startsWith('\x1b') && !data.includes('\r') && !data.includes('\n')) {
+              const currentInput = currentInputRef.current[key] || ''
+              if (currentInput === '') {
+                const buffer = terminal.buffer.active
+                ghostTextStartXRef.current[key] = buffer.cursorX
+                ghostTextLineRef.current[key] = buffer.cursorY
+              }
+              const newInput = currentInput + data
+              currentInputRef.current[key] = newInput
+              matchAndUpdateGhostText(key, connId, newInput)
             }
             
             const currentShellId = shellIdsRef.current[key]
@@ -606,6 +977,7 @@ const handlePointerUp = () => {
           terminalInstances.current[key] = terminal
           fitAddons.current[key] = fitAddon
           shellIdsRef.current[key] = shellId
+          commandTrackersRef.current[key] = createCommandTracker()
 
           const searchAddon = new SearchAddon()
           terminal.loadAddon(searchAddon)
@@ -618,7 +990,17 @@ const handlePointerUp = () => {
               if (typeof event.payload === 'object' && (event.payload as any).eof) {
                 return
               }
+
               term.write(event.payload)
+              
+              const tracker = commandTrackersRef.current[key]
+              if (tracker && typeof event.payload === 'string') {
+                const result = tracker.processOutput(event.payload, term)
+                if (result.command) {
+                  const [connId] = key.split('_')
+                  addCommand(connId, result.command)
+                }
+              }
             }
           })
 
@@ -634,6 +1016,7 @@ const handlePointerUp = () => {
               if (addon) {
                 try { addon.fit() } catch {}
               }
+              clearGhostText(key)
               resizeTimer = null
             }, 150)
           })
@@ -646,6 +1029,8 @@ const handlePointerUp = () => {
           })
 
           initializedRef.current.add(key)
+
+          loadHistory(connId)
 
           try {
             await invoke('start_shell_reader', { id: shellId })
@@ -664,7 +1049,7 @@ const handlePointerUp = () => {
     }, 0)
 
     return () => clearTimeout(timerId)
-  }, [connectedConnections.length, activeConnectionId, visibleSessions, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode])
+  }, [connectedConnections.length, activeConnectionId, visibleSessions, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode, loadHistory])
 
   const reconnectTimersRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
 
@@ -845,6 +1230,7 @@ const handlePointerUp = () => {
     delete fitAddons.current[key]
     delete searchAddons.current[key]
     delete resizeObserversRef.current[key]
+    delete commandTrackersRef.current[key]
     initializedRef.current.delete(key)
     
     if (allSessions.length === 1) {
@@ -1046,6 +1432,7 @@ const handlePointerUp = () => {
       delete fitAddons.current[key]
       delete searchAddons.current[key]
       delete resizeObserversRef.current[key]
+      delete commandTrackersRef.current[key]
       initializedRef.current.delete(key)
     }
     closePane(connId, pane.id)
@@ -1406,18 +1793,27 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         />
       ),
       children: (
-        <div
-          ref={el => { terminalRefs.current[`${connectionId}_${s.id}`] = el }}
-          style={{ 
-            height: '100%', 
-            background: 'var(--color-bg-container)', 
-            overflow: 'hidden', 
-            boxSizing: 'border-box', 
-            padding: 4,
-          }}
-          onContextMenu={(e) => handleContextMenu(e, `${connectionId}_${s.id}`)}
-          onClick={() => setActiveSessionInPane(connectionId, pane.id, s.id)}
-        />
+        <div style={{ position: 'relative', height: '100%' }}>
+          <div
+            ref={el => { terminalRefs.current[`${connectionId}_${s.id}`] = el }}
+            style={{ 
+              height: '100%', 
+              background: 'var(--color-bg-container)', 
+              overflow: 'hidden', 
+              boxSizing: 'border-box', 
+              padding: 4,
+            }}
+            onContextMenu={(e) => handleContextMenu(e, `${connectionId}_${s.id}`)}
+            onClick={() => setActiveSessionInPane(connectionId, pane.id, s.id)}
+          />
+          <GhostTextOverlay
+            sessionKey={`${connectionId}_${s.id}`}
+            fontFamily={terminalSettings.fontFamily}
+            fontSize={terminalSettings.fontSize}
+            themeColors={resolveTerminalTheme(appTheme, terminalThemeKey)}
+            ref={(el) => { ghostTextElementsRef.current[`${connectionId}_${s.id}`] = el }}
+          />
+        </div>
       ),
     }))
 
@@ -1496,6 +1892,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               delete fitAddons.current[key]
               delete searchAddons.current[key]
               delete resizeObserversRef.current[key]
+              delete commandTrackersRef.current[key]
               initializedRef.current.delete(key)
             }
             closePane(connectionId, pane.id)
@@ -1646,6 +2043,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               delete fitAddons.current[key]
               delete searchAddons.current[key]
               delete resizeObserversRef.current[key]
+              delete commandTrackersRef.current[key]
               initializedRef.current.delete(key)
               if (s.shellId) {
                 invoke('close_shell', { id: s.shellId }).catch(() => {})
@@ -1919,6 +2317,90 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       ) : null}
       
       <DragToNewWindowOverlay visible={!singleConnectionMode && isDragToNewWindow} />
+
+      {historyModalVisible && historyModalKey && (
+        <Modal
+          open={true}
+          onCancel={hideHistoryModal}
+          footer={null}
+          mask={false}
+          title={
+            <span>
+              <HistoryOutlined style={{ marginRight: 8 }} />
+              历史命令
+              <Popconfirm
+                title="确定清空历史命令？"
+                description="此操作不可撤销"
+                onConfirm={() => {
+                  const [connId] = historyModalKey.split('_')
+                  clearConnectionHistory(connId)
+                  message.success('已清空历史命令')
+                }}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button 
+                  type="link" 
+                  size="small" 
+                  danger
+                  style={{ marginLeft: 12 }}
+                >
+                  清空
+                </Button>
+              </Popconfirm>
+            </span>
+          }
+          width={500}
+          centered
+        >
+          <Input
+            id="history-search-input"
+            placeholder="搜索..."
+            value={historySearchText}
+            onChange={(e) => {
+              setHistorySearchText(e.target.value)
+              setHistorySelectedIndex(0)
+            }}
+            prefix={<SearchOutlined />}
+            allowClear
+            style={{ marginBottom: 12 }}
+          />
+          <List
+            size="small"
+            dataSource={(() => {
+              const [connId] = historyModalKey.split('_')
+              const cache = historyCaches.get(connId) || []
+              const filtered = historySearchText
+                ? cache.filter(c => c.text.toLowerCase().includes(historySearchText.toLowerCase()))
+                : cache
+              return filtered.slice(0, 50)
+            })()}
+            style={{ maxHeight: 250, overflow: 'auto' }}
+            renderItem={(item: { text: string; count: number }, index: number) => (
+<List.Item
+                  onClick={() => selectHistoryCommand(item.text)}
+                  onMouseEnter={() => setHistorySelectedIndex(index)}
+                  style={{
+                    cursor: 'pointer',
+                    background: index === historySelectedIndex ? 'var(--color-primary)' : 'transparent',
+                    borderRadius: 4,
+                    padding: '8px 12px',
+                  }}
+                >
+                  <span style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: index === historySelectedIndex ? '#fff' : 'var(--color-text)',
+                    flex: 1,
+                  }}>
+                    {item.text}
+                  </span>
+                </List.Item>
+            )}
+          />
+        </Modal>
+      )}
     </div>
   )
 }

@@ -156,10 +156,32 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
         }
     }
 
-    // 密码迁移：将旧密钥加密的密码迁移到新密钥
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS command_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            connection_id TEXT NOT NULL,
+            text TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            count INTEGER DEFAULT 1,
+            UNIQUE(connection_id, text)
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_command_history_connection 
+         ON command_history(connection_id, timestamp DESC)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    cleanup_expired_command_history(&conn)?;
+
+    cleanup_invalid_command_history(&conn)?;
+
     migrate_passwords_if_needed(&conn)?;
 
-    // 标记初始化完成
     DB_INITIALIZED.store(true, Ordering::SeqCst);
 
     Ok(true)
@@ -308,8 +330,18 @@ pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
 pub fn delete_connection(id: String) -> Result<bool, String> {
     let conn = get_db()?;
 
-    conn.execute("DELETE FROM connections WHERE id = ?1", [&id])
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+
+    tx.execute(
+        "DELETE FROM command_history WHERE connection_id = ?1",
+        [&id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    tx.execute("DELETE FROM connections WHERE id = ?1", [&id])
         .map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
 
     Ok(true)
 }
@@ -654,6 +686,143 @@ pub fn update_connection_order(order: Vec<(String, i32)>) -> Result<bool, String
 
     tx.commit().map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+const MAX_HISTORY_PER_CONNECTION: i32 = 1000;
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CommandHistoryRecord {
+    pub text: String,
+    pub timestamp: i64,
+    pub count: i32,
+}
+
+#[tauri::command]
+pub fn get_command_history(connection_id: String) -> Result<Vec<CommandHistoryRecord>, String> {
+    let conn = get_db()?;
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT text, timestamp, count FROM command_history 
+             WHERE connection_id = ?1 
+             ORDER BY timestamp DESC 
+             LIMIT ?2",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let records = stmt
+        .query_map(
+            rusqlite::params![connection_id, MAX_HISTORY_PER_CONNECTION],
+            |row| {
+                Ok(CommandHistoryRecord {
+                    text: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    count: row.get(2)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(records)
+}
+
+#[tauri::command]
+pub fn save_command(connection_id: String, text: String) -> Result<(), String> {
+    let conn = get_db()?;
+    let now = chrono::Utc::now().timestamp_millis();
+
+    conn.execute(
+        "INSERT INTO command_history (connection_id, text, timestamp, count) 
+         VALUES (?1, ?2, ?3, 1)
+         ON CONFLICT(connection_id, text) DO UPDATE SET 
+           timestamp = excluded.timestamp,
+           count = MIN(count + 1, 999)",
+        rusqlite::params![connection_id, text, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    cleanup_old_history(&conn, &connection_id)?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn clear_command_history(connection_id: String) -> Result<(), String> {
+    let conn = get_db()?;
+
+    conn.execute(
+        "DELETE FROM command_history WHERE connection_id = ?1",
+        [connection_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn cleanup_old_history(conn: &Connection, connection_id: &str) -> Result<(), String> {
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM command_history WHERE connection_id = ?1",
+            [connection_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    if count > MAX_HISTORY_PER_CONNECTION as i64 {
+        let delete_count = count - MAX_HISTORY_PER_CONNECTION as i64;
+        conn.execute(
+            "DELETE FROM command_history WHERE id IN (
+                SELECT id FROM command_history 
+                WHERE connection_id = ?1 
+                ORDER BY timestamp ASC 
+                LIMIT ?2
+            )",
+            rusqlite::params![connection_id, delete_count],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+const COMMAND_HISTORY_EXPIRE_DAYS: i64 = 90;
+
+fn cleanup_expired_command_history(conn: &Connection) -> Result<(), String> {
+    let expire_threshold =
+        chrono::Utc::now().timestamp_millis() - (COMMAND_HISTORY_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
+
+    let deleted = conn
+        .execute(
+            "DELETE FROM command_history WHERE timestamp < ?1",
+            [expire_threshold],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if deleted > 0 {
+        println!(
+            "[Database] Cleaned up {} expired command history records (older than {} days)",
+            deleted, COMMAND_HISTORY_EXPIRE_DAYS
+        );
+    }
+
+    Ok(())
+}
+
+fn cleanup_invalid_command_history(conn: &Connection) -> Result<(), String> {
+    let deleted = conn
+        .execute("DELETE FROM command_history WHERE text LIKE '%\t%'", [])
+        .map_err(|e| e.to_string())?;
+
+    if deleted > 0 {
+        println!(
+            "[Database] Cleaned up {} invalid command history records (containing tab characters)",
+            deleted
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

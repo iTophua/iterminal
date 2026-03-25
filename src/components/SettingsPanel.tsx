@@ -90,7 +90,14 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         return
       }
       
-      if (e.key === 'Enter' && tempShortcutKey) {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        updateShortcutSettings({ [editingShortcutKey as keyof ShortcutSettings]: '' })
+        setEditingShortcutKey(null)
+        setTempShortcutKey('')
+        return
+      }
+      
+      if (e.key === 'Enter') {
         updateShortcutSettings({ [editingShortcutKey as keyof ShortcutSettings]: tempShortcutKey })
         setEditingShortcutKey(null)
         setTempShortcutKey('')
@@ -139,7 +146,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     }
 
     const handleBlur = () => {
-      if (tempShortcutKey && editingShortcutKey) {
+      if (editingShortcutKey) {
         updateShortcutSettings({ [editingShortcutKey as keyof ShortcutSettings]: tempShortcutKey })
       }
       setEditingShortcutKey(null)
@@ -797,6 +804,9 @@ ${claudeConfig}`}
       { key: 'fullscreen', label: '全屏', description: '切换全屏模式' },
       { key: 'nextSession', label: '下一会话', description: '切换到下一个会话' },
       { key: 'prevSession', label: '上一会话', description: '切换到上一个会话' },
+      { key: 'nextSuggestion', label: '下一条建议', description: '切换到下一条命令建议' },
+      { key: 'prevSuggestion', label: '上一条建议', description: '切换到上一条命令建议' },
+      { key: 'showHistory', label: '历史命令', description: '显示历史命令列表' },
     ]
 
     return (
@@ -806,7 +816,7 @@ ${claudeConfig}`}
             终端快捷键
           </Text>
           <Text type="secondary" style={{ fontSize: 13 }}>
-            点击快捷键输入框，按下组合键后按 Enter 确认（按 Esc 取消）
+            点击快捷键输入框，按下组合键后按 Enter 确认。按 Delete 清空，Esc 取消。
           </Text>
         </div>
 
@@ -845,11 +855,11 @@ ${claudeConfig}`}
                     {tempShortcutKey ? formatShortcutForDisplay(tempShortcutKey) : '按下组合键...'}
                   </div>
                   <Text type="secondary" style={{ fontSize: 11 }}>
-                    {tempShortcutKey ? 'Enter 确认 / Esc 取消' : 'Esc 取消'}
+                    {tempShortcutKey ? 'Enter 确认 / Esc 取消' : 'Delete 清空 / Esc 取消'}
                   </Text>
                 </div>
               ) : (
-                <Tooltip title="点击修改">
+                <Tooltip title="点击修改，Delete 清空">
                   <Button
                     style={{ minWidth: 140, fontFamily: 'monospace' }}
                     onClick={() => {
@@ -857,7 +867,7 @@ ${claudeConfig}`}
                       setTempShortcutKey('')
                     }}
                   >
-                    {formatShortcutForDisplay(shortcutSettings[key])}
+                    {shortcutSettings[key] ? formatShortcutForDisplay(shortcutSettings[key]) : <span style={{ color: 'var(--color-text-tertiary)' }}>未设置</span>}
                   </Button>
                 </Tooltip>
               )}
