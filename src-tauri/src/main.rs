@@ -8,15 +8,6 @@ use tauri_plugin_opener::OpenerExt;
 
 fn main() {
     tauri::Builder::default()
-        .plugin(
-            tauri_plugin_window_state::Builder::new()
-                .with_state_flags(
-                    tauri_plugin_window_state::StateFlags::POSITION
-                        | tauri_plugin_window_state::StateFlags::SIZE
-                        | tauri_plugin_window_state::StateFlags::MAXIMIZED,
-                )
-                .build(),
-        )
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -97,11 +88,6 @@ fn main() {
         .setup(|app| {
             if let Err(e) = iterminal::commands::db::init_database(app.handle().clone()) {
                 eprintln!("Failed to initialize database: {}", e);
-            }
-
-            if let Some(window) = app.webview_windows().get("main") {
-                // window-state 插件会自动恢复窗口位置和大小
-                let _ = window.show();
             }
 
             let new_conn =

@@ -4,12 +4,15 @@ import App from './App'
 import { ThemeProvider } from './components/ThemeProvider'
 import { SplashScreen } from './components/SplashScreen'
 import { useAppInitialization } from './hooks/useAppInitialization'
+import { useWindowState } from './hooks/useWindowState'
 import './styles/global.css'
 
 function AppWithSplash() {
   const { steps, progress, isComplete } = useAppInitialization()
   const [showSplash, setShowSplash] = useState(true)
   const [fadeOut, setFadeOut] = useState(false)
+
+  useWindowState()
   
   useEffect(() => {
     const preloader = document.getElementById('preloader')

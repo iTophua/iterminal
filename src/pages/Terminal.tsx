@@ -217,7 +217,6 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
         try {
           const buffer = term.buffer.active
           const cursorY = buffer.cursorY
-          const viewportY = cursorY - buffer.baseY
 
           const xtermScreen = term.element.querySelector('.xterm-screen')
           const xtermRows = term.element.querySelector('.xterm-rows')
@@ -251,7 +250,7 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
 
           updateGhostTextOverlay(
             key,
-            screenOffsetTop + viewportY * actualCellHeight,
+            screenOffsetTop + cursorY * actualCellHeight,
             offsetX + ghostX * actualCellWidth,
             suggestion,
             actualCellHeight
@@ -971,6 +970,16 @@ const handlePointerUp = () => {
                   console.error('复制失败:', err)
                 })
               }
+            }
+          })
+
+          terminal.onScroll(() => {
+            const ghost = ghostTextRef.current[key]
+            if (ghost && ghost.input) {
+              const [connId] = key.split('_')
+              requestAnimationFrame(() => {
+                matchAndUpdateGhostText(key, connId, ghost.input, ghost.currentIndex)
+              })
             }
           })
 
