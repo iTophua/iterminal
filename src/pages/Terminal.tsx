@@ -733,7 +733,6 @@ const handlePointerUp = () => {
             
             const parts = shortcut.toUpperCase().split('+')
             const modifiers = ['CTRL', 'CMD', 'SHIFT', 'ALT', 'META']
-            const hasModifiers = parts.some(p => modifiers.includes(p))
             
             const hasCtrl = parts.includes('CTRL')
             const hasCmd = parts.includes('CMD')
@@ -742,11 +741,13 @@ const handlePointerUp = () => {
             const hasMeta = parts.includes('META')
             const keyPart = parts.find(p => !modifiers.includes(p))
             
-            const ctrlMatch = hasCtrl ? event.ctrlKey : (!hasModifiers ? !event.ctrlKey : true)
-            const cmdMatch = hasCmd ? event.metaKey : (!hasModifiers ? !event.metaKey : true)
-            const shiftMatch = hasShift ? event.shiftKey : (!hasModifiers ? !event.shiftKey : true)
-            const altMatch = hasAlt ? event.altKey : (!hasModifiers ? !event.altKey : true)
-            const metaMatch = hasMeta ? event.metaKey : (hasCmd ? true : (!hasModifiers ? !event.metaKey : true))
+            // 修复：未声明的修饰键必须未按下才能匹配
+            const ctrlMatch = hasCtrl ? event.ctrlKey : !event.ctrlKey
+            const cmdMatch = hasCmd ? event.metaKey : !event.metaKey
+            const shiftMatch = hasShift ? event.shiftKey : !event.shiftKey
+            const altMatch = hasAlt ? event.altKey : !event.altKey
+            // META 和 CMD 在 Mac 上通常对应同一个键，特殊处理
+            const metaMatch = hasMeta ? event.metaKey : (hasCmd ? true : !event.metaKey)
             
             let keyMatch = false
             if (keyPart) {
