@@ -44,6 +44,12 @@ pub struct ExportData {
     pub settings: Option<AppSettings>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CleanupResult {
+    pub expired: usize,
+    pub orphaned: usize,
+}
+
 lazy_static::lazy_static! {
     static ref DB_PATH: Mutex<Option<String>> = Mutex::new(None);
     static ref DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -179,6 +185,8 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     cleanup_expired_command_history(&conn)?;
 
     cleanup_invalid_command_history(&conn)?;
+
+    cleanup_orphaned_command_history(&conn)?;
 
     migrate_passwords_if_needed(&conn)?;
 
@@ -789,7 +797,7 @@ fn cleanup_old_history(conn: &Connection, connection_id: &str) -> Result<(), Str
 
 const COMMAND_HISTORY_EXPIRE_DAYS: i64 = 90;
 
-fn cleanup_expired_command_history(conn: &Connection) -> Result<(), String> {
+fn cleanup_expired_command_history(conn: &Connection) -> Result<usize, String> {
     let expire_threshold =
         chrono::Utc::now().timestamp_millis() - (COMMAND_HISTORY_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
 
@@ -807,7 +815,7 @@ fn cleanup_expired_command_history(conn: &Connection) -> Result<(), String> {
         );
     }
 
-    Ok(())
+    Ok(deleted)
 }
 
 fn cleanup_invalid_command_history(conn: &Connection) -> Result<(), String> {
@@ -823,6 +831,34 @@ fn cleanup_invalid_command_history(conn: &Connection) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn cleanup_orphaned_command_history(conn: &Connection) -> Result<usize, String> {
+    let deleted = conn
+        .execute(
+            "DELETE FROM command_history WHERE connection_id NOT IN (SELECT id FROM connections)",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+
+    if deleted > 0 {
+        println!(
+            "[Database] Cleaned up {} orphaned command history records (connection no longer exists)",
+            deleted
+        );
+    }
+
+    Ok(deleted)
+}
+
+#[tauri::command]
+pub fn cleanup_command_history() -> Result<CleanupResult, String> {
+    let conn = get_db()?;
+
+    let expired = cleanup_expired_command_history(&conn)?;
+    let orphaned = cleanup_orphaned_command_history(&conn)?;
+
+    Ok(CleanupResult { expired, orphaned })
 }
 
 #[cfg(test)]

@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react'
-import { flushSync } from 'react-dom'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App, Upload, Checkbox, Row, Col, Radio } from 'antd'
 import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined, FolderOpenOutlined, SwapOutlined, CheckSquareOutlined } from '@ant-design/icons'
@@ -10,11 +9,8 @@ import { useHistoryStore } from '../stores/historyStore'
 import { PORT_CHECK_CONFIG } from '../config/constants'
 import { generateUniqueId } from '../types/shared'
 import { 
-  initDatabase, 
-  getConnections, 
   saveConnection, 
   deleteConnection as deleteConnectionFromDb,
-  migrateFromLocalStorage,
   importConnections,
   readImportFile,
   recordConnectionHistory,
@@ -29,8 +25,6 @@ function Connections() {
   const navigate = useNavigate()
   const location = useLocation()
   const { modal, message } = App.useApp()
-  const [connections, setConnections] = useState<Connection[]>([])
-  const [loading, setLoading] = useState(true)
   const [searchText, setSearchText] = useState('')
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null)
@@ -59,10 +53,18 @@ function Connections() {
   const [isReorderMode, setIsReorderMode] = useState(false)
   const clearConnectionHistory = useHistoryStore(state => state.clearConnectionHistory)
   const [isDraggingActive, setIsDraggingActive] = useState(false)
-  const draggedConnection = draggedId ? connections.find(c => c.id === draggedId) : null
   
+  const connections = useTerminalStore(state => state.allConnections)
+  const connectionsLoading = useTerminalStore(state => state.connectionsLoading)
+  const setAllConnections = useTerminalStore(state => state.setAllConnections)
+  const updateConnection = useTerminalStore(state => state.updateConnection)
+  const updateConnectionStatus = useTerminalStore(state => state.updateConnectionStatus)
+  const addNewConnection = useTerminalStore(state => state.addNewConnection)
+  const removeConnection = useTerminalStore(state => state.removeConnection)
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const addConnection = useTerminalStore(state => state.addConnection)
+  
+  const draggedConnection = draggedId ? connections.find(c => c.id === draggedId) : null
 
   // 使用 ref 存储最新值，避免 useEffect 依赖变化导致频繁重建
   const connectionsRef = useRef(connections)
@@ -87,30 +89,8 @@ function Connections() {
     }
   }
 
-  // 初始化数据库并加载数据
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        await initDatabase()
-        
-        const migrated = await migrateFromLocalStorage()
-        if (migrated > 0) {
-          message.success(`已迁移 ${migrated} 个连接到本地数据库`)
-        }
-        
-        const conns = await getConnections()
-        setConnections(conns)
-        
-        await refreshRecentConnections()
-      } catch (error) {
-        console.error('[Connections] Failed to load data:', error)
-        message.error('加载数据失败')
-      } finally {
-        setLoading(false)
-      }
-    }
-    
-    loadData()
+    refreshRecentConnections()
   }, [])
 
   useEffect(() => {
@@ -178,18 +158,13 @@ function Connections() {
 
       // 批量更新状态（仅当状态真正变化时）
       if (!cancelled && results.length > 0) {
-        setConnections(prev => {
-          let hasChange = false
-          const next = prev.map(c => {
-            const result = results.find(r => r.id === c.id)
-            if (result && result.status !== c.status) {
-              hasChange = true
-              return { ...c, status: result.status }
-            }
-            return c
-          })
-          return hasChange ? next : prev
-        })
+        setAllConnections(connectionsRef.current.map(c => {
+          const result = results.find(r => r.id === c.id)
+          if (result && result.status !== c.status) {
+            return { ...c, status: result.status }
+          }
+          return c
+        }))
       }
 
       checkingRef.current = false
@@ -283,7 +258,7 @@ function Connections() {
         try {
           await deleteConnectionFromDb(id)
           clearConnectionHistory(id)
-          setConnections(prev => prev.filter(c => c.id !== id))
+          removeConnection(id)
           message.success('连接已删除')
           window.dispatchEvent(new CustomEvent('connections-updated'))
         } catch (error) {
@@ -308,7 +283,7 @@ function Connections() {
             await deleteConnectionFromDb(id)
             clearConnectionHistory(id)
           }
-          setConnections(prev => prev.filter(c => !selectedIds.includes(c.id)))
+          setAllConnections(connectionsRef.current.filter(c => !selectedIds.includes(c.id)))
           setSelectedIds([])
           message.success(`已删除 ${selectedIds.length} 个连接`)
           window.dispatchEvent(new CustomEvent('connections-updated'))
@@ -324,13 +299,13 @@ function Connections() {
     
     try {
       for (const id of selectedIds) {
-        const conn = connections.find(c => c.id === id)
+        const conn = connectionsRef.current.find(c => c.id === id)
         if (conn) {
           const updated = { ...conn, group: batchGroup }
           await saveConnection(updated)
         }
       }
-      setConnections(prev => prev.map(c => 
+      setAllConnections(connectionsRef.current.map(c => 
         selectedIds.includes(c.id) ? { ...c, group: batchGroup } : c
       ))
       setSelectedIds([])
@@ -368,7 +343,7 @@ function Connections() {
         const insertIndex = dropPosition === 'after' ? adjustedIndex + 1 : adjustedIndex
         
         newConnections.splice(insertIndex, 0, draggedItem)
-        setConnections(newConnections)
+        setAllConnections(newConnections)
         
         const order = newConnections.map((conn, index) => ({
           id: conn.id,
@@ -452,7 +427,7 @@ function Connections() {
       if (editingConnection) {
         const updated = { ...editingConnection, ...values, port }
         await saveConnection(updated)
-        setConnections(prev => prev.map(c => c.id === editingConnection.id ? updated : c))
+        updateConnection(updated)
         message.success('连接已更新')
       } else {
         const newConn: Connection = {
@@ -468,7 +443,7 @@ function Connections() {
           status: 'offline'
         }
         await saveConnection(newConn)
-        setConnections(prev => [...prev, newConn])
+        addNewConnection(newConn)
         message.success('连接已添加')
       }
       setIsModalOpen(false)
@@ -523,12 +498,7 @@ function Connections() {
 
     if (conn.status === 'connecting') return
 
-    // 使用 flushSync 强制同步渲染，确保 UI 立即更新
-    flushSync(() => {
-      setConnections(prev => prev.map(c =>
-        c.id === conn.id ? { ...c, status: 'connecting' as const } : c
-      ))
-    })
+    updateConnectionStatus(conn.id, 'connecting')
     
     message.info(`正在连接 ${conn.name}...`)
 
@@ -546,9 +516,7 @@ function Connections() {
 
       const shellId = await invoke<string>('get_shell', { id: conn.id })
 
-      setConnections(prev => prev.map(c =>
-        c.id === conn.id ? { ...c, status: 'online' as const } : c
-      ))
+      updateConnectionStatus(conn.id, 'online')
 
       addConnection(conn, shellId)
       
@@ -559,9 +527,7 @@ function Connections() {
       navigate('/terminal')
     } catch (error) {
       console.error('[Connections] Connection failed:', error)
-      setConnections(prev => prev.map(c =>
-        c.id === conn.id ? { ...c, status: 'offline' as const } : c
-      ))
+      updateConnectionStatus(conn.id, 'offline')
       message.error(`连接失败: ${error}`)
     }
   }
@@ -686,9 +652,7 @@ function Connections() {
     
     try {
       await saveConnection(newConn)
-      flushSync(() => {
-        setConnections([...connections, newConn])
-      })
+      addNewConnection(newConn)
       setIsQuickImportOpen(false)
       setQuickImportText('')
       setQuickImportGroup('默认')
@@ -743,8 +707,9 @@ function Connections() {
     try {
       const jsonData = await readImportFile(file)
       const count = await importConnections(jsonData, true)
-      const conns = await getConnections()
-      setConnections(conns)
+      const { getConnections: fetchConnections } = await import('../services/database')
+      const conns = await fetchConnections()
+      setAllConnections(conns)
       message.success(`成功导入 ${count} 个连接`)
       window.dispatchEvent(new CustomEvent('connections-updated'))
     } catch (error) {
@@ -828,7 +793,7 @@ function Connections() {
       )}
 
       <div style={{ flex: 1, overflow: 'auto' }}>
-        {loading ? (
+        {connectionsLoading ? (
           <div style={{ 
             display: 'flex', 
             alignItems: 'center', 

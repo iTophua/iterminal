@@ -6,55 +6,37 @@ import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
 import SettingsPanel from './SettingsPanel'
 import { STORAGE_KEYS } from '../config/constants'
-import { getConnections } from '../services/database'
 
 const { Sider } = Layout
 
 function Sidebar() {
   const navigate = useNavigate()
   const location = useLocation()
-  const [groups, setGroups] = useState<string[]>(['全部', '生产环境', '开发环境', '测试环境'])
-  const [groupCounts, setGroupCounts] = useState<Record<string, number>>({})
   const [collapsed, setCollapsed] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.SIDEBAR_COLLAPSED)
     return saved ? JSON.parse(saved) : false
   })
   
+  const connections = useTerminalStore(state => state.allConnections)
   const connectedCount = useTerminalStore(state => state.connectedConnections.length)
   const transferringCount = useTransferStore(state => state.transferringCount)
   const storeSidebarCollapsed = useTerminalStore(state => state.sidebarCollapsed)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
-const settingsVisible = useTerminalStore(state => state.settingsVisible)
+  const settingsVisible = useTerminalStore(state => state.settingsVisible)
   const setSettingsVisible = useTerminalStore(state => state.setSettingsVisible)
 
-  const loadGroupData = async () => {
-    try {
-      const connections = await getConnections()
-      const uniqueGroups = [...new Set(connections.map(c => c.group))]
-      setGroups(['全部', ...uniqueGroups])
-      
-      const counts: Record<string, number> = { '全部': connections.length }
-      connections.forEach(c => {
-        counts[c.group] = (counts[c.group] || 0) + 1
-      })
-      setGroupCounts(counts)
-    } catch (e) {
-      console.error('Failed to load connections:', e)
-    }
-  }
-  
-  useEffect(() => {
-    loadGroupData()
-  }, [location.pathname])
-  
-  useEffect(() => {
-    const handleConnectionsUpdate = () => {
-      loadGroupData()
-    }
-    
-    window.addEventListener('connections-updated', handleConnectionsUpdate)
-    return () => window.removeEventListener('connections-updated', handleConnectionsUpdate)
-  }, [])
+  const groups = useMemo(() => {
+    const uniqueGroups = [...new Set(connections.map(c => c.group))]
+    return ['全部', ...uniqueGroups]
+  }, [connections])
+
+  const groupCounts = useMemo(() => {
+    const counts: Record<string, number> = { '全部': connections.length }
+    connections.forEach(c => {
+      counts[c.group] = (counts[c.group] || 0) + 1
+    })
+    return counts
+  }, [connections])
   
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.SIDEBAR_COLLAPSED, JSON.stringify(collapsed))

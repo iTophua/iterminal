@@ -89,6 +89,7 @@ fn main() {
             iterminal::commands::db::get_command_history,
             iterminal::commands::db::save_command,
             iterminal::commands::db::clear_command_history,
+            iterminal::commands::db::cleanup_command_history,
             iterminal::commands::window::create_terminal_window,
             iterminal::commands::window::close_terminal_window,
             iterminal::commands::window::get_terminal_window_data,

@@ -1,6 +1,6 @@
 # iTerminal - SSH Connection Manager
 
-**Generated:** 2026-03-22
+**Generated:** 2026-03-26
 **Branch:** main
 
 **技术栈:** Tauri 2.10 + React 19.2 + TypeScript 5.9 + Vite 7.3 + Ant Design 6.3 + xterm.js 6.0 + Rust (russh 0.50 + russh-sftp 2.1)
@@ -11,6 +11,11 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                        前端 (React)                          │
 ├─────────────────────────────────────────────────────────────┤
+│  main.tsx (入口)                                             │
+│  ├─ 静态预加载器 (index.html) ─────────► 避免 React 加载白屏  │
+│  ├─ SplashScreen ─────────────────────► 启动动画 + 初始化     │
+│  └─ useAppInitialization ─────────────► 数据库/字体/连接加载  │
+├─────────────────────────────────────────────────────────────┤
 │  Terminal.tsx (主窗口)                                       │
 │  ├─ listen("shell-output-{id}") ──────► 监听 shell 输出事件   │
 │  └─ invoke('write_shell') ────────────► 发送用户输入          │
@@ -20,6 +25,12 @@
 │  ├─ restoreConnection() ──────────────► 恢复连接到 store      │
 │  └─ 渲染 <Terminal /> ───────────────── 复用主窗口组件         │
 ├─────────────────────────────────────────────────────────────┤
+│  Connections.tsx                                             │
+│  └─ 从 terminalStore.allConnections 读取 ─► 全局共享状态      │
+├─────────────────────────────────────────────────────────────┤
+│  Sidebar.tsx                                                 │
+│  └─ 从 terminalStore.allConnections 读取 ─► 响应式更新分组    │
+├─────────────────────────────────────────────────────────────┤
 │  FileManagerPanel.tsx                                       │
 │  ├─ listen("transfer-progress-{id}") ──► 监听传输进度         │
 │  └─ listen("transfer-complete-{id}") ──► 监听传输完成         │
@@ -27,6 +38,8 @@
 │  terminalStore (Zustand)                                    │
 │  ├─ connectedConnections: ConnectedConnection[]             │
 │  │   └─ rootPane: SplitPane (支持嵌套分屏)                   │
+│  ├─ allConnections: Connection[] ──────► 所有连接（启动预加载）│
+│  ├─ availableFonts: string[] ──────────► 字体列表（缓存）     │
 │  ├─ restoreConnection() ──────────────► 恢复连接（新窗口）    │
 │  └─ activeConnectionId: string                              │
 └─────────────────────────────────────────────────────────────┘
@@ -35,6 +48,12 @@
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                     后端 (Rust + russh)                      │
+├─────────────────────────────────────────────────────────────┤
+│  init_database (启动时调用)                                   │
+│  ├─ 初始化 SQLite 数据库                                      │
+│  ├─ 清理过期命令历史 (90天)                                   │
+│  ├─ 清理孤立命令历史 (连接已删除)                              │
+│  └─ 清理无效命令历史 (含 tab 字符)                            │
 ├─────────────────────────────────────────────────────────────┤
 │  get_shell(id, AppHandle)                                   │
 │  ├─ 创建 SSH channel (async)                                │
@@ -82,10 +101,13 @@
 ```
 .
 ├── src/                        # React 前端
-│   ├── main.tsx                # 入口，ConfigProvider 配置
+│   ├── main.tsx                # 入口，SplashScreen 集成
 │   ├── App.tsx                 # 路由 + 布局（含 /terminal-window 路由）
 │   ├── components/             # 公共组件
+│   │   ├── SplashScreen.tsx    # 启动动画组件
+│   │   ├── SplashScreen.css    # 启动动画样式
 │   │   ├── Sidebar.tsx         # 侧边栏 (分组导航 + 终端入口)
+│   │   ├── SettingsPanel.tsx   # 设置面板 (含字体刷新按钮)
 │   │   ├── FileManagerPanel.tsx # 文件管理面板 (主组件)
 │   │   └── fileManager/        # 文件管理子模块
 │   │       ├── types.ts        # 类型定义
@@ -98,22 +120,25 @@
 │   │           ├── useFileOperations.ts  # 文件操作
 │   │           ├── useTransfer.ts        # 上传下载
 │   │           └── useDragDrop.ts        # 拖拽处理
+│   ├── hooks/                  # 自定义 hooks
+│   │   └── useAppInitialization.ts  # 应用初始化 hook
 │   ├── pages/                  # 页面组件
 │   │   ├── Terminal.tsx        # 终端页面 (主窗口 + 新窗口共用)
 │   │   ├── TerminalWindow.tsx  # 新窗口入口（监听 event + 复用 Terminal）
 │   │   ├── terminal/           # 终端相关子模块
 │   │   │   ├── components/     # 终端组件（PaneToolbar, ContextMenu 等）
 │   │   │   └── hooks/          # 终端 hooks（useConnectionDrag 等）
-│   │   ├── Connections.tsx     # 连接管理 (CRUD + 测试连接)
+│   │   ├── Connections.tsx     # 连接管理 (从 store 读取连接)
 │   │   └── Transfers.tsx       # 传输管理
 │   ├── stores/                 # Zustand 状态管理
-│   │   ├── terminalStore.ts    # 连接/会话状态（含 restoreConnection）
+│   │   ├── terminalStore.ts    # 连接/会话/字体状态
 │   │   └── transferStore.ts    # 传输记录/进度状态
 │   ├── utils/                  # 工具函数
 │   │   ├── paneUtils.ts        # SplitPane 辅助函数
 │   │   └── shellOutputParser.ts # Shell 输出解析器（命令历史追踪）
 │   └── styles/                 # 全局 CSS
 │       └── global.css          # xterm.js 样式覆盖
+├── index.html                  # 入口 HTML（含静态预加载器）
 ├── src-tauri/                  # Rust 后端
 │   ├── src/
 │   │   ├── main.rs             # Tauri 入口，注册命令
@@ -124,7 +149,8 @@
 │   │       ├── window.rs       # 新窗口创建命令
 │   │       ├── license.rs      # License 验证 (存根/Pro)
 │   │       ├── api.rs          # HTTP API 服务器 (axum)
-│   │       └── system.rs       # 系统信息 (字体等)
+│   │       ├── system.rs       # 系统信息 (字体等)
+│   │       └── db.rs           # 数据库操作 + 命令历史清理
 │   │   └── db/                 # 数据库 (SQLite + 加密存储)
 │   ├── Cargo.toml              # Rust 依赖
 │   ├── tauri.conf.json         # Tauri 配置
@@ -147,17 +173,21 @@
 | 添加新 SSH 功能 | `src-tauri/src/commands/ssh.rs` | 核心 SSH 逻辑 (russh async API) |
 | 添加新 SFTP 功能 | `src-tauri/src/commands/sftp.rs` | 文件传输逻辑 |
 | 新窗口功能 | `src-tauri/src/commands/window.rs` | 创建新窗口 Tauri 命令 |
-| 数据库操作 | `src-tauri/src/commands/db.rs` | 连接 CRUD、加密存储 |
+| 数据库操作 | `src-tauri/src/commands/db.rs` | 连接 CRUD、加密存储、命令历史清理 |
 | 数据库服务层 | `src/services/database.ts` | 前端数据库服务封装 |
 | License 验证 | `src-tauri/src/commands/license.rs` | 存根版本，Pro 版在私有仓库 |
 | HTTP API 服务器 | `src-tauri/src/commands/api.rs` | MCP 桥接 API (axum, 端口 27149) |
+| 启动动画 | `src/components/SplashScreen.tsx` | Logo 动画 + 进度条 + 步骤状态 |
+| 应用初始化 | `src/hooks/useAppInitialization.ts` | 数据库/字体/连接加载逻辑 |
+| 静态预加载器 | `index.html` | 避免 React 加载白屏 |
 | 修改终端事件监听 | `src/pages/Terminal.tsx` | Events 订阅/取消订阅 |
 | 修改新窗口逻辑 | `src/pages/TerminalWindow.tsx` | Event 监听 + restoreConnection |
 | 拖拽到新窗口检测 | `src/pages/terminal/hooks/useConnectionDrag.ts` | 边缘检测 hook |
 | 新窗口视觉提示 | `src/pages/terminal/components/DragToNewWindowOverlay.tsx` | 拖拽提示组件 |
 | 修改文件管理 UI | `src/components/FileManagerPanel.tsx` | 文件树、上传下载，使用 hooks 拆分逻辑 |
 | 修改传输状态 | `src/stores/transferStore.ts` | 传输记录、进度 |
-| 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话状态、restoreConnection |
+| 修改状态管理 | `src/stores/terminalStore.ts` | 连接/会话/字体状态 |
+| 字体刷新按钮 | `src/components/SettingsPanel.tsx` | 手动重新加载字体列表 |
 | License 状态 | `src/stores/licenseStore.ts` | License 验证状态 (Zustand) |
 | 添加新页面 | `src/pages/` | 创建组件 + 在 App.tsx 添加路由 |
 | 修改终端样式 | `src/styles/global.css` | xterm.js CSS 覆盖 |
@@ -212,19 +242,26 @@
 | `delete_connection` | async fn | `db.rs` | 删除连接 |
 | `export_connections` | async fn | `db.rs` | 导出连接 (JSON) |
 | `import_connections` | async fn | `db.rs` | 导入连接 |
+| `cleanup_command_history` | fn | `db.rs` | 清理过期 + 孤立命令历史 |
+| `cleanup_orphaned_command_history` | fn | `db.rs` | 清理连接已删除的命令历史 |
 | `encrypt_password` | fn | `db/crypto.rs` | AES-256-GCM 加密 |
 | `decrypt_password` | fn | `db/crypto.rs` | AES-256-GCM 解密 |
 | `useLicenseStore` | hook | `licenseStore.ts` | License 状态管理 (Zustand) |
-| `useTerminalStore` | hook | `terminalStore.ts` | 连接/会话状态 (Zustand) |
+| `useTerminalStore` | hook | `terminalStore.ts` | 连接/会话/字体状态 (Zustand) |
 | `useTransferStore` | hook | `transferStore.ts` | 传输状态 (Zustand) |
 | `SplitPane` | interface | `terminalStore.ts` | 分屏数据结构（支持嵌套） |
 | `splitPane` | fn | `terminalStore.ts` | 创建分屏 |
 | `closePane` | fn | `terminalStore.ts` | 关闭分屏 |
 | `restoreConnection` | fn | `terminalStore.ts` | 恢复连接（新窗口） |
 | `updateSessionShellId` | fn | `terminalStore.ts` | 更新会话 shellId |
+| `setAllConnections` | fn | `terminalStore.ts` | 设置所有连接（启动预加载） |
+| `updateConnectionStatus` | fn | `terminalStore.ts` | 更新连接状态（函数式更新） |
+| `reloadFonts` | fn | `terminalStore.ts` | 重新加载字体列表 |
 | `getAllSessions` | fn | `paneUtils.ts` | 获取 pane 中所有会话 |
 | `findPaneBySessionId` | fn | `paneUtils.ts` | 根据会话 ID 查找 pane |
 | `useConnectionDragToNewWindow` | hook | `useConnectionDrag.ts` | 拖拽到边缘检测 |
+| `useAppInitialization` | hook | `useAppInitialization.ts` | 应用初始化（数据库/字体/连接） |
+| `SplashScreen` | component | `SplashScreen.tsx` | 启动动画组件 |
 | `CommandTracker` | class | `shellOutputParser.ts` | 命令追踪器（提取终端执行的命令） |
 | `extractLastCommand` | fn | `shellOutputParser.ts` | 从终端缓冲区提取最后命令 |
 | `isPromptLine` | fn | `shellOutputParser.ts` | 检测一行是否为 Shell 提示符 |
@@ -395,6 +432,44 @@ historyService.ts
 - 按 70% 最近使用 + 30% 频率排序
 - 使用主题色显示建议文本
 
+### 8. 启动动画架构
+
+**静态预加载器** (`index.html`):
+- 纯 HTML + CSS，不依赖 JS
+- 在 React 加载期间立即显示
+- 使用 CSS 变量支持亮色/暗色主题
+
+**启动流程**:
+```
+Tauri 启动 → WebView 加载 index.html → 显示静态预加载器
+    ↓
+加载 JS bundle → React 初始化 → 过渡到 SplashScreen
+    ↓
+useAppInitialization 执行初始化步骤
+    ↓
+完成 → 淡出进入主应用
+```
+
+**初始化步骤**:
+1. 初始化数据库
+2. 加载系统字体
+3. 迁移历史数据
+4. 加载连接列表
+5. 清理过期记录
+
+### 9. 字体缓存策略
+
+**缓存机制**:
+- 首次加载：调用 `get_monospace_fonts` → 存入 `localStorage`
+- 后续启动：从 `localStorage` 读取（毫秒级）
+- 手动刷新：设置面板点击按钮 → 重新加载并更新缓存
+
+**存储键**: `iterminal_cached_fonts`
+
+**相关函数**:
+- `reloadFonts()` - terminalStore 中重新加载字体
+- 设置面板刷新按钮触发
+
 ## 约定
 
 **前端 (React/TypeScript):**
@@ -461,11 +536,14 @@ npm run test:e2e
 - Shell 输出通过 Events 推送，事件名格式 `shell-output-{shellId}`
 - 关闭会话时需调用 `unlisten()` 取消事件订阅
 - 无 CI/CD 配置（无 .github 目录）
-- 测试覆盖: 前端 101 tests, 后端 38 tests, E2E 18 tests
+- 测试覆盖: 前端 135 tests, 后端 38 tests, E2E 18 tests
 - russh 使用原生 async/await，需要 Rust 1.75+
 - License 系统: 免费版 3 连接限制，付费版无限连接
 - 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)
 - MCP 已发布到 npm: `iterminal-mcp-server@1.0.4`
+- 字体列表缓存在 localStorage，首次加载后不再重复加载
+- 连接列表在启动时预加载到 store，全局共享状态
+- 命令历史在数据库启动时自动清理过期和孤立记录
 
 ## 新窗口功能
 

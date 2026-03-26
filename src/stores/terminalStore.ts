@@ -164,6 +164,10 @@ export function formatShortcutForDisplay(shortcut: string): string {
 interface TerminalState {
   connectedConnections: ConnectedConnection[]
   activeConnectionId: string | null
+  // 所有连接列表（启动时预加载）
+  allConnections: Connection[]
+  // 连接列表加载状态
+  connectionsLoading: boolean
   // 侧边栏折叠状态
   sidebarCollapsed: boolean
   // 文件管理面板显示状态（按连接ID）
@@ -187,6 +191,18 @@ interface TerminalState {
   // 字体加载状态
   fontsLoading: boolean
 
+  // 设置所有连接
+  setAllConnections: (connections: Connection[]) => void
+  // 设置连接加载状态
+  setConnectionsLoading: (loading: boolean) => void
+  // 更新单个连接
+  updateConnection: (connection: Connection) => void
+  // 更新连接状态
+  updateConnectionStatus: (id: string, status: Connection['status']) => void
+  // 删除连接
+  removeConnection: (id: string) => void
+  // 添加新连接到列表
+  addNewConnection: (connection: Connection) => void
   // 添加连接
   addConnection: (connection: Connection, shellId: string) => string
   // 恢复连接（用于新窗口，包含分屏结构）
@@ -249,6 +265,8 @@ interface TerminalState {
   setAvailableFonts: (fonts: string[]) => void
   // 设置字体加载状态
   setFontsLoading: (loading: boolean) => void
+  // 重新加载字体列表
+  reloadFonts: () => Promise<void>
 
   markConnectionDisconnected: (connectionId: string, reason: DisconnectReason) => void
   clearConnectionDisconnected: (connectionId: string) => void
@@ -281,6 +299,8 @@ function getNextSessionNumber(pane: SplitPane): number {
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   connectedConnections: [],
   activeConnectionId: null,
+  allConnections: [],
+  connectionsLoading: true,
   sidebarCollapsed: false,
   fileManagerVisible: {},
   transferManagerVisible: {},
@@ -323,7 +343,43 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   availableFonts: [],
   fontsLoading: false,
 
-  addConnection: (connection, shellId) => {
+  setAllConnections: (connections) => {
+    set({ allConnections: connections, connectionsLoading: false })
+  },
+
+  setConnectionsLoading: (loading) => {
+    set({ connectionsLoading: loading })
+  },
+
+  updateConnection: (connection) => {
+    set((state) => ({
+      allConnections: state.allConnections.map(c =>
+        c.id === connection.id ? connection : c
+      )
+    }))
+  },
+
+  updateConnectionStatus: (id: string, status: Connection['status']) => {
+    set((state) => ({
+      allConnections: state.allConnections.map(c =>
+        c.id === id ? { ...c, status } : c
+      )
+    }))
+  },
+
+  removeConnection: (id: string) => {
+    set((state) => ({
+      allConnections: state.allConnections.filter(c => c.id !== id)
+    }))
+  },
+
+  addNewConnection: (connection: Connection) => {
+    set((state) => ({
+      allConnections: [...state.allConnections, connection]
+    }))
+  },
+
+  addConnection: (connection: Connection, shellId: string) => {
     const sessionId = Date.now().toString()
     const newSession: Session = {
       id: sessionId,
@@ -1145,6 +1201,22 @@ restoreConnection: (connection, rootPane) => {
 
   setFontsLoading: (loading: boolean) => {
     set({ fontsLoading: loading })
+  },
+
+  reloadFonts: async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    set({ fontsLoading: true })
+    try {
+      const fonts = await invoke<string[]>('get_monospace_fonts')
+      if (fonts.length > 0) {
+        set({ availableFonts: fonts })
+        localStorage.setItem('iterminal_cached_fonts', JSON.stringify(fonts))
+      }
+    } catch (error) {
+      console.error('Failed to reload fonts:', error)
+    } finally {
+      set({ fontsLoading: false })
+    }
   },
 
   markConnectionDisconnected: (connectionId: string, reason: DisconnectReason) => {

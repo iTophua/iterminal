@@ -41,27 +41,6 @@ interface SavedSession {
   savedAt: number
 }
 
-function FontPreloader() {
-  const setAvailableFonts = useTerminalStore(s => s.setAvailableFonts)
-  const setFontsLoading = useTerminalStore(s => s.setFontsLoading)
-  const availableFonts = useTerminalStore(s => s.availableFonts)
-
-  useEffect(() => {
-    if (availableFonts.length === 0) {
-      setFontsLoading(true)
-      invoke<string[]>('get_monospace_fonts')
-        .then(fonts => setAvailableFonts(fonts))
-        .catch(err => {
-          console.error('Failed to load fonts:', err)
-          setAvailableFonts(['Menlo', 'Monaco', 'Courier New'])
-        })
-        .finally(() => setFontsLoading(false))
-    }
-  }, [availableFonts.length, setAvailableFonts, setFontsLoading])
-
-  return null
-}
-
 function MenuActionHandler() {
   const navigate = useNavigate()
   const setSettingsVisible = useTerminalStore(s => s.setSettingsVisible)
@@ -352,7 +331,6 @@ function App() {
 function MainApp() {
   return (
     <>
-      <FontPreloader />
       <SessionRestorer />
       <SessionSaver />
       <MenuActionHandler />

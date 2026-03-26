@@ -3,7 +3,7 @@ import { useTerminalStore, type TerminalSettings, type ShortcutSettings, formatS
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
 import { useState, useEffect, useCallback } from 'react'
-import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined } from '@ant-design/icons'
+import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
@@ -43,6 +43,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const resetShortcutSettings = useTerminalStore(state => state.resetShortcutSettings)
   const availableFonts = useTerminalStore(state => state.availableFonts)
   const fontsLoading = useTerminalStore(state => state.fontsLoading)
+  const reloadFonts = useTerminalStore(state => state.reloadFonts)
   
   const appThemeMode = useThemeStore(state => state.appThemeMode)
   const terminalTheme = useThemeStore(state => state.terminalTheme)
@@ -331,21 +332,30 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
           字体 {fontsLoading && <Spin size="small" />}
         </Text>
-        <Select
-          value={tempSettings.fontFamily}
-          onChange={handleFontChange}
-          options={availableFonts.map(font => ({
-            value: font,
-            label: font,
-          }))}
-          style={{ width: '100%' }}
-          popupMatchSelectWidth
-          disabled={fontsLoading || availableFonts.length === 0}
-          showSearch
-          filterOption={(input, option) =>
-            (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-          }
-        />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Select
+            value={tempSettings.fontFamily}
+            onChange={handleFontChange}
+            options={availableFonts.map(font => ({
+              value: font,
+              label: font,
+            }))}
+            style={{ flex: 1 }}
+            popupMatchSelectWidth
+            disabled={fontsLoading || availableFonts.length === 0}
+            showSearch
+            filterOption={(input, option) =>
+              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+            }
+          />
+          <Tooltip title="重新加载字体列表">
+            <Button
+              icon={<ReloadOutlined />}
+              loading={fontsLoading}
+              onClick={() => reloadFonts()}
+            />
+          </Tooltip>
+        </div>
       </div>
 
       <div style={{ marginBottom: 20 }}>
