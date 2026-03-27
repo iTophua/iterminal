@@ -1,6 +1,6 @@
 {
   "name": "iterminal",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "SSH Connection Manager",
   "type": "module",
   "scripts": {
