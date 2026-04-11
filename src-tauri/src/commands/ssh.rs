@@ -107,7 +107,7 @@ impl Handler for SshClientHandler {
 }
 
 pub struct SshSession {
-    pub handle: Handle<SshClientHandler>,
+    pub handle: Arc<Handle<SshClientHandler>>,
     pub connection: SSHConnection,
 }
 
@@ -169,7 +169,10 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
         .and_then(|mut a| a.next())
         .ok_or("解析地址失败")?;
 
-    let config = Arc::new(russh::client::Config::default());
+    let mut config = russh::client::Config::default();
+    config.keepalive_interval = Some(std::time::Duration::from_secs(30));
+    config.keepalive_max = 3;
+    let config = Arc::new(config);
     let addr_str = socket_addr.to_string();
     let handler = SshClientHandler::new(connection.host.clone(), connection.port);
 
@@ -232,31 +235,18 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
         if sessions.contains_key(&id) {
             return Ok(true);
         }
-        sessions.insert(id, SshSession { handle, connection });
+        sessions.insert(id, SshSession { 
+            handle: Arc::new(handle), 
+            connection,
+        });
     }
     Ok(true)
 }
 
 #[tauri::command]
 pub async fn disconnect_ssh(id: String) -> Result<bool, String> {
-    let prefix = format!("{}-shell", &id);
-    {
-        let mut shells = SHELLS.write().await;
-        let shell_ids: Vec<String> = shells
-            .keys()
-            .filter(|k| k.starts_with(&prefix))
-            .cloned()
-            .collect();
-        for shell_id in shell_ids {
-            if let Some(shell) = shells.remove(&shell_id) {
-                let _ = shell.cancel_tx.send(());
-            }
-        }
-    }
-
-    // 关闭 SFTP 会话
-    super::sftp::close_sftp_session(&id).await;
-
+    cleanup_connection(&id).await;
+    
     if let Some(session) = SESSIONS.write().await.remove(&id) {
         let _ = session
             .handle
@@ -283,14 +273,20 @@ pub async fn execute_command(id: String, command: String) -> Result<CommandResul
         .map_err(|e| e.to_string())?;
 
     let mut output = Vec::new();
+    let mut error_output = Vec::new();
     while let Some(msg) = channel.wait().await {
         match msg {
             ChannelMsg::Data { data } => output.extend_from_slice(&data),
+            ChannelMsg::ExtendedData { data, ext } => {
+                if ext == 1 {
+                    error_output.extend_from_slice(&data);
+                }
+            }
             ChannelMsg::ExitStatus { exit_status } => {
                 return Ok(CommandResult {
                     success: exit_status == 0,
                     output: String::from_utf8_lossy(&output).to_string(),
-                    error: None,
+                    error: if error_output.is_empty() { None } else { Some(String::from_utf8_lossy(&error_output).to_string()) },
                 });
             }
             ChannelMsg::Eof => break,
@@ -301,7 +297,7 @@ pub async fn execute_command(id: String, command: String) -> Result<CommandResul
     Ok(CommandResult {
         success: true,
         output: String::from_utf8_lossy(&output).to_string(),
-        error: None,
+        error: if error_output.is_empty() { None } else { Some(String::from_utf8_lossy(&error_output).to_string()) },
     })
 }
 

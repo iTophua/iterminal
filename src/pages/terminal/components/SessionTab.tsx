@@ -1,4 +1,4 @@
-import { CloseOutlined, HolderOutlined } from '@ant-design/icons'
+import { CloseOutlined } from '@ant-design/icons'
 
 interface DraggableSessionTabProps {
   sessionId: string
@@ -8,10 +8,6 @@ interface DraggableSessionTabProps {
   onDragStart: (sessionId: string, connectionId: string, title: string) => void
 }
 
-/**
- * 可拖拽的会话标签组件
- * 用于会话在分屏间的拖拽移动
- */
 export function DraggableSessionTab({
   sessionId,
   connectionId,
@@ -28,6 +24,7 @@ export function DraggableSessionTab({
         alignItems: 'center',
         gap: 0,
         padding: '2px 0',
+        userSelect: 'none',
       }}
       onPointerDown={(e) => {
         if (e.button !== 0) return
@@ -38,7 +35,6 @@ export function DraggableSessionTab({
         onDragStart(sessionId, connectionId, title)
       }}
     >
-      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
       <span style={{ lineHeight: '16px' }}>{title}</span>
       <CloseOutlined
         className="session-tab-close"

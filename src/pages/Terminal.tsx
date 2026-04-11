@@ -621,6 +621,11 @@ const handlePointerUp = () => {
           try { addon?.fit() } catch {}
         })
       }, 100)
+      setTimeout(() => {
+        Object.values(fitAddons.current).forEach(addon => {
+          try { addon?.fit() } catch {}
+        })
+      }, 300)
     }
     paneStructureRef.current = structureKey
   }, [activeConnection, activeConnection?.rootPane])
@@ -1017,18 +1022,25 @@ const handlePointerUp = () => {
           unlistenersRef.current[key] = unlisten
 
           let resizeTimer: ReturnType<typeof setTimeout> | null = null
+          let resizeRAF: number | null = null
           const resizeObserver = new ResizeObserver(() => {
             if (resizeTimer) {
               clearTimeout(resizeTimer)
             }
-            resizeTimer = setTimeout(() => {
-              const addon = fitAddons.current[key]
-              if (addon) {
-                try { addon.fit() } catch {}
-              }
-              clearGhostText(key)
-              resizeTimer = null
-            }, 150)
+            if (resizeRAF) {
+              cancelAnimationFrame(resizeRAF)
+            }
+            resizeRAF = requestAnimationFrame(() => {
+              resizeTimer = setTimeout(() => {
+                const addon = fitAddons.current[key]
+                if (addon) {
+                  try { addon.fit() } catch {}
+                }
+                clearGhostText(key)
+                resizeTimer = null
+                resizeRAF = null
+              }, 100)
+            })
           })
           resizeObserver.observe(container)
           resizeObserversRef.current[key] = resizeObserver
@@ -1127,6 +1139,27 @@ const handlePointerUp = () => {
 
       clearConnectionDisconnected(connectionId)
       disconnectHandledRef.current.delete(connectionId)
+      
+      setTimeout(() => {
+        sessionsWithShell.forEach(session => {
+          const key = `${connectionId}_${session.id}`
+          const addon = fitAddons.current[key]
+          if (addon) {
+            try { addon.fit() } catch {}
+          }
+        })
+      }, 100)
+      
+      setTimeout(() => {
+        sessionsWithShell.forEach(session => {
+          const key = `${connectionId}_${session.id}`
+          const addon = fitAddons.current[key]
+          if (addon) {
+            try { addon.fit() } catch {}
+          }
+        })
+      }, 300)
+      
       if (isManual) {
         message.success('重连成功')
       }
@@ -1798,7 +1831,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           dragStartRef.current = { sessionId: sid, connectionId: cid, title }
           draggedSessionRef.current = { sessionId: sid, connectionId: cid, title }
           setDraggedSession({ sessionId: sid, connectionId: cid, title })
-        }, 500)
+        }, 800)
       }}
         />
       ),
