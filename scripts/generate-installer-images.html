@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iTerminal Installer Images Generator</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #1a1a1a;
+      color: #fff;
+      padding: 40px;
+    }
+    
+    h1 {
+      text-align: center;
+      margin-bottom: 40px;
+      color: #3B82F6;
+    }
+    
+    .section {
+      margin-bottom: 60px;
+    }
+    
+    .section h2 {
+      margin-bottom: 20px;
+      color: #94A3B8;
+      font-size: 18px;
+    }
+    
+    .image-container {
+      display: inline-block;
+      margin-right: 20px;
+      vertical-align: top;
+    }
+    
+    .image-wrapper {
+      border: 2px solid #333;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+    
+    .info {
+      margin-top: 10px;
+      font-size: 14px;
+      color: #94A3B8;
+    }
+    
+    .instructions {
+      background: #2a2a2a;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 40px;
+      border-left: 4px solid #3B82F6;
+    }
+    
+    .instructions h3 {
+      margin-bottom: 10px;
+      color: #3B82F6;
+    }
+    
+    .instructions ol {
+      margin-left: 20px;
+      line-height: 1.8;
+    }
+    
+    .instructions code {
+      background: #1a1a1a;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-family: "Monaco", "Menlo", monospace;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎨 iTerminal 安装界面图片生成器</h1>
+  
+  <div class="instructions">
+    <h3>使用说明</h3>
+    <ol>
+      <li>在浏览器中打开此文件</li>
+      <li>右键点击下方的图片，选择"另存为图片"或使用截图工具</li>
+      <li>将图片保存到 <code>src-tauri/installer/</code> 目录</li>
+      <li>文件名已在每张图片下方标注</li>
+    </ol>
+  </div>
+
+  <div class="section">
+    <h2>📱 macOS DMG 安装界面背景 (1320 x 800)</h2>
+    <div class="image-container">
+      <div class="image-wrapper">
+        <canvas id="dmg-background" width="1320" height="800"></canvas>
+      </div>
+      <div class="info">文件名: dmg-background.png</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>🖥️ Windows 安装向导侧边栏 (164 x 314)</h2>
+    <div class="image-container">
+      <div class="image-wrapper">
+        <canvas id="windows-sidebar" width="164" height="314"></canvas>
+      </div>
+      <div class="info">文件名: installer-sidebar.bmp</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>🖥️ Windows 安装向导头部 (150 x 57)</h2>
+    <div class="image-container">
+      <div class="image-wrapper">
+        <canvas id="windows-header" width="150" height="57"></canvas>
+      </div>
+      <div class="info">文件名: installer-header.bmp</div>
+    </div>
+  </div>
+
+  <script>
+    const colors = {
+      primary: '#3B82F6',
+      primaryDark: '#1E40AF',
+      secondary: '#10B981',
+      background: '#0F172A',
+      backgroundLight: '#1E293B',
+      text: '#F8FAFC',
+      textMuted: '#94A3B8',
+      accent: '#8B5CF6'
+    };
+
+    function drawDMGBackground() {
+      const canvas = document.getElementById('dmg-background');
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const gradient = ctx.createLinearGradient(0, 0, width, height);
+      gradient.addColorStop(0, '#0F172A');
+      gradient.addColorStop(0.5, '#1E293B');
+      gradient.addColorStop(1, '#0F172A');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.08)';
+      ctx.beginPath();
+      ctx.arc(200, 300, 250, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(139, 92, 246, 0.06)';
+      ctx.beginPath();
+      ctx.arc(1100, 200, 200, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(16, 185, 129, 0.05)';
+      ctx.beginPath();
+      ctx.arc(900, 600, 180, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = colors.text;
+      ctx.font = 'bold 72px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('iTerminal', width / 2, 100);
+
+      ctx.fillStyle = colors.textMuted;
+      ctx.font = '28px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillText('SSH Connection Manager', width / 2, 155);
+
+      const arrowY = height / 2 + 80;
+      ctx.strokeStyle = colors.primary;
+      ctx.lineWidth = 4;
+      ctx.setLineDash([20, 10]);
+      ctx.beginPath();
+      ctx.moveTo(width / 2 - 250, arrowY);
+      ctx.lineTo(width / 2 + 250, arrowY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = colors.primary;
+      ctx.beginPath();
+      ctx.moveTo(width / 2 + 250, arrowY);
+      ctx.lineTo(width / 2 + 220, arrowY - 20);
+      ctx.lineTo(width / 2 + 220, arrowY + 20);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = colors.textMuted;
+      ctx.font = '24px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillText('拖拽到 Applications 文件夹完成安装', width / 2, arrowY + 60);
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(width / 2 - 300, height / 2, 120, 0, Math.PI * 2);
+      ctx.stroke();
+      
+      ctx.beginPath();
+      ctx.arc(width / 2 + 300, height / 2, 120, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.font = '14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillText('iTerminal.app', width / 2 - 300, height / 2 + 150);
+      ctx.fillText('Applications', width / 2 + 300, height / 2 + 150);
+    }
+
+    function drawWindowsSidebar() {
+      const canvas = document.getElementById('windows-sidebar');
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const gradient = ctx.createLinearGradient(0, 0, 0, height);
+      gradient.addColorStop(0, '#1E293B');
+      gradient.addColorStop(1, '#0F172A');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = 'rgba(59, 130, 246, 0.2)';
+      ctx.beginPath();
+      ctx.arc(82, 80, 50, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = colors.text;
+      ctx.font = 'bold 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('iTerminal', 82, 160);
+
+      ctx.fillStyle = colors.textMuted;
+      ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.fillText('SSH Manager', 82, 180);
+
+      ctx.fillStyle = colors.primary;
+      ctx.fillRect(20, height - 40, width - 40, 3);
+    }
+
+    function drawWindowsHeader() {
+      const canvas = document.getElementById('windows-header');
+      const ctx = canvas.getContext('2d');
+      const width = canvas.width;
+      const height = canvas.height;
+
+      const gradient = ctx.createLinearGradient(0, 0, width, 0);
+      gradient.addColorStop(0, '#1E293B');
+      gradient.addColorStop(1, '#0F172A');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, width, height);
+
+      ctx.fillStyle = colors.text;
+      ctx.font = 'bold 16px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('iTerminal', width / 2, height / 2);
+    }
+
+    drawDMGBackground();
+    drawWindowsSidebar();
+    drawWindowsHeader();
+  </script>
+</body>
+</html>
