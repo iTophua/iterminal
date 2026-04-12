@@ -28,13 +28,13 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 - 🚀 **轻量高效** - 基于 Tauri，内存占用低，启动速度快
 - 🔐 **安全可靠** - AES-256-GCM 加密存储连接信息，支持 SSH 密钥认证，自动密码迁移
 - 🖥️ **多标签管理** - 支持同时打开多个 SSH 会话
-- 📐 **终端分屏** - 支持水平/垂直分屏，可拖拽调整大小
+- 📐 **终端分屏** - 支持水平/垂直分屏，嵌套分屏，可拖拽调整大小
 - 🔍 **终端搜索** - 支持终端内容全文搜索
 - ⌨️ **快捷键系统** - 丰富的快捷键支持，可自定义
-- 📁 **文件管理** - SFTP 文件浏览、上传下载、拖拽上传、文件搜索、压缩解压
-- 📊 **系统监控** - 实时 CPU、内存、磁盘监控面板
+- 📁 **文件管理** - SFTP 文件浏览、上传下载、拖拽上传、文件搜索、压缩解压、文件预览/编辑
+- 📊 **系统监控** - 实时 CPU、内存、磁盘监控面板，进程管理
 - 🤖 **MCP 支持** - 内置 MCP 服务器，支持 AI 助手集成
-- 🪟 **多窗口支持** - 拖拽连接到边缘创建新窗口，窗口位置自动记忆
+- 🪟 **多窗口支持** - 拖拽连接到边缘创建新窗口，完整终端功能复用
 - 📋 **中文支持** - 完整的中文界面和右键菜单
 - 🌍 **跨平台** - 支持 Windows、macOS、Linux
 
@@ -50,10 +50,10 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 ## 应用图片
 
 <div style="display: flex; overflow-x: auto; gap: 10px; white-space: nowrap;">
-  <img src="https://github.com/user-attachments/assets/4068ff65-8c11-44ed-92bc-c4db42a6103e" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
-  <img src="https://github.com/user-attachments/assets/e89feda1-7843-410a-a731-379bf8a8fac4" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
-  <img src="https://github.com/user-attachments/assets/789a9a53-f748-4e42-abd2-6f0a4246de01" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
-  <img src="https://github.com/user-attachments/assets/a123419b-5548-4c03-83fe-f29848a957d1" alt="image" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://raw.githubusercontent.com/iTophua/iterminal/main/assets/screenshots/screenshot1-connections.png" alt="连接管理" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://raw.githubusercontent.com/iTophua/iterminal/main/assets/screenshots/screenshot2-terminal.png" alt="终端分屏" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://raw.githubusercontent.com/iTophua/iterminal/main/assets/screenshots/screenshot3-filemanager.png" alt="文件管理" style="height: 300px; width: auto; flex-shrink: 0;" />
+  <img src="https://raw.githubusercontent.com/iTophua/iterminal/main/assets/screenshots/screenshot4-monitor.png" alt="系统监控" style="height: 300px; width: auto; flex-shrink: 0;" />
 </div>
 
 
@@ -209,6 +209,7 @@ npm run tauri build
 
 - 拖拽连接标签到窗口边缘创建新窗口
 - 新窗口保留完整终端功能
+- 终端会话自动恢复到新窗口
 - 窗口位置自动记忆
 
 ### 3. 文件管理
@@ -216,10 +217,11 @@ npm run tauri build
 #### 3.1 文件浏览
 
 - SFTP 协议远程文件浏览
-- 树形目录结构展示
+- 树形/列表双视图切换
 - 路径输入框快速跳转
 - 显示/隐藏隐藏文件
 - 文件大小显示
+- 拖拽上传到指定目录
 
 #### 3.2 文件操作
 
