@@ -25,12 +25,12 @@ fn set_bg_color(
     
     #[cfg(target_os = "windows")]
     {
-        let _ = window.setBackgroundColor(Some(tauri::Color(r, g, b, a)));
+        let _ = window.set_background_color(Some(tauri::window::Color(r, g, b, a)));
     }
-    
+
     #[cfg(target_os = "linux")]
     {
-        let _ = window.setBackgroundColor(Some(tauri::Color(r, g, b, a)));
+        let _ = window.set_background_color(Some(tauri::window::Color(r, g, b, a)));
     }
     
     Ok(())
