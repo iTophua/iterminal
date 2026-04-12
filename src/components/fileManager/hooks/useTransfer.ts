@@ -8,6 +8,8 @@ import { useTerminalStore } from '../../../stores/terminalStore'
 import { TreeNode, ConflictFile } from '../types'
 import { generateTaskId, getFileName, getParentPath } from '../utils'
 
+const TRANSFER_TIMEOUT_MS = 30_000 // 30 秒无进度视为超时
+
 interface UseTransferOptions {
   connectionId: string
   currentPath: string
@@ -79,6 +81,41 @@ export function useTransfer({
     }
   }, [])
 
+  /** 计算传输速度 (bytes/sec) */
+  const calculateSpeed = useCallback((transferred: number, startTime: number): number => {
+    const elapsed = (Date.now() - startTime) / 1000
+    if (elapsed <= 0) return 0
+    return transferred / elapsed
+  }, [])
+
+  /** 设置传输超时定时器 */
+  const setupTransferTimeout = useCallback((
+    taskId: string,
+    unlistenProgress: () => void,
+    unlistenComplete: () => void,
+    failWithError: (err: string) => void
+  ) => {
+    let lastTransferred = 0
+    let lastActivityTime = Date.now()
+
+    const checkInterval = setInterval(() => {
+      const progress = useTransferStore.getState().progress[taskId]
+      if (progress) {
+        if (progress.transferred !== lastTransferred) {
+          lastTransferred = progress.transferred
+          lastActivityTime = Date.now()
+        } else if (Date.now() - lastActivityTime > TRANSFER_TIMEOUT_MS) {
+          clearInterval(checkInterval)
+          unlistenProgress()
+          unlistenComplete()
+          failWithError(`传输超时：${Math.round(TRANSFER_TIMEOUT_MS / 1000)} 秒无进度`)
+        }
+      }
+    }, 1000)
+
+    return checkInterval
+  }, [])
+
   const performUpload = useCallback(
     async (localPath: string, remotePath: string, fileName: string, targetDir: string) => {
       const taskId = generateTaskId()
@@ -105,15 +142,17 @@ export function useTransfer({
       listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
         `transfer-progress-${taskId}`,
         (event) => {
-          useTransferStore
-            .getState()
-            .updateProgress(
-              taskId,
-              event.payload.transferred,
-              event.payload.total,
-              event.payload.totalFiles,
-              event.payload.completedFiles
-            )
+          const state = useTransferStore.getState()
+          const record = state.records[taskId]
+          const speed = record ? calculateSpeed(event.payload.transferred, record.startTime) : 0
+          state.updateProgress(
+            taskId,
+            event.payload.transferred,
+            event.payload.total,
+            event.payload.totalFiles,
+            event.payload.completedFiles,
+            speed
+          )
         }
       ).then((unlistenProgress) => {
         listen<{ success: boolean; cancelled: boolean; error?: string }>(
@@ -136,16 +175,26 @@ export function useTransfer({
             }
           }
         ).then((unlistenComplete) => {
+          const failWithError = (err: string) => {
+            useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: err })
+            message.error(`上传失败: ${err}`)
+          }
+
+          const timeoutInterval = setupTransferTimeout(taskId, unlistenProgress, unlistenComplete, failWithError)
+
           invoke('upload_file', { taskId, connectionId, localPath, remotePath }).catch((err) => {
+            clearInterval(timeoutInterval)
             unlistenProgress()
             unlistenComplete()
             useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
             message.error(`上传失败: ${err}`)
+          }).finally(() => {
+            clearInterval(timeoutInterval)
           })
         })
       })
     },
-    [connectionId, connection, message, refreshDirectory]
+    [connectionId, connection, message, refreshDirectory, calculateSpeed, setupTransferTimeout]
   )
 
   const uploadFile = useCallback(
@@ -326,7 +375,10 @@ export function useTransfer({
           listen<{ transferred: number; total: number }>(
             `transfer-progress-${taskId}`,
             (event) => {
-              useTransferStore.getState().updateProgress(taskId, event.payload.transferred, event.payload.total)
+              const state = useTransferStore.getState()
+              const record = state.records[taskId]
+              const speed = record ? calculateSpeed(event.payload.transferred, record.startTime) : 0
+              state.updateProgress(taskId, event.payload.transferred, event.payload.total, undefined, undefined, speed)
             }
           ).then((unlistenProgress) => {
             listen<{ success: boolean; cancelled: boolean; error?: string }>(
@@ -348,16 +400,26 @@ export function useTransfer({
                 }
               }
             ).then((unlistenComplete) => {
+              const failWithError = (err: string) => {
+                useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: err })
+                message.error(`下载失败: ${err}`)
+              }
+
+              const timeoutInterval = setupTransferTimeout(taskId, unlistenProgress, unlistenComplete, failWithError)
+
               invoke('download_file', {
                 taskId,
                 connectionId,
                 remotePath,
                 localPath: savePath,
               }).catch((err) => {
+                clearInterval(timeoutInterval)
                 unlistenProgress()
                 unlistenComplete()
                 useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
                 message.error(`下载失败: ${err}`)
+              }).finally(() => {
+                clearInterval(timeoutInterval)
               })
             })
           })
@@ -366,7 +428,7 @@ export function useTransfer({
         console.error('保存对话框取消:', err)
       }
     },
-    [connectionId, connection, message]
+    [connectionId, connection, message, calculateSpeed, setupTransferTimeout]
   )
 
   const handleDownloadSelected = useCallback(() => {

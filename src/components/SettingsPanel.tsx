@@ -2,6 +2,7 @@ import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, 
 import { useTerminalStore, type TerminalSettings, type ShortcutSettings, formatShortcutForDisplay } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
+import type { TerminalThemeName } from '../types/theme'
 import { useState, useEffect, useCallback } from 'react'
 import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
@@ -412,73 +413,157 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
           {themeList.map((theme) => {
             const isActive = selectedTheme === theme.id
+            const lightColor = theme.colors.light['--color-primary']
+            const darkColor = theme.colors.dark['--color-primary']
+            const lightBg = theme.colors.light['--color-bg-base']
+            const darkBg = theme.colors.dark['--color-bg-base']
+
             return (
               <div
                 key={theme.id}
                 onClick={() => setSelectedTheme(theme.id)}
                 style={{
                   cursor: 'pointer',
-                  borderRadius: 8,
-                  padding: '8px 6px',
+                  borderRadius: 10,
+                  overflow: 'hidden',
                   background: isActive
                     ? 'var(--color-bg-spotlight)'
                     : 'transparent',
                   border: `2px solid ${isActive ? 'var(--color-primary)' : 'var(--color-border-secondary)'}`,
-                  transition: 'all 0.2s ease',
-                  textAlign: 'center',
+                  transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                  transform: isActive ? 'translateY(-2px)' : 'none',
+                  boxShadow: isActive
+                    ? `0 4px 12px ${lightColor}30`
+                    : '0 1px 3px rgba(0,0,0,0.08)',
                 }}
                 onMouseEnter={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.transform = 'translateY(-2px)'
-                    e.currentTarget.style.borderColor = 'var(--color-text-quaternary)'
+                    e.currentTarget.style.transform = 'translateY(-3px)'
+                    e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.12)'
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!isActive) {
                     e.currentTarget.style.transform = 'translateY(0)'
-                    e.currentTarget.style.borderColor = 'var(--color-border-secondary)'
+                    e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.08)'
                   }
                 }}
               >
+                {/* 主题预览缩略图 */}
                 <div
                   style={{
-                    width: 32,
-                    height: 32,
-                    borderRadius: 7,
-                    margin: '0 auto 4px',
-                    background: `linear-gradient(135deg, ${theme.colors.light['--color-primary']} 0%, ${theme.colors.dark['--color-primary']} 100%)`,
                     position: 'relative',
-                    boxShadow: isActive
-                      ? `0 2px 8px ${theme.colors.light['--color-primary']}50, 0 0 12px ${theme.colors.dark['--color-primary']}30`
-                      : `0 1px 3px rgba(0,0,0,0.15)`,
-                    transition: 'box-shadow 0.2s ease, transform 0.15s ease',
+                    height: 48,
+                    display: 'flex',
+                    overflow: 'hidden',
                   }}
                 >
-                  {isActive && (
-                    <CheckOutlined
+                  {/* 亮色模式预览 */}
+                  <div
+                    style={{
+                      flex: 1,
+                      background: lightBg,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative',
+                    }}
+                  >
+                    <div
                       style={{
-                        position: 'absolute',
-                        top: '50%',
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        color: '#fff',
-                        fontSize: 14,
-                        textShadow: '0 1px 3px rgba(0,0,0,0.4)',
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        background: lightColor,
+                        boxShadow: `0 0 8px ${lightColor}60`,
                       }}
                     />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        right: 4,
+                        top: 4,
+                        fontSize: 8,
+                        color: theme.colors.light['--color-text-tertiary'],
+                      }}
+                    >
+                      <SunOutlined />
+                    </div>
+                  </div>
+
+                  {/* 分隔线 */}
+                  <div style={{ width: 1, background: 'var(--color-border)' }} />
+
+                  {/* 暗色模式预览 */}
+                  <div
+                    style={{
+                      flex: 1,
+                      background: darkBg,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      position: 'relative',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 16,
+                        height: 16,
+                        borderRadius: 4,
+                        background: darkColor,
+                        boxShadow: `0 0 8px ${darkColor}60`,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        right: 4,
+                        top: 4,
+                        fontSize: 8,
+                        color: theme.colors.dark['--color-text-tertiary'],
+                      }}
+                    >
+                      <MoonOutlined />
+                    </div>
+                  </div>
+
+                  {/* 激活状态覆盖层 */}
+                  {isActive && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background: `${lightColor}15`,
+                      }}
+                    >
+                      <CheckOutlined
+                        style={{
+                          color: 'var(--color-primary)',
+                          fontSize: 20,
+                          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+                        }}
+                      />
+                    </div>
                   )}
                 </div>
-                <Text
-                  style={{
-                    fontSize: 11,
-                    color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)',
-                    fontWeight: isActive ? 600 : 400,
-                    display: 'block',
-                    lineHeight: 1.3,
-                  }}
-                >
-                  {theme.name}
-                </Text>
+
+                {/* 主题名称 */}
+                <div style={{ padding: '6px 4px', textAlign: 'center' }}>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                      fontWeight: isActive ? 600 : 400,
+                      display: 'block',
+                      lineHeight: 1.3,
+                    }}
+                  >
+                    {theme.name}
+                  </Text>
+                </div>
               </div>
             )
           })}
@@ -518,24 +603,154 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
 
       <div>
-        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
-          终端主题
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+          <Text style={{ color: 'var(--color-text-secondary)' }}>
+            终端主题
+          </Text>
+          <Tooltip title="跟随应用主题时，终端颜色会自动匹配当前应用主题">
+            <span style={{ fontSize: 12, color: 'var(--color-text-tertiary)', cursor: 'help' }}>
+              什么是跟随模式？
+            </span>
+          </Tooltip>
+        </div>
+
+        {/* 跟随应用主题开关 */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 12px',
+            marginBottom: 12,
+            background: terminalTheme === null ? 'var(--color-bg-spotlight)' : 'var(--color-bg-container)',
+            border: `1px solid ${terminalTheme === null ? 'var(--color-primary)' : 'var(--color-border)'}`,
+            borderRadius: 8,
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+          }}
+          onClick={() => setTerminalTheme(null)}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CheckCircleOutlined
+              style={{
+                color: terminalTheme === null ? 'var(--color-primary)' : 'var(--color-text-quaternary)',
+                fontSize: 16,
+              }}
+            />
+            <div>
+              <Text style={{
+                color: terminalTheme === null ? 'var(--color-primary)' : 'var(--color-text)',
+                fontWeight: terminalTheme === null ? 600 : 400,
+              }}>
+                跟随应用主题
+              </Text>
+              <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
+                终端颜色自动匹配当前应用主题
+              </Text>
+            </div>
+          </div>
+          {terminalTheme === null && (
+            <Tag color="green" style={{ margin: 0 }}>当前</Tag>
+          )}
+        </div>
+
+        <Text style={{ color: 'var(--color-text-secondary)', fontSize: 12, display: 'block', marginBottom: 8 }}>
+          或选择固定主题
         </Text>
-        <Select
-          value={terminalTheme ?? '__auto__'}
-          onChange={(value) => setTerminalTheme(value === '__auto__' ? null : value)}
-          options={[
-            { value: '__auto__', label: '跟随应用主题' },
-            ...terminalThemesList.map(theme => ({
-              value: theme.id,
-              label: theme.name,
-            })),
-          ]}
-          style={{ width: '100%' }}
-          allowClear={false}
-        />
-        <Text type="secondary" style={{ fontSize: 12, marginTop: 8, display: 'block' }}>
-          可选择 5 个预设终端主题，或跟随应用主题自动切换
+
+        {/* 终端主题网格选择 */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, marginBottom: 8 }}>
+          {terminalThemesList.map((theme) => {
+            const isActive = terminalTheme === theme.id
+            const themeColors = theme.colors
+            return (
+              <div
+                key={theme.id}
+                onClick={() => setTerminalTheme(theme.id)}
+                style={{
+                  cursor: 'pointer',
+                  borderRadius: 8,
+                  padding: '8px 6px',
+                  background: isActive
+                    ? 'var(--color-bg-spotlight)'
+                    : 'var(--color-bg-container)',
+                  border: `2px solid ${isActive ? 'var(--color-primary)' : 'var(--color-border-secondary)'}`,
+                  transition: 'all 0.2s ease',
+                  textAlign: 'center',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.borderColor = 'var(--color-text-quaternary)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.borderColor = 'var(--color-border-secondary)'
+                  }
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 6,
+                    margin: '0 auto 4px',
+                    background: themeColors.background,
+                    border: `1px solid ${themeColors.foreground}40`,
+                    position: 'relative',
+                    boxShadow: isActive
+                      ? `0 2px 8px ${themeColors.foreground}40`
+                      : '0 1px 3px rgba(0,0,0,0.15)',
+                    transition: 'box-shadow 0.2s ease, transform 0.15s ease',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 4,
+                      borderRadius: 3,
+                      background: `linear-gradient(135deg, ${themeColors.green} 0%, ${themeColors.blue} 100%)`,
+                      opacity: 0.6,
+                    }}
+                  />
+                  {isActive && (
+                    <CheckOutlined
+                      style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        color: '#fff',
+                        fontSize: 14,
+                        textShadow: '0 1px 3px rgba(0,0,0,0.6)',
+                        zIndex: 1,
+                      }}
+                    />
+                  )}
+                </div>
+                <Text
+                  style={{
+                    fontSize: 10,
+                    color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                    fontWeight: isActive ? 600 : 400,
+                    display: 'block',
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {theme.name}
+                </Text>
+              </div>
+            )
+          })}
+        </div>
+
+        <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+          {terminalTheme
+            ? terminalThemesList.find(t => t.id === terminalTheme)?.description || ''
+            : '终端主题将跟随应用主题自动切换'
+          }
         </Text>
       </div>
     </div>
@@ -772,7 +987,7 @@ ${claudeConfig}`}
       <div style={{ padding: '0 16px' }}>
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-            <CrownOutlined style={{ fontSize: 24, color: isPaid ? '#faad14' : 'var(--color-text-tertiary)' }} />
+            <CrownOutlined style={{ fontSize: 24, color: isPaid ? 'var(--color-warning)' : 'var(--color-text-tertiary)' }} />
             <div>
               <Text strong style={{ fontSize: 18, color: 'var(--color-text)' }}>
                 {licenseTypeLabels[currentType]}
@@ -809,13 +1024,13 @@ ${claudeConfig}`}
                   style={{ 
                     flex: 1, 
                     padding: 16, 
-                    border: `1px solid ${currentType === 'Personal' ? '#faad14' : 'var(--color-border)'}`,
+                    border: `1px solid ${currentType === 'Personal' ? 'var(--color-warning)' : 'var(--color-border)'}`,
                     borderRadius: 8,
-                    background: currentType === 'Personal' ? 'rgba(250, 173, 20, 0.05)' : 'var(--color-bg-container)',
+                    background: currentType === 'Personal' ? 'color-mix(in srgb, var(--color-warning) 5%, transparent)' : 'var(--color-bg-container)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <CrownOutlined style={{ color: '#faad14' }} />
+                    <CrownOutlined style={{ color: 'var(--color-warning)' }} />
                     <Text strong style={{ color: 'var(--color-text)' }}>个人版</Text>
                   </div>
                   <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
@@ -824,7 +1039,7 @@ ${claudeConfig}`}
                   <Button 
                     type="primary" 
                     block 
-                    style={{ background: '#faad14', borderColor: '#faad14' }}
+                    style={{ background: 'var(--color-warning)', borderColor: 'var(--color-warning)' }}
                     onClick={() => window.open('https://iterminal.app/buy?plan=personal')}
                   >
                     立即购买
@@ -835,13 +1050,13 @@ ${claudeConfig}`}
                   style={{ 
                     flex: 1, 
                     padding: 16, 
-                    border: `1px solid ${currentType === 'Professional' ? '#722ed1' : 'var(--color-border)'}`,
+                    border: `1px solid ${currentType === 'Professional' ? 'var(--color-primary)' : 'var(--color-border)'}`,
                     borderRadius: 8,
-                    background: currentType === 'Professional' ? 'rgba(114, 46, 209, 0.05)' : 'var(--color-bg-container)',
+                    background: currentType === 'Professional' ? 'color-mix(in srgb, var(--color-primary) 5%, transparent)' : 'var(--color-bg-container)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <CrownOutlined style={{ color: '#722ed1' }} />
+                    <CrownOutlined style={{ color: 'var(--color-primary)' }} />
                     <Text strong style={{ color: 'var(--color-text)' }}>专业版</Text>
                   </div>
                   <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
@@ -850,7 +1065,7 @@ ${claudeConfig}`}
                   <Button 
                     type="primary" 
                     block 
-                    style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                    style={{ background: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
                     onClick={() => window.open('https://iterminal.app/buy?plan=professional')}
                   >
                     立即购买
@@ -908,6 +1123,7 @@ ${claudeConfig}`}
       { key: 'nextSuggestion', label: '下一条建议', description: '切换到下一条命令建议' },
       { key: 'prevSuggestion', label: '上一条建议', description: '切换到上一条命令建议' },
       { key: 'showHistory', label: '历史命令', description: '显示历史命令列表' },
+      { key: 'shortcutHelp', label: '快捷键帮助', description: '显示快捷键列表' },
     ]
 
     return (

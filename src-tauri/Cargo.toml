@@ -1,6 +1,6 @@
 [package]
 name = "iterminal"
-version = "2.2.0"
+version = "2.3.0"
 description = "SSH Connection Manager"
 authors = ["iTerminal"]
 edition = "2021"

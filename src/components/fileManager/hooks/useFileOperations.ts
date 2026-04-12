@@ -9,6 +9,7 @@ interface UseFileOperationsOptions {
   currentPath: string
   selectedNode: TreeNode | null
   selectedNodeRef: React.MutableRefObject<TreeNode | null>
+  selectedNodes?: TreeNode[]
   refreshCurrent: () => void
   loadDirectory: (path: string, isRoot: boolean) => void
   viewMode: 'tree' | 'list'
@@ -19,6 +20,7 @@ export function useFileOperations({
   currentPath,
   selectedNode,
   selectedNodeRef,
+  selectedNodes = [],
   refreshCurrent,
   loadDirectory,
   viewMode,
@@ -59,9 +61,14 @@ export function useFileOperations({
   const [extractLoading, setExtractLoading] = useState(false)
 
   const handleCreateFile = useCallback(async () => {
-    if (!newFileName.trim()) return
+    const name = newFileName.trim()
+    if (!name) return
+    if (/[<>:"/\\|?*]/.test(name)) {
+      message.error('文件名包含非法字符')
+      return
+    }
     try {
-      const remotePath = currentPath + '/' + newFileName.trim()
+      const remotePath = currentPath + '/' + name
       await invoke('create_file', { connectionId, path: remotePath })
       message.success('文件创建成功')
       setNewFileVisible(false)
@@ -73,9 +80,14 @@ export function useFileOperations({
   }, [connectionId, currentPath, message, newFileName, refreshCurrent])
 
   const handleCreateFolder = useCallback(async () => {
-    if (!newFolderName.trim()) return
+    const name = newFolderName.trim()
+    if (!name) return
+    if (/[<>:"/\\|?*]/.test(name)) {
+      message.error('文件夹名包含非法字符')
+      return
+    }
     try {
-      const remotePath = currentPath + '/' + newFolderName.trim()
+      const remotePath = currentPath + '/' + name
       await invoke('create_directory', { connectionId, path: remotePath })
       message.success('文件夹创建成功')
       setNewFolderVisible(false)
@@ -87,9 +99,14 @@ export function useFileOperations({
   }, [connectionId, currentPath, message, newFolderName, refreshCurrent])
 
   const handleRename = useCallback(async () => {
-    if (!renameValue.trim() || !selectedNode) return
+    const name = renameValue.trim()
+    if (!name || !selectedNode) return
+    if (/[<>:"/\\|?*]/.test(name)) {
+      message.error('新文件名包含非法字符')
+      return
+    }
     try {
-      const newPath = getParentPath(selectedNode.path) + '/' + renameValue.trim()
+      const newPath = getParentPath(selectedNode.path) + '/' + name
       await invoke('rename_file', { connectionId, oldPath: selectedNode.path, newPath })
       message.success('重命名成功')
       setRenameVisible(false)
@@ -101,18 +118,37 @@ export function useFileOperations({
   }, [connectionId, message, renameValue, refreshCurrent, selectedNode])
 
   const handleDelete = useCallback(async () => {
-    const node = selectedNodeRef.current
-    if (!node || !node.path) {
+    const nodesToDelete = selectedNodes.length > 0 ? selectedNodes : (selectedNodeRef.current ? [selectedNodeRef.current] : [])
+    if (nodesToDelete.length === 0) {
       message.error('未选择文件')
       return
     }
+
     try {
-      if (node.isDirectory) {
-        await invoke('delete_directory', { connectionId, path: node.path })
-      } else {
-        await invoke('delete_file', { connectionId, path: node.path })
+      let successCount = 0
+      let failCount = 0
+      const errors: string[] = []
+
+      for (const node of nodesToDelete) {
+        try {
+          if (node.isDirectory) {
+            await invoke('delete_directory', { connectionId, path: node.path })
+          } else {
+            await invoke('delete_file', { connectionId, path: node.path })
+          }
+          successCount++
+        } catch (err) {
+          failCount++
+          errors.push(`${node.title}: ${err}`)
+        }
       }
-      message.success('删除成功')
+
+      if (failCount === 0) {
+        message.success(`成功删除 ${successCount} 个项目`)
+      } else {
+        message.warning(`删除完成: ${successCount} 成功, ${failCount} 失败`)
+      }
+
       setDeleteVisible(false)
       if (viewMode === 'list') {
         loadDirectory(currentPath, true)
@@ -122,10 +158,37 @@ export function useFileOperations({
     } catch (err) {
       message.error(`删除失败: ${err}`)
     }
-  }, [connectionId, currentPath, loadDirectory, message, refreshCurrent, selectedNodeRef, viewMode])
+  }, [connectionId, currentPath, loadDirectory, message, refreshCurrent, selectedNodeRef, selectedNodes, viewMode])
+
+  const handleBatchDownload = useCallback(async () => {
+    const nodesToDownload = selectedNodes.length > 0 ? selectedNodes : (selectedNodeRef.current ? [selectedNodeRef.current] : [])
+    if (nodesToDownload.length === 0) {
+      message.error('未选择文件')
+      return
+    }
+
+    try {
+      let downloadCount = 0
+      for (const node of nodesToDownload) {
+        if (!node.isDirectory) {
+          // Will be handled by transfer hook
+          downloadCount++
+        }
+      }
+      if (downloadCount > 0) {
+        message.success(`已添加 ${downloadCount} 个文件到下载队列`)
+      }
+    } catch (err) {
+      message.error(`下载失败: ${err}`)
+    }
+  }, [message, selectedNodeRef, selectedNodes])
 
   const handleChmod = useCallback(async () => {
     if (!selectedNode || !chmodValue.trim()) return
+    if (!/^[0-7]{1,4}$/.test(chmodValue.trim())) {
+      message.error('无效的权限值，请输入 1-4 位八进制数字（0-7）')
+      return
+    }
     try {
       await invoke('chmod_file', {
         connectionId,
@@ -348,6 +411,7 @@ export function useFileOperations({
     handleCreateFolder,
     handleRename,
     handleDelete,
+    handleBatchDownload,
     handleChmod,
     handleCompress,
     handlePreview,

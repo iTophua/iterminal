@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iTerminal Screenshot 1 - 连接管理</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #1a1a2e;
+      width: 1280px;
+      height: 800px;
+      overflow: hidden;
+    }
+    .app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    /* Title Bar */
+    .titlebar {
+      background: #16162a;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #2d2d4a;
+    }
+    .dots { display: flex; gap: 8px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot.red { background: #ff5f56; }
+    .dot.yellow { background: #ffbd2e; }
+    .dot.green { background: #27c93f; }
+    .title { color: #888; font-size: 14px; margin-left: 20px; }
+    
+    /* Main Layout */
+    .main {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+    
+    /* Sidebar */
+    .sidebar {
+      width: 240px;
+      background: #16162a;
+      padding: 20px 0;
+      border-right: 1px solid #2d2d4a;
+    }
+    .sidebar-title {
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      padding: 0 20px 20px;
+      border-bottom: 1px solid #2d2d4a;
+      margin-bottom: 15px;
+    }
+    .sidebar-item {
+      padding: 10px 20px;
+      color: #a0a0b8;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .sidebar-item:hover { background: #2d2d4a; }
+    .sidebar-item.active {
+      background: #2d2d4a;
+      color: #00b96b;
+      border-left: 3px solid #00b96b;
+    }
+    .sidebar-item .icon { font-size: 18px; }
+    
+    /* Content */
+    .content {
+      flex: 1;
+      padding: 30px;
+      overflow-y: auto;
+    }
+    .content-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+    .content-title {
+      color: #fff;
+      font-size: 24px;
+      font-weight: 600;
+    }
+    .btn {
+      background: #00b96b;
+      color: #fff;
+      border: none;
+      padding: 8px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    
+    /* Connection Cards */
+    .connections-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .connection-card {
+      background: #1e1e36;
+      border: 1px solid #2d2d4a;
+      border-radius: 12px;
+      padding: 20px;
+      transition: all 0.2s;
+    }
+    .connection-card:hover {
+      border-color: #00b96b;
+      transform: translateY(-2px);
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+    .card-name {
+      color: #fff;
+      font-size: 16px;
+      font-weight: 500;
+    }
+    .status {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .status.online { background: #00b96b; box-shadow: 0 0 10px rgba(0, 185, 107, 0.5); }
+    .status.offline { background: #666; }
+    
+    .card-info {
+      color: #888;
+      font-size: 13px;
+      line-height: 1.8;
+      margin-bottom: 15px;
+    }
+    .card-info .label { color: #666; }
+    .card-tags {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      background: rgba(0, 185, 107, 0.15);
+      color: #00b96b;
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+    }
+    .tag.production { background: rgba(255, 95, 86, 0.15); color: #ff5f56; }
+    .tag.dev { background: rgba(100, 149, 237, 0.15); color: #6495ed; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Title Bar -->
+    <div class="titlebar">
+      <div class="dots">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+      </div>
+      <div class="title">iTerminal - SSH 连接管理器</div>
+    </div>
+    
+    <!-- Main Content -->
+    <div class="main">
+      <!-- Sidebar -->
+      <div class="sidebar">
+        <div class="sidebar-title">🔗 连接管理</div>
+        <div class="sidebar-item active">
+          <span class="icon">📋</span>
+          <span>全部连接</span>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">🌟</span>
+          <span>常用连接</span>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">🏭</span>
+          <span>生产环境</span>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">🧪</span>
+          <span>测试环境</span>
+        </div>
+        <div class="sidebar-item">
+          <span class="icon">💻</span>
+          <span>开发环境</span>
+        </div>
+      </div>
+      
+      <!-- Content -->
+      <div class="content">
+        <div class="content-header">
+          <h1 class="content-title">全部连接</h1>
+          <button class="btn">+ 新建连接</button>
+        </div>
+        
+        <div class="connections-grid">
+          <div class="connection-card">
+            <div class="card-header">
+              <span class="card-name">生产服务器-01</span>
+              <div class="status online"></div>
+            </div>
+            <div class="card-info">
+              <div><span class="label">主机: </span>192.168.1.100:22</div>
+              <div><span class="label">用户: </span>root</div>
+              <div><span class="label">分组: </span>生产环境</div>
+            </div>
+            <div class="card-tags">
+              <span class="tag production">生产</span>
+              <span class="tag">Linux</span>
+            </div>
+          </div>
+          
+          <div class="connection-card">
+            <div class="card-header">
+              <span class="card-name">测试服务器-02</span>
+              <div class="status online"></div>
+            </div>
+            <div class="card-info">
+              <div><span class="label">主机: </span>10.0.0.50:22</div>
+              <div><span class="label">用户: </span>deploy</div>
+              <div><span class="label">分组: </span>测试环境</div>
+            </div>
+            <div class="card-tags">
+              <span class="tag dev">测试</span>
+              <span class="tag">Ubuntu</span>
+            </div>
+          </div>
+          
+          <div class="connection-card">
+            <div class="card-header">
+              <span class="card-name">开发服务器</span>
+              <div class="status offline"></div>
+            </div>
+            <div class="card-info">
+              <div><span class="label">主机: </span>172.16.0.10:2222</div>
+              <div><span class="label">用户: </span>developer</div>
+              <div><span class="label">分组: </span>开发环境</div>
+            </div>
+            <div class="card-tags">
+              <span class="tag">开发</span>
+              <span class="tag">CentOS</span>
+            </div>
+          </div>
+          
+          <div class="connection-card">
+            <div class="card-header">
+              <span class="card-name">数据库服务器</span>
+              <div class="status online"></div>
+            </div>
+            <div class="card-info">
+              <div><span class="label">主机: </span>192.168.1.200:22</div>
+              <div><span class="label">用户: </span>dba</div>
+              <div><span class="label">分组: </span>生产环境</div>
+            </div>
+            <div class="card-tags">
+              <span class="tag production">生产</span>
+              <span class="tag">Database</span>
+            </div>
+          </div>
+          
+          <div class="connection-card">
+            <div class="card-header">
+              <span class="card-name">Web 服务器</span>
+              <div class="status online"></div>
+            </div>
+            <div class="card-info">
+              <div><span class="label">主机: </span>192.168.1.150:22</div>
+              <div><span class="label">用户: </span>www</div>
+              <div><span class="label">分组: </span>生产环境</div>
+            </div>
+            <div class="card-tags">
+              <span class="tag production">生产</span>
+              <span class="tag">Nginx</span>
+            </div>
+          </div>
+          
+          <div class="connection-card">
+            <div class="card-header">
+              <span class="card-name">CI/CD 服务器</span>
+              <div class="status offline"></div>
+            </div>
+            <div class="card-info">
+              <div><span class="label">主机: </span>10.0.1.100:22</div>
+              <div><span class="label">用户: </span>jenkins</div>
+              <div><span class="label">分组: </span>开发环境</div>
+            </div>
+            <div class="card-tags">
+              <span class="tag">CI/CD</span>
+              <span class="tag">Jenkins</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

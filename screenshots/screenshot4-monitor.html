@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>iTerminal Screenshot 4 - 系统监控</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #1a1a2e;
+      width: 1280px;
+      height: 800px;
+      overflow: hidden;
+    }
+    .app { display: flex; flex-direction: column; height: 100vh; }
+    .titlebar {
+      background: #16162a; padding: 12px 20px; display: flex;
+      align-items: center; gap: 12px; border-bottom: 1px solid #2d2d4a;
+    }
+    .dots { display: flex; gap: 8px; }
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot.red { background: #ff5f56; }
+    .dot.yellow { background: #ffbd2e; }
+    .dot.green { background: #27c93f; }
+    .title { color: #888; font-size: 14px; margin-left: 20px; }
+    
+    .main { display: flex; flex: 1; overflow: hidden; }
+    .sidebar {
+      width: 240px; background: #16162a; padding: 20px 0;
+      border-right: 1px solid #2d2d4a;
+    }
+    .sidebar-item {
+      padding: 10px 20px; color: #a0a0b8; cursor: pointer;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .sidebar-item:hover { background: #2d2d4a; }
+    .sidebar-item.active {
+      background: #2d2d4a; color: #00b96b;
+      border-left: 3px solid #00b96b;
+    }
+    
+    .monitor {
+      flex: 1; padding: 30px; overflow-y: auto;
+      display: grid; grid-template-columns: repeat(2, 1fr);
+      gap: 20px; align-content: start;
+    }
+    .monitor-card {
+      background: #1e1e36; border: 1px solid #2d2d4a;
+      border-radius: 12px; padding: 20px;
+    }
+    .monitor-title {
+      color: #fff; font-size: 16px; font-weight: 600;
+      margin-bottom: 15px; display: flex;
+      align-items: center; gap: 8px;
+    }
+    .monitor-icon { font-size: 20px; }
+    
+    .stat-row {
+      display: flex; justify-content: space-between;
+      align-items: center; padding: 8px 0;
+      border-bottom: 1px solid #2d2d4a;
+    }
+    .stat-label { color: #888; font-size: 13px; }
+    .stat-value { color: #fff; font-size: 14px; font-weight: 500; font-family: monospace; }
+    
+    .progress-bar {
+      height: 8px; background: #2d2d4a;
+      border-radius: 4px; overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-fill {
+      height: 100%; border-radius: 4px;
+      transition: width 0.3s;
+    }
+    .progress-fill.green { background: linear-gradient(90deg, #00b96b, #00d97e); }
+    .progress-fill.yellow { background: linear-gradient(90deg, #ffbd2e, #ffd000); }
+    .progress-fill.red { background: linear-gradient(90deg, #ff5f56, #ff7066); }
+    
+    .progress-item { margin-bottom: 12px; }
+    .progress-header {
+      display: flex; justify-content: space-between;
+      margin-bottom: 5px;
+    }
+    .progress-label { color: #a0a0b8; font-size: 12px; }
+    .progress-value { color: #fff; font-size: 12px; font-weight: 500; }
+    
+    .process-list { max-height: 200px; overflow-y: auto; }
+    .process-item {
+      display: grid;
+      grid-template-columns: 80px 1fr 80px 60px;
+      gap: 10px; padding: 8px;
+      border-radius: 6px; margin-bottom: 4px;
+      background: #16162a; font-size: 12px;
+    }
+    .process-pid { color: #6495ed; font-family: monospace; }
+    .process-name { color: #fff; }
+    .process-cpu { color: #00b96b; font-family: monospace; text-align: right; }
+    .process-mem { color: #ffbd2e; font-family: monospace; text-align: right; }
+    
+    .info-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .info-item {
+      padding: 10px; background: #16162a;
+      border-radius: 6px;
+    }
+    .info-label { color: #666; font-size: 11px; margin-bottom: 5px; }
+    .info-value { color: #fff; font-size: 14px; font-weight: 500; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="titlebar">
+      <div class="dots">
+        <div class="dot red"></div>
+        <div class="dot yellow"></div>
+        <div class="dot green"></div>
+      </div>
+      <div class="title">iTerminal - 系统监控 (生产服务器-01)</div>
+    </div>
+    
+    <div class="main">
+      <div class="sidebar">
+        <div class="sidebar-item">📋 连接管理</div>
+        <div class="sidebar-item">⚡ 终端会话</div>
+        <div class="sidebar-item">📁 文件管理</div>
+        <div class="sidebar-item active">📊 系统监控</div>
+      </div>
+      
+      <div class="monitor">
+        <!-- System Info -->
+        <div class="monitor-card">
+          <div class="monitor-title">
+            <span class="monitor-icon">💻</span>
+            系统信息
+          </div>
+          <div class="info-grid">
+            <div class="info-item">
+              <div class="info-label">主机名</div>
+              <div class="info-value">prod-server-01</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">操作系统</div>
+              <div class="info-value">Ubuntu 22.04 LTS</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">内核版本</div>
+              <div class="info-value">5.15.0-91-generic</div>
+            </div>
+            <div class="info-item">
+              <div class="info-label">运行时间</div>
+              <div class="info-value">45天 12小时 23分</div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- CPU -->
+        <div class="monitor-card">
+          <div class="monitor-title">
+            <span class="monitor-icon">⚡</span>
+            CPU 使用率
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">总体使用率</span>
+            <span class="stat-value" style="color: #00b96b;">45.2%</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill green" style="width: 45.2%;"></div>
+          </div>
+          <div style="margin-top: 15px;">
+            <div class="progress-item">
+              <div class="progress-header">
+                <span class="progress-label">核心 1</span>
+                <span class="progress-value">52.3%</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill green" style="width: 52.3%;"></div>
+              </div>
+            </div>
+            <div class="progress-item">
+              <div class="progress-header">
+                <span class="progress-label">核心 2</span>
+                <span class="progress-value">38.7%</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill green" style="width: 38.7%;"></div>
+              </div>
+            </div>
+            <div class="progress-item">
+              <div class="progress-header">
+                <span class="progress-label">负载均值</span>
+                <span class="progress-value">1.23, 0.89, 0.76</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Memory -->
+        <div class="monitor-card">
+          <div class="monitor-title">
+            <span class="monitor-icon">💾</span>
+            内存使用
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">已用 / 总量</span>
+            <span class="stat-value">12.5G / 16.0G</span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill yellow" style="width: 78.1%;"></div>
+          </div>
+          <div style="margin-top: 15px;">
+            <div class="progress-item">
+              <div class="progress-header">
+                <span class="progress-label">可用内存</span>
+                <span class="progress-value">3.2G</span>
+              </div>
+            </div>
+            <div class="progress-item">
+              <div class="progress-header">
+                <span class="progress-label">Swap 使用</span>
+                <span class="progress-value">1.2G / 8.0G</span>
+              </div>
+              <div class="progress-bar">
+                <div class="progress-fill green" style="width: 15%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Processes -->
+        <div class="monitor-card">
+          <div class="monitor-title">
+            <span class="monitor-icon">🔄</span>
+            进程列表 (按内存排序)
+          </div>
+          <div class="process-list">
+            <div class="process-item">
+              <span class="process-pid">12345</span>
+              <span class="process-name">node /app/server</span>
+              <span class="process-cpu">12.3%</span>
+              <span class="process-mem">892M</span>
+            </div>
+            <div class="process-item">
+              <span class="process-pid">12346</span>
+              <span class="process-name">mysqld</span>
+              <span class="process-cpu">8.7%</span>
+              <span class="process-mem">456M</span>
+            </div>
+            <div class="process-item">
+              <span class="process-pid">12347</span>
+              <span class="process-name">nginx: worker</span>
+              <span class="process-cpu">5.2%</span>
+              <span class="process-mem">234M</span>
+            </div>
+            <div class="process-item">
+              <span class="process-pid">12348</span>
+              <span class="process-name">redis-server</span>
+              <span class="process-cpu">2.1%</span>
+              <span class="process-mem">123M</span>
+            </div>
+            <div class="process-item">
+              <span class="process-pid">12349</span>
+              <span class="process-name">pm2: app</span>
+              <span class="process-cpu">1.8%</span>
+              <span class="process-mem">98M</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

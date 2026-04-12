@@ -1,4 +1,4 @@
-import { CloseOutlined } from '@ant-design/icons'
+import { CloseOutlined, WarningOutlined } from '@ant-design/icons'
 
 interface DraggableSessionTabProps {
   sessionId: string
@@ -6,6 +6,7 @@ interface DraggableSessionTabProps {
   title: string
   onClose: () => void
   onDragStart: (sessionId: string, connectionId: string, title: string) => void
+  isDisconnected?: boolean
 }
 
 export function DraggableSessionTab({
@@ -14,6 +15,7 @@ export function DraggableSessionTab({
   title,
   onClose,
   onDragStart,
+  isDisconnected = false,
 }: DraggableSessionTabProps) {
   return (
     <span
@@ -25,6 +27,7 @@ export function DraggableSessionTab({
         gap: 0,
         padding: '2px 0',
         userSelect: 'none',
+        position: 'relative',
       }}
       onPointerDown={(e) => {
         if (e.button !== 0) return
@@ -35,10 +38,32 @@ export function DraggableSessionTab({
         onDragStart(sessionId, connectionId, title)
       }}
     >
-      <span style={{ lineHeight: '16px' }}>{title}</span>
+      {isDisconnected && (
+        <WarningOutlined
+          style={{
+            color: '#faad14',
+            fontSize: 11,
+            marginRight: 3,
+            animation: 'tabDisconnectPulse 1.5s ease-in-out infinite',
+          }}
+        />
+      )}
+      <span
+        style={{
+          lineHeight: '16px',
+          color: isDisconnected ? '#faad14' : undefined,
+        }}
+      >
+        {title}
+      </span>
       <CloseOutlined
         className="session-tab-close"
-        style={{ marginLeft: 4, fontSize: 9, cursor: 'pointer' }}
+        style={{
+          marginLeft: 4,
+          fontSize: 9,
+          cursor: 'pointer',
+          color: isDisconnected ? '#faad14' : undefined,
+        }}
         onClick={(e) => {
           e.stopPropagation()
           onClose()

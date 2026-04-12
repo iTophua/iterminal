@@ -33,6 +33,7 @@ import { useThemeStore } from '../stores/themeStore'
 import { useHistoryStore } from '../stores/historyStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import type { TerminalThemeColors } from '../types/theme'
+import { WarningOutlined } from '@ant-design/icons'
 
 const GhostTextOverlay = React.forwardRef<HTMLDivElement, {
   sessionKey: string
@@ -80,6 +81,7 @@ import McpLogPanel from '../components/McpLogPanel'
 import { STORAGE_KEYS } from '../config/constants'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
 import { PaneToolbar, SortableTab, DraggableSessionTab } from './terminal/components'
+import { ShortcutHelpModal } from './terminal/components/ShortcutHelpModal'
 import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOverlay'
 import { useConnectionDragToNewWindow } from './terminal/hooks/useConnectionDrag'
 import { getAllSessions, getActiveSessionInPane, findPaneBySessionId, hasSplitChildren, getVisibleSessions } from '../utils/paneUtils'
@@ -341,7 +343,7 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     setHistoryModalKey(null)
     setHistorySearchText('')
     setHistorySelectedIndex(0)
-    
+
     if (key) {
       requestAnimationFrame(() => {
         const term = terminalInstances.current[key]
@@ -351,6 +353,10 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
       })
     }
   }, [historyModalKey])
+
+  const toggleShortcutHelp = useCallback(() => {
+    setShortcutHelpVisible(prev => !prev)
+  }, [])
 
   const selectHistoryCommand = useCallback((command: string) => {
     if (!historyModalKey) return
@@ -409,6 +415,7 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
   const [searchText, setSearchText] = useState('')
   const [searchMode, setSearchMode] = useState<'normal' | 'regex' | 'wholeWord'>('normal')
   const [activeSearchSessionKey, setActiveSearchSessionKey] = useState<string | null>(null)
+  const [shortcutHelpVisible, setShortcutHelpVisible] = useState(false)
 
   const {
     monitorVisible,
@@ -871,7 +878,13 @@ const handlePointerUp = () => {
               }
               return false
             }
-            
+
+            if (matchShortcut(event, settings.shortcutHelp)) {
+              event.preventDefault()
+              toggleShortcutHelp()
+              return false
+            }
+
             return true
           })
 
@@ -1839,6 +1852,8 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       }
     }
 
+    const conn = connectedConnections.find(c => c.connectionId === connectionId)
+
     const sessionTabItems = pane.sessions.map(s => ({
       key: s.id,
       label: (
@@ -1856,6 +1871,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           setDraggedSession({ sessionId: sid, connectionId: cid, title })
         }, 800)
       }}
+          isDisconnected={conn?.disconnected}
         />
       ),
       children: (
@@ -1905,6 +1921,24 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           />
         )}
         
+        {/* 连接断开横幅 */}
+        {(() => {
+          const conn = connectedConnections.find(c => c.connectionId === connectionId)
+          if (!conn?.disconnected) return null
+          return (
+            <div className="disconnect-banner">
+              <span>
+                ⚠️ 连接已断开 {conn.reconnecting ? `(重连中... 尝试 ${conn.reconnectAttempt || 1})` : '— 按回车键或点击按钮重连'}
+              </span>
+              {!conn.reconnecting && (
+                <button onClick={() => handleReconnect(connectionId, true)}>
+                  立即重连
+                </button>
+              )}
+            </div>
+          )
+        })()}
+
         <PaneToolbar
           sessionKey={`${connectionId}_${activeSess.id}`}
           searchAddons={searchAddons}
@@ -2475,6 +2509,11 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           />
         </Modal>
       )}
+
+      <ShortcutHelpModal
+        visible={shortcutHelpVisible}
+        onClose={() => setShortcutHelpVisible(false)}
+      />
     </div>
   )
 }

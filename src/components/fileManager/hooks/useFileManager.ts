@@ -234,6 +234,10 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
     [findNodeByPath]
   )
 
+  const selectedNodes = selectedKeys
+    .map(key => findNodeByPath(treeDataRef.current, key as string))
+    .filter((n): n is TreeNode => n !== null)
+
   return {
     treeData,
     treeDataRef,
@@ -242,6 +246,7 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
     setSelectedKeys,
     selectedNode,
     selectedNodeRef,
+    selectedNodes,
     expandedKeys,
     currentPath,
     pathInput,

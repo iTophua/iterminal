@@ -28,7 +28,7 @@ interface TransferState {
 
   addRecord: (record: TransferRecord) => void
   updateRecord: (id: string, updates: Partial<TransferRecord>) => void
-  updateProgress: (id: string, transferred: number, fileSize: number, totalFiles?: number, completedFiles?: number) => void
+  updateProgress: (id: string, transferred: number, fileSize: number, totalFiles?: number, completedFiles?: number, speed?: number) => void
   removeRecord: (id: string) => void
   clearRecords: () => void
   setRetentionPeriod: (period: RetentionPeriod) => void
@@ -149,13 +149,13 @@ return {
       }
     },
 
-    updateProgress: (id: string, transferred: number, fileSize: number, totalFiles?: number, completedFiles?: number) => {
+    updateProgress: (id: string, transferred: number, fileSize: number, totalFiles?: number, completedFiles?: number, speedOverride?: number) => {
       set((state) => {
         const now = Date.now()
         const prevProgress = state.progress[id]
-        
-        let speed = 0
-        if (prevProgress && prevProgress.lastTime > 0) {
+
+        let speed = speedOverride ?? 0
+        if (!speedOverride && prevProgress && prevProgress.lastTime > 0) {
           const timeDiff = (now - prevProgress.lastTime) / 1000
           const bytesDiff = transferred - prevProgress.lastTransferred
           if (timeDiff > 0) {

@@ -41,7 +41,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  filter: drop-shadow(0 4px 12px rgba(0, 185, 107, 0.2));
+  filter: drop-shadow(0 4px 12px color-mix(in srgb, var(--color-primary) 20%, transparent));
 }
 
 .logo-text {
@@ -82,7 +82,7 @@
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--color-primary) 0%, #00d4aa 100%);
+  background: linear-gradient(90deg, var(--color-primary) 0%, color-mix(in srgb, var(--color-primary) 70%, #fff) 100%);
   border-radius: 2px;
   transition: width 0.3s ease-out;
 }
@@ -111,7 +111,7 @@
 }
 
 .step-item.loading {
-  background: rgba(0, 185, 107, 0.08);
+  background: color-mix(in srgb, var(--color-primary) 8%, transparent);
 }
 
 .step-item.done {
@@ -119,7 +119,7 @@
 }
 
 .step-item.error {
-  background: rgba(255, 77, 79, 0.08);
+  background: color-mix(in srgb, var(--color-error) 8%, transparent);
 }
 
 .step-icon {
@@ -192,4 +192,153 @@
 
 .splash-footer .divider {
   opacity: 0.5;
+}
+
+/* ===== 打字机终端样式 ===== */
+.typewriter-terminal {
+  width: 320px;
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  animation: slideInUp 0.6s ease-out;
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.terminal-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.terminal-dot:hover {
+  transform: scale(1.2);
+}
+
+.terminal-dot.red {
+  background: #ff5f56;
+  box-shadow: 0 0 8px rgba(255, 95, 86, 0.5);
+}
+
+.terminal-dot.yellow {
+  background: #ffbd2e;
+  box-shadow: 0 0 8px rgba(255, 189, 46, 0.5);
+}
+
+.terminal-dot.green {
+  background: #27ca40;
+  box-shadow: 0 0 8px rgba(39, 202, 64, 0.5);
+}
+
+.terminal-title {
+  flex: 1;
+  text-align: center;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-weight: 500;
+}
+
+.terminal-body {
+  padding: 12px;
+  font-family: 'Menlo', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 120px;
+  background: var(--color-bg-base);
+}
+
+.terminal-line {
+  color: var(--color-text);
+  white-space: pre;
+  overflow: hidden;
+  animation: fadeInLine 0.3s ease-out;
+}
+
+@keyframes fadeInLine {
+  from {
+    opacity: 0;
+    transform: translateX(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.terminal-line.current {
+  position: relative;
+}
+
+.cursor {
+  opacity: 0;
+  color: var(--color-primary);
+  transition: opacity 0.1s;
+}
+
+.cursor.visible {
+  opacity: 1;
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+/* 进度条光晕效果 */
+.progress-bar {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  background: var(--color-border-secondary);
+  border-radius: 2px;
+  overflow: visible;
+}
+
+.progress-glow {
+  position: absolute;
+  top: -4px;
+  width: 20px;
+  height: 12px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  filter: blur(6px);
+  opacity: 0.8;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 0.6;
+    transform: translateX(-50%) scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.2);
+  }
 }

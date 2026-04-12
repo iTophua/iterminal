@@ -334,7 +334,12 @@ function MainApp() {
       <SessionRestorer />
       <SessionSaver />
       <MenuActionHandler />
-      <Layout style={{ minHeight: '100vh', background: 'var(--color-bg-container)' }}>
+      <Layout style={{
+        minHeight: '100vh',
+        background: 'var(--color-bg-container)',
+        position: 'relative',
+        zIndex: 1
+      }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>
           <Sidebar />
@@ -352,7 +357,7 @@ function MainApp() {
           color: 'var(--color-text-tertiary)',
           fontSize: 12
         }}>
-          iTerminal - SSH 连接管理器 ©2026
+          <span className="gradient-text" style={{ fontWeight: 500 }}>iTerminal - SSH 连接管理器 ©2026</span>
         </div>
       </Layout>
     </>

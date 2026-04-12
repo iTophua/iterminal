@@ -143,7 +143,7 @@ function Sidebar() {
           setSidebarCollapsed(newState)
         }}
       >
-        <span style={{ color: 'var(--color-primary)', fontSize: 16, fontWeight: 'bold' }}>
+        <span className="text-glow" style={{ color: 'var(--color-primary)', fontSize: 16, fontWeight: 'bold' }}>
           {collapsed ? 'i' : 'iTerminal'}
         </span>
         {!collapsed && (

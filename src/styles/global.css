@@ -10,6 +10,50 @@
   transition: none !important;
 }
 
+/* 主题切换平滑过渡 - 默认启用 */
+[data-theme] {
+  transition:
+    background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 为按钮添加额外的过渡效果 */
+[data-theme] button,
+[data-theme] .ant-btn {
+  transition:
+    background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s ease;
+}
+
+/* 为输入框添加过渡效果 */
+[data-theme] input,
+[data-theme] .ant-input,
+[data-theme] .ant-select-selector,
+[data-theme] .ant-input-affix-wrapper {
+  transition:
+    background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 为卡片添加过渡效果 */
+[data-theme] .ant-card,
+[data-theme] .ant-list-item,
+[data-theme] .ant-table-row {
+  transition:
+    background-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s ease;
+}
+
 /* ============================================
    主题变量系统 - data-theme 控制明暗, data-color-theme 控制配色
    ============================================ */
@@ -832,4 +876,449 @@ body {
 
 .file-manager-panel .ant-tree-node-content-wrapper {
   white-space: nowrap !important;
+}
+
+/* ============================================
+   霓虹发光效果 - Neon Glow Effects
+   ============================================ */
+
+/* 按钮霓虹效果 */
+.neon-button {
+  position: relative;
+  overflow: visible;
+  transition: all 0.3s ease;
+}
+
+.neon-button:hover {
+  box-shadow: 
+    0 0 10px color-mix(in srgb, var(--color-primary) 50%, transparent),
+    0 0 20px color-mix(in srgb, var(--color-primary) 30%, transparent),
+    0 0 30px color-mix(in srgb, var(--color-primary) 20%, transparent);
+  transform: translateY(-2px);
+}
+
+/* 卡片霓虹效果 */
+.neon-card {
+  position: relative;
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.neon-card:hover {
+  box-shadow: 
+    0 8px 32px color-mix(in srgb, var(--color-primary) 15%, transparent),
+    0 0 1px var(--color-primary);
+  transform: translateY(-4px);
+}
+
+/* 输入框霓虹效果 */
+.neon-input:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 
+    0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent),
+    0 0 10px color-mix(in srgb, var(--color-primary) 10%, transparent) !important;
+}
+
+/* 连接状态指示灯动画 */
+.connection-status-indicator {
+  position: relative;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.connection-status-indicator.connected {
+  background: var(--color-success);
+  box-shadow: 0 0 8px var(--color-success);
+  animation: statusPulse 2s ease-in-out infinite;
+}
+
+.connection-status-indicator.connecting {
+  background: var(--color-warning);
+  box-shadow: 0 0 8px var(--color-warning);
+  animation: statusPulse 1s ease-in-out infinite;
+}
+
+.connection-status-indicator.disconnected {
+  background: var(--color-error);
+  box-shadow: 0 0 8px var(--color-error);
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+    opacity: 0.7;
+  }
+}
+
+/* 文字发光效果 */
+.text-glow {
+  text-shadow:
+    0 0 10px color-mix(in srgb, var(--color-primary) 50%, transparent),
+    0 0 20px color-mix(in srgb, var(--color-primary) 30%, transparent);
+}
+
+/* 连接断开 Tab 脉冲动画 */
+@keyframes tabDisconnectPulse {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+/* 连接断开横幅 */
+.disconnect-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgba(250, 173, 20, 0.15) 0%, rgba(250, 173, 20, 0.08) 100%);
+  border-bottom: 1px solid rgba(250, 173, 20, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  color: #faad14;
+  animation: disconnectBannerSlideIn 0.3s ease-out;
+}
+
+@keyframes disconnectBannerSlideIn {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.disconnect-banner button {
+  background: rgba(250, 173, 20, 0.2);
+  border: 1px solid rgba(250, 173, 20, 0.4);
+  color: #faad14;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.15s ease;
+}
+
+.disconnect-banner button:hover {
+  background: rgba(250, 173, 20, 0.3);
+}
+
+.disconnect-banner button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.text-glow-strong {
+  text-shadow: 
+    0 0 5px var(--color-primary),
+    0 0 10px var(--color-primary),
+    0 0 20px var(--color-primary),
+    0 0 40px color-mix(in srgb, var(--color-primary) 50%, transparent);
+}
+
+/* 边框流动动画 */
+@keyframes borderFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.border-flow {
+  position: relative;
+  overflow: hidden;
+}
+
+.border-flow::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--color-primary),
+    color-mix(in srgb, var(--color-primary) 60%, #00d4aa),
+    color-mix(in srgb, var(--color-primary) 80%, #00ff88),
+    var(--color-primary)
+  );
+  background-size: 300% 100%;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: borderFlow 3s linear infinite;
+}
+
+/* 悬浮卡片效果 */
+.hover-lift {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hover-lift:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 
+    0 12px 40px rgba(0, 0, 0, 0.3),
+    0 0 1px var(--color-primary);
+}
+
+/* 加载骨架屏动画 */
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-elevated) 25%,
+    var(--color-border-secondary) 50%,
+    var(--color-bg-elevated) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+/* 页面切换动画 */
+.page-enter {
+  animation: pageSlideIn 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes pageSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 渐显动画 */
+.fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 缩放进入动画 */
+.scale-in {
+  animation: scaleIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 滑动列表动画 */
+.list-item-enter {
+  animation: listItemSlideIn 0.3s ease-out;
+}
+
+@keyframes listItemSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* 终端标签页激活动画 */
+.ant-tabs-tab {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.ant-tabs-tab::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  height: 2px;
+  background: var(--color-primary);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(-50%);
+  box-shadow: 0 0 8px var(--color-primary);
+}
+
+.ant-tabs-tab-active::after {
+  width: 100%;
+}
+
+/* 侧边栏菜单项动画 */
+.ant-menu-item {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+
+.ant-menu-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--color-primary);
+  transform: scaleY(0);
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 10px var(--color-primary);
+}
+
+.ant-menu-item-selected::before,
+.ant-menu-item-active::before {
+  transform: scaleY(1);
+}
+
+/* 渐变文字效果 */
+.gradient-text {
+  background: linear-gradient(
+    135deg,
+    var(--color-primary),
+    #00d4aa,
+    var(--color-primary)
+  );
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent !important;
+  background-clip: text;
+  animation: gradientShift 3s linear infinite;
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+/* 终端容器增强 */
+.terminal-container {
+  position: relative;
+}
+
+.terminal-container::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 20%, transparent),
+    transparent 50%,
+    color-mix(in srgb, var(--color-primary) 20%, transparent)
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* 工具栏按钮增强 */
+.toolbar-button {
+  position: relative;
+  transition: all 0.25s ease;
+}
+
+.toolbar-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 25%, transparent);
+}
+
+.toolbar-button:active {
+  transform: translateY(0);
+}
+
+/* 徽章动画 */
+@keyframes badgeBounce {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.ant-badge-count {
+  animation: badgeBounce 2s ease-in-out infinite;
+}
+
+/* 加载遮罩动画 */
+.loading-overlay {
+  position: relative;
+  overflow: hidden;
+}
+
+.loading-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-primary) 5%, transparent),
+    transparent
+  );
+  animation: shimmer 1.5s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }

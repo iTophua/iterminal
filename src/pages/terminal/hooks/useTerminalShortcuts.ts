@@ -7,6 +7,7 @@ interface ShortcutActions {
   onSearch: (sessionKey: string | null) => void
   onSetSearchText: (text: string) => void
   onToggleFullscreen: () => void
+  onToggleShortcutHelp: () => void
   onCloseSession: (connId: string, sessId: string, paneId?: string) => void
   message: { error: (msg: string) => void; success: (msg: string) => void }
 }
@@ -80,7 +81,7 @@ export function useTerminalShortcuts(
   const addSessionToPane = useTerminalStore(state => state.addSessionToPane)
   const setActiveSessionInPane = useTerminalStore(state => state.setActiveSessionInPane)
 
-  const { onSearch, onSetSearchText, onToggleFullscreen, onCloseSession, message } = actions
+  const { onSearch, onSetSearchText, onToggleFullscreen, onToggleShortcutHelp, onCloseSession, message } = actions
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -200,9 +201,15 @@ export function useTerminalShortcuts(
         onToggleFullscreen()
         return
       }
+
+      if (matchShortcut(e, shortcutSettings.shortcutHelp)) {
+        e.preventDefault()
+        onToggleShortcutHelp()
+        return
+      }
     }
 
     window.addEventListener('keydown', handleKeyDown, true)
     return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [activeConnectionId, connectedConnections, shortcutSettings, splitPane, addSessionToPane, setActiveSessionInPane, onCloseSession, onToggleFullscreen, onSearch, onSetSearchText, message, terminalInstances])
+  }, [activeConnectionId, connectedConnections, shortcutSettings, splitPane, addSessionToPane, setActiveSessionInPane, onCloseSession, onToggleFullscreen, onToggleShortcutHelp, onSearch, onSetSearchText, message, terminalInstances])
 }

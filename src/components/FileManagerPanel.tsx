@@ -72,6 +72,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     setSelectedKeys,
     selectedNode,
     selectedNodeRef,
+    selectedNodes,
     expandedKeys,
     currentPath,
     pathInput,
@@ -90,6 +91,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
     currentPath,
     selectedNode,
     selectedNodeRef,
+    selectedNodes,
     refreshCurrent,
     loadDirectory,
     viewMode,
@@ -500,6 +502,8 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             loadDirectory(path, true)
           }}
           dragTargetPath={dragDrop.dragTargetPath}
+          onUploadFile={transfer.handleUploadFile}
+          onCreateFolder={() => fileOps.setNewFolderVisible(true)}
         />
       </div>
 
@@ -613,6 +617,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         isDirectory={selectedNodeRef.current?.isDirectory || false}
         onConfirm={fileOps.handleDelete}
         onCancel={() => fileOps.setDeleteVisible(false)}
+        fileCount={selectedNodes.length > 0 ? selectedNodes.length : (selectedNodeRef.current ? 1 : 0)}
       />
 
       <ChmodModal

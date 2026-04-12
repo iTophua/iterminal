@@ -136,10 +136,11 @@ export function DeleteModal({
   onConfirm,
   onCancel,
   loading,
-}: DeleteModalProps) {
+  fileCount = 1,
+}: DeleteModalProps & { fileCount?: number }) {
   return (
     <Modal
-      title="确认删除"
+      title={fileCount > 1 ? `确认删除 ${fileCount} 个项目` : '确认删除'}
       open={visible}
       onOk={onConfirm}
       onCancel={onCancel}
@@ -148,13 +149,24 @@ export function DeleteModal({
       okType="danger"
       cancelText="取消"
     >
-      <p>
-        确定要删除 {isDirectory ? '文件夹' : '文件'} <b>{fileName}</b> 吗？
-      </p>
-      {isDirectory && (
-        <p style={{ color: 'var(--color-warning)' }}>
-          文件夹内的所有内容都将被删除，此操作不可恢复。
-        </p>
+      {fileCount > 1 ? (
+        <>
+          <p>
+            确定要删除 <b>{fileCount}</b> 个项目吗？
+          </p>
+          <p style={{ color: 'var(--color-warning)' }}>
+            {isDirectory ? '其中包含文件夹' : '包含文件'}，此操作不可恢复。
+          </p>
+        </>
+      ) : (
+        <>
+          <p>
+            确定要删除 {isDirectory ? '文件夹' : '文件'} <b>{fileName}</b> 吗？
+          </p>
+          <p style={{ color: 'var(--color-warning)' }}>
+            此操作不可恢复。
+          </p>
+        </>
       )}
     </Modal>
   )
@@ -190,11 +202,16 @@ export function ChmodModal({
       <Form.Item label="权限值 (八进制)" style={{ marginTop: 16 }}>
         <Input
           value={value}
-          onChange={e => onValueChange(e.target.value)}
+          onChange={e => onValueChange(e.target.value.replace(/[^0-7]/g, ''))}
           placeholder="如: 755, 644"
           onPressEnter={onConfirm}
           autoFocus
+          maxLength={4}
+          status={value && !/^[0-7]{1,4}$/.test(value) ? 'error' : undefined}
         />
+        {value && !/^[0-7]{1,4}$/.test(value) && (
+          <span style={{ color: '#ff4d4f', fontSize: 12 }}>请输入有效的八进制权限值（0-7）</span>
+        )}
       </Form.Item>
     </Modal>
   )

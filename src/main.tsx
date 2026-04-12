@@ -8,7 +8,7 @@ import { useWindowState } from './hooks/useWindowState'
 import './styles/global.css'
 
 function AppWithSplash() {
-  const { steps, progress, isComplete } = useAppInitialization()
+  const { steps, progress, displayProgress, isComplete } = useAppInitialization()
   const [showSplash, setShowSplash] = useState(true)
   const [fadeOut, setFadeOut] = useState(false)
 
@@ -70,7 +70,7 @@ function AppWithSplash() {
   return (
     <>
       {showSplash && (
-        <SplashScreen steps={steps} progress={progress} fadeOut={fadeOut} />
+        <SplashScreen steps={steps} progress={progress} displayProgress={displayProgress} fadeOut={fadeOut} />
       )}
       <App />
     </>

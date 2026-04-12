@@ -110,6 +110,7 @@ export interface ShortcutSettings {
   nextSuggestion: string
   prevSuggestion: string
   showHistory: string
+  shortcutHelp: string
 }
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
@@ -134,6 +135,7 @@ export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = isMac
       nextSuggestion: 'Alt+ArrowDown',
       prevSuggestion: 'Alt+ArrowUp',
       showHistory: 'Alt+H',
+      shortcutHelp: 'Cmd+Shift+K',
     }
   : {
       clearScreen: 'Ctrl+L',
@@ -150,6 +152,7 @@ export const DEFAULT_SHORTCUT_SETTINGS: ShortcutSettings = isMac
       nextSuggestion: 'Alt+ArrowDown',
       prevSuggestion: 'Alt+ArrowUp',
       showHistory: 'Alt+H',
+      shortcutHelp: 'Ctrl+Shift+K',
     }
 
 export function formatShortcutForDisplay(shortcut: string): string {
