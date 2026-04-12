@@ -3,8 +3,9 @@ import { useTerminalStore, type TerminalSettings, type ShortcutSettings, formatS
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
 import { useState, useEffect, useCallback } from 'react'
-import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined } from '@ant-design/icons'
+import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
+import { themeList } from '../styles/themes/app-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { STORAGE_KEYS, API_CONFIG } from '../config/constants'
@@ -46,8 +47,10 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const reloadFonts = useTerminalStore(state => state.reloadFonts)
   
   const appThemeMode = useThemeStore(state => state.appThemeMode)
+  const selectedTheme = useThemeStore(state => state.selectedTheme)
   const terminalTheme = useThemeStore(state => state.terminalTheme)
   const setAppThemeMode = useThemeStore(state => state.setAppThemeMode)
+  const setSelectedTheme = useThemeStore(state => state.setSelectedTheme)
   const setTerminalTheme = useThemeStore(state => state.setTerminalTheme)
   
   const [activeCategory, setActiveCategory] = useState<SettingCategory>(() => {
@@ -404,7 +407,95 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
 
       <div style={{ marginBottom: 24 }}>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
-          应用主题
+          配色主题
+        </Text>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
+          {themeList.map((theme) => {
+            const isActive = selectedTheme === theme.id
+            return (
+              <div
+                key={theme.id}
+                onClick={() => setSelectedTheme(theme.id)}
+                style={{
+                  cursor: 'pointer',
+                  borderRadius: 8,
+                  padding: '8px 6px',
+                  background: isActive
+                    ? 'var(--color-bg-spotlight)'
+                    : 'transparent',
+                  border: `2px solid ${isActive ? 'var(--color-primary)' : 'var(--color-border-secondary)'}`,
+                  transition: 'all 0.2s ease',
+                  textAlign: 'center',
+                }}
+                onMouseEnter={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.transform = 'translateY(-2px)'
+                    e.currentTarget.style.borderColor = 'var(--color-text-quaternary)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  if (!isActive) {
+                    e.currentTarget.style.transform = 'translateY(0)'
+                    e.currentTarget.style.borderColor = 'var(--color-border-secondary)'
+                  }
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 7,
+                    margin: '0 auto 4px',
+                    background: `linear-gradient(135deg, ${theme.colors.light['--color-primary']} 0%, ${theme.colors.dark['--color-primary']} 100%)`,
+                    position: 'relative',
+                    boxShadow: isActive
+                      ? `0 2px 8px ${theme.colors.light['--color-primary']}50, 0 0 12px ${theme.colors.dark['--color-primary']}30`
+                      : `0 1px 3px rgba(0,0,0,0.15)`,
+                    transition: 'box-shadow 0.2s ease, transform 0.15s ease',
+                  }}
+                >
+                  {isActive && (
+                    <CheckOutlined
+                      style={{
+                        position: 'absolute',
+                        top: '50%',
+                        left: '50%',
+                        transform: 'translate(-50%, -50%)',
+                        color: '#fff',
+                        fontSize: 14,
+                        textShadow: '0 1px 3px rgba(0,0,0,0.4)',
+                      }}
+                    />
+                  )}
+                </div>
+                <Text
+                  style={{
+                    fontSize: 11,
+                    color: isActive ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                    fontWeight: isActive ? 600 : 400,
+                    display: 'block',
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {theme.name}
+                </Text>
+              </div>
+            )
+          })}
+        </div>
+        <Text type="secondary" style={{ fontSize: 12, marginTop: 10, display: 'block' }}>
+          {(() => {
+            const t = themeList.find(th => th.id === selectedTheme)
+            return t?.description || ''
+          })()}
+        </Text>
+      </div>
+
+      <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+      <div style={{ marginBottom: 24 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
+          明暗模式
         </Text>
         <Radio.Group
           value={appThemeMode}
@@ -431,10 +522,10 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
           终端主题
         </Text>
         <Select
-          value={terminalTheme}
-          onChange={(value) => setTerminalTheme(value)}
+          value={terminalTheme ?? '__auto__'}
+          onChange={(value) => setTerminalTheme(value === '__auto__' ? null : value)}
           options={[
-            { value: null, label: '跟随应用主题' },
+            { value: '__auto__', label: '跟随应用主题' },
             ...terminalThemesList.map(theme => ({
               value: theme.id,
               label: theme.name,
@@ -984,7 +1075,8 @@ ${claudeConfig}`}
     }
   }
 
-  const showFooter = activeCategory === 'terminal'
+  const showFooter = activeCategory === 'terminal' || activeCategory === 'appearance'
+  const isAppearancePage = activeCategory === 'appearance'
 
   return (
     <Modal
@@ -993,10 +1085,18 @@ ${claudeConfig}`}
       onCancel={handleClose}
       footer={showFooter ? (
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Button onClick={handleClose}>取消</Button>
-          <Button type="primary" onClick={handleSave} disabled={!hasTerminalChanges} style={{ background: 'var(--color-primary)' }}>
-            保存
-          </Button>
+          {isAppearancePage ? (
+            <Button type="primary" onClick={handleClose}>
+              完成
+            </Button>
+          ) : (
+            <>
+              <Button onClick={handleClose}>取消</Button>
+              <Button type="primary" onClick={handleSave} disabled={!hasTerminalChanges}>
+                保存
+              </Button>
+            </>
+          )}
         </div>
       ) : null}
       width={600}

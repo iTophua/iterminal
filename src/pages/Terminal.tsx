@@ -120,6 +120,7 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const reorderConnections = useTerminalStore(state => state.reorderConnections)
   const terminalThemeKey = useThemeStore(state => state.terminalTheme)
   const appTheme = useThemeStore(state => state.appTheme)
+  const selectedTheme = useThemeStore(state => state.selectedTheme)
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -575,7 +576,7 @@ const handlePointerUp = () => {
   }, [])
   
   useEffect(() => {
-    const newTheme = resolveTerminalTheme(appTheme, terminalThemeKey)
+    const newTheme = resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey)
     const instances = Object.values(terminalInstances.current)
     for (let i = 0; i < instances.length; i++) {
       const term = instances[i]
@@ -584,7 +585,7 @@ const handlePointerUp = () => {
         term.refresh(0, term.rows - 1)
       }
     }
-  }, [terminalThemeKey, appTheme])
+  }, [terminalThemeKey, appTheme, selectedTheme])
   
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
   const visibleSessions = activeConnection ? getVisibleSessions(activeConnection.rootPane) : []
@@ -616,16 +617,20 @@ const handlePointerUp = () => {
     
     const structureKey = getStructureKey(activeConnection.rootPane)
     if (paneStructureRef.current && paneStructureRef.current !== structureKey) {
-      setTimeout(() => {
+      const timer1 = setTimeout(() => {
         Object.values(fitAddons.current).forEach(addon => {
           try { addon?.fit() } catch {}
         })
       }, 100)
-      setTimeout(() => {
+      const timer2 = setTimeout(() => {
         Object.values(fitAddons.current).forEach(addon => {
           try { addon?.fit() } catch {}
         })
       }, 300)
+      return () => {
+        clearTimeout(timer1)
+        clearTimeout(timer2)
+      }
     }
     paneStructureRef.current = structureKey
   }, [activeConnection, activeConnection?.rootPane])
@@ -706,7 +711,7 @@ const handlePointerUp = () => {
             cursorStyle: terminalSettings.cursorStyle,
             fontSize: terminalSettings.fontSize,
             fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-            theme: resolveTerminalTheme(appTheme, terminalThemeKey),
+            theme: resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey),
             convertEol: true,
             disableStdin: false,
             scrollback: terminalSettings.scrollback,
@@ -1272,6 +1277,10 @@ const handlePointerUp = () => {
     }
     delete fitAddons.current[key]
     delete searchAddons.current[key]
+    const resizeObserver = resizeObserversRef.current[key]
+    if (resizeObserver) {
+      resizeObserver.disconnect()
+    }
     delete resizeObserversRef.current[key]
     delete commandTrackersRef.current[key]
     initializedRef.current.delete(key)
@@ -1311,6 +1320,10 @@ const handlePointerUp = () => {
       }
       delete fitAddons.current[key]
       delete searchAddons.current[key]
+      const resizeObserver = resizeObserversRef.current[key]
+      if (resizeObserver) {
+        resizeObserver.disconnect()
+      }
       delete resizeObserversRef.current[key]
       initializedRef.current.delete(key)
     }
@@ -1474,6 +1487,10 @@ const handlePointerUp = () => {
       }
       delete fitAddons.current[key]
       delete searchAddons.current[key]
+      const resizeObserver = resizeObserversRef.current[key]
+      if (resizeObserver) {
+        resizeObserver.disconnect()
+      }
       delete resizeObserversRef.current[key]
       delete commandTrackersRef.current[key]
       initializedRef.current.delete(key)
@@ -1790,7 +1807,13 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               )
             }
             elements.push(
-              <Panel key={child.id} defaultSize={layout[index]} minSize={20}>
+              <Panel key={child.id} defaultSize={layout[index]} minSize={20} onResize={() => {
+                requestAnimationFrame(() => {
+                  Object.values(fitAddons.current).forEach(addon => {
+                    try { addon?.fit() } catch {}
+                  })
+                })
+              }}>
                 {renderSplitPane(child, connectionId)}
               </Panel>
             )
@@ -1853,7 +1876,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             sessionKey={`${connectionId}_${s.id}`}
             fontFamily={terminalSettings.fontFamily}
             fontSize={terminalSettings.fontSize}
-            themeColors={resolveTerminalTheme(appTheme, terminalThemeKey)}
+            themeColors={resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey)}
             ref={(el) => { ghostTextElementsRef.current[`${connectionId}_${s.id}`] = el }}
           />
         </div>
@@ -1934,6 +1957,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               }
               delete fitAddons.current[key]
               delete searchAddons.current[key]
+              const resizeObserver = resizeObserversRef.current[key]
+              if (resizeObserver) {
+                resizeObserver.disconnect()
+              }
               delete resizeObserversRef.current[key]
               delete commandTrackersRef.current[key]
               initializedRef.current.delete(key)
@@ -2085,6 +2112,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               }
               delete fitAddons.current[key]
               delete searchAddons.current[key]
+              const resizeObserver = resizeObserversRef.current[key]
+              if (resizeObserver) {
+                resizeObserver.disconnect()
+              }
               delete resizeObserversRef.current[key]
               delete commandTrackersRef.current[key]
               initializedRef.current.delete(key)

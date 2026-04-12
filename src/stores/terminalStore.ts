@@ -1102,7 +1102,7 @@ restoreConnection: (connection, rootPane) => {
   },
 
   addTransferTask: (connectionId: string, task: Omit<TransferTask, 'id' | 'startTime'>) => {
-    const taskId = Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    const taskId = Date.now().toString() + Math.random().toString(36).slice(2, 11)
     const newTask: TransferTask = {
       ...task,
       id: taskId,

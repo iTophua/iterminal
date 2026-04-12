@@ -1,8 +1,8 @@
 import { create } from 'zustand'
-import type { AppTheme, AppThemeMode, TerminalThemeName, ThemePersistData } from '../types/theme'
+import type { AppTheme, AppThemeMode, TerminalThemeName, ThemeName, ThemePersistData } from '../types/theme'
 
 const STORAGE_KEY = 'iterminal_theme'
-const CURRENT_VERSION = 2
+const CURRENT_VERSION = 3
 
 const getSystemTheme = (): AppTheme => {
   if (typeof window !== 'undefined' && window.matchMedia) {
@@ -16,12 +16,20 @@ const loadPersistedTheme = (): ThemePersistData | null => {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved) {
       const parsed = JSON.parse(saved)
-      if (parsed.version === CURRENT_VERSION || parsed.version === 1) {
+      if (parsed.version === CURRENT_VERSION || parsed.version === 2 || parsed.version === 1) {
         if (parsed.version === 1 && parsed.appTheme) {
           return {
             appThemeMode: parsed.appTheme,
             appTheme: parsed.appTheme,
+            selectedTheme: 'default',
             terminalTheme: parsed.terminalTheme,
+            version: CURRENT_VERSION,
+          }
+        }
+        if (parsed.version === 2) {
+          return {
+            ...parsed,
+            selectedTheme: (parsed.selectedTheme as ThemeName) || 'default',
             version: CURRENT_VERSION,
           }
         }
@@ -43,10 +51,12 @@ const persistTheme = (data: ThemePersistData) => {
 interface ThemeState {
   appThemeMode: AppThemeMode
   appTheme: AppTheme
+  selectedTheme: ThemeName
   terminalTheme: TerminalThemeName | null
   hydrated: boolean
   
   setAppThemeMode: (mode: AppThemeMode) => void
+  setSelectedTheme: (theme: ThemeName) => void
   setTerminalTheme: (theme: TerminalThemeName | null) => void
   resetTerminalTheme: () => void
   hydrate: () => void
@@ -56,6 +66,7 @@ interface ThemeState {
 export const useThemeStore = create<ThemeState>((set, get) => ({
   appThemeMode: 'system',
   appTheme: getSystemTheme(),
+  selectedTheme: 'default',
   terminalTheme: null,
   hydrated: false,
   
@@ -65,7 +76,20 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     persistTheme({
       appThemeMode: mode,
       appTheme: resolvedTheme,
+      selectedTheme: get().selectedTheme,
       terminalTheme: get().terminalTheme,
+      version: CURRENT_VERSION,
+    })
+  },
+  
+  setSelectedTheme: (theme) => {
+    set({ selectedTheme: theme })
+    const state = get()
+    persistTheme({
+      appThemeMode: state.appThemeMode,
+      appTheme: state.appTheme,
+      selectedTheme: theme,
+      terminalTheme: state.terminalTheme,
       version: CURRENT_VERSION,
     })
   },
@@ -76,6 +100,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     persistTheme({
       appThemeMode: state.appThemeMode,
       appTheme: state.appTheme,
+      selectedTheme: state.selectedTheme,
       terminalTheme: theme,
       version: CURRENT_VERSION,
     })
@@ -87,6 +112,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     persistTheme({
       appThemeMode: state.appThemeMode,
       appTheme: state.appTheme,
+      selectedTheme: state.selectedTheme,
       terminalTheme: null,
       version: CURRENT_VERSION,
     })
@@ -103,6 +129,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       set({
         appThemeMode: persisted.appThemeMode || persisted.appTheme,
         appTheme: resolvedTheme,
+        selectedTheme: persisted.selectedTheme || 'default',
         terminalTheme: persisted.terminalTheme,
         hydrated: true,
       })
@@ -110,6 +137,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       set({
         appThemeMode: 'system',
         appTheme: getSystemTheme(),
+        selectedTheme: 'default',
         terminalTheme: null,
         hydrated: true,
       })
@@ -125,6 +153,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
         persistTheme({
           appThemeMode: state.appThemeMode,
           appTheme: newTheme,
+          selectedTheme: state.selectedTheme,
           terminalTheme: state.terminalTheme,
           version: CURRENT_VERSION,
         })

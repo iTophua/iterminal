@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, type ReactNode } from 'react'
 import { ConfigProvider, theme as antdTheme, App as AntdApp } from 'antd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { setTheme as setAppTheme } from '@tauri-apps/api/app'
+import { invoke } from '@tauri-apps/api/core'
 import { useThemeStore } from '../stores/themeStore'
-import type { AppTheme } from '../types/theme'
+import { themes } from '../styles/themes/app-themes'
+import type { AppTheme, ThemeName } from '../types/theme'
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
@@ -19,8 +21,17 @@ async function applyTauriTheme(theme: AppTheme | null) {
   }
 }
 
-function applyThemeToDOM(theme: AppTheme) {
-  document.documentElement.setAttribute('data-theme', theme)
+async function applyWindowBackground(color: string) {
+  try {
+    await invoke('set_window_background_color', { color })
+  } catch (error) {
+    console.warn('Failed to set window background:', error)
+  }
+}
+
+function applyThemeToDOM(mode: AppTheme, colorTheme: ThemeName) {
+  document.documentElement.setAttribute('data-theme', mode)
+  document.documentElement.setAttribute('data-color-theme', colorTheme)
 }
 
 function disableTransitions() {
@@ -34,8 +45,11 @@ function enableTransitions() {
 export function ThemeProvider({ children }: ThemeProviderProps) {
   const appTheme = useThemeStore(s => s.appTheme)
   const appThemeMode = useThemeStore(s => s.appThemeMode)
+  const selectedTheme = useThemeStore(s => s.selectedTheme)
   const hydrate = useThemeStore(s => s.hydrate)
   const hydrated = useThemeStore(s => s.hydrated)
+  
+  const currentThemeDef = themes[selectedTheme]
   
   useIsomorphicLayoutEffect(() => {
     hydrate()
@@ -45,8 +59,13 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     if (!hydrated) return
     
     disableTransitions()
-    applyThemeToDOM(appTheme)
+    applyThemeToDOM(appTheme, selectedTheme)
     applyTauriTheme(appThemeMode === 'system' ? null : appTheme)
+    
+    const bgColor = currentThemeDef.colors[appTheme]['--color-bg-base']
+    if (bgColor && bgColor.startsWith('#')) {
+      applyWindowBackground(bgColor)
+    }
     
     const timer = requestAnimationFrame(() => {
       enableTransitions()
@@ -56,7 +75,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       cancelAnimationFrame(timer)
       enableTransitions()
     }
-  }, [appTheme, appThemeMode, hydrated])
+  }, [appTheme, appThemeMode, selectedTheme, hydrated])
   
   useEffect(() => {
     if (appThemeMode !== 'system') return
@@ -65,14 +84,22 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     
     const handleThemeChange = (newTheme: AppTheme) => {
       disableTransitions()
-      applyThemeToDOM(newTheme)
+      applyThemeToDOM(newTheme, selectedTheme)
       useThemeStore.setState({ appTheme: newTheme })
+      
+      const themeDef = themes[selectedTheme]
+      const bgColor = themeDef.colors[newTheme]['--color-bg-base']
+      if (bgColor && bgColor.startsWith('#')) {
+        applyWindowBackground(bgColor)
+      }
+      
       const state = useThemeStore.getState()
       localStorage.setItem('iterminal_theme', JSON.stringify({
         appThemeMode: state.appThemeMode,
         appTheme: newTheme,
+        selectedTheme: state.selectedTheme,
         terminalTheme: state.terminalTheme,
-        version: 2,
+        version: 3,
       }))
       requestAnimationFrame(enableTransitions)
     }
@@ -109,7 +136,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         unlisten()
       }
     }
-  }, [appThemeMode])
+  }, [appThemeMode, selectedTheme])
   
   if (!hydrated) {
     return null
@@ -120,7 +147,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       theme={{
         algorithm: appTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
-          colorPrimary: '#00b96b',
+          colorPrimary: currentThemeDef.antdPrimary,
           borderRadius: 6,
           fontSize: 13,
           fontSizeSM: 12,
@@ -128,16 +155,16 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         },
         components: {
           Tree: {
-            nodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
+            nodeSelectedBg: `${currentThemeDef.antdPrimary}26`,
             nodeSelectedColor: appTheme === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
-            directoryNodeSelectedBg: 'rgba(0, 185, 107, 0.15)',
+            directoryNodeSelectedBg: `${currentThemeDef.antdPrimary}26`,
             directoryNodeSelectedColor: appTheme === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
           },
           Tabs: {
-            itemSelectedColor: '#00b96b',
-            itemHoverColor: appTheme === 'dark' ? '#1cc77a' : '#00a35e',
-            itemActiveColor: '#00b96b',
-            inkBarColor: '#00b96b',
+            itemSelectedColor: currentThemeDef.antdPrimary,
+            itemHoverColor: currentThemeDef.antdPrimaryHover[appTheme],
+            itemActiveColor: currentThemeDef.antdPrimary,
+            inkBarColor: currentThemeDef.antdPrimary,
           },
         },
       }}

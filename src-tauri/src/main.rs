@@ -84,6 +84,7 @@ fn main() {
             iterminal::commands::window::create_terminal_window,
             iterminal::commands::window::close_terminal_window,
             iterminal::commands::window::get_terminal_window_data,
+            iterminal::commands::window_theme::set_window_background_color,
         ])
         .setup(|app| {
             if let Err(e) = iterminal::commands::db::init_database(app.handle().clone()) {

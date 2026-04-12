@@ -9,6 +9,8 @@ export type AppThemeMode = 'light' | 'dark' | 'system'
 
 export type AppTheme = 'light' | 'dark'
 
+export type ThemeName = 'default' | 'ocean' | 'sunset' | 'violet' | 'rose' | 'matrix' | 'cyber' | 'tokyo' | 'catppuccin' | 'gruvbox'
+
 /**
  * 终端预设主题名称
  */
@@ -102,6 +104,7 @@ export interface ThemeState {
 export interface ThemePersistData {
   appThemeMode: AppThemeMode
   appTheme: AppTheme
+  selectedTheme: ThemeName
   terminalTheme: TerminalThemeName | null
   version: number
 }
