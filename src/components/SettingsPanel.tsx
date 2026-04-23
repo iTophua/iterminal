@@ -2,13 +2,14 @@ import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, 
 import { useTerminalStore, type TerminalSettings, type ShortcutSettings, formatShortcutForDisplay } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
-import type { TerminalThemeName } from '../types/theme'
+
 import { useState, useEffect, useCallback } from 'react'
 import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { themeList } from '../styles/themes/app-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
+import { open } from '@tauri-apps/plugin-shell'
 import { STORAGE_KEYS, API_CONFIG } from '../config/constants'
 
 const { Text } = Typography
@@ -453,9 +454,10 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
                 <div
                   style={{
                     position: 'relative',
-                    height: 48,
+                    height: 52,
                     display: 'flex',
                     overflow: 'hidden',
+                    borderRadius: '8px 8px 0 0',
                   }}
                 >
                   {/* 亮色模式预览 */}
@@ -470,21 +472,24 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
                     }}
                   >
                     <div
+                      className="theme-color-block"
                       style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: 4,
+                        '--block-color': lightColor,
+                        width: 18,
+                        height: 18,
+                        borderRadius: 5,
                         background: lightColor,
-                        boxShadow: `0 0 8px ${lightColor}60`,
-                      }}
+                        boxShadow: `0 0 10px ${lightColor}50`,
+                      } as React.CSSProperties}
                     />
                     <div
                       style={{
                         position: 'absolute',
-                        right: 4,
-                        top: 4,
-                        fontSize: 8,
+                        right: 5,
+                        top: 5,
+                        fontSize: 9,
                         color: theme.colors.light['--color-text-tertiary'],
+                        opacity: 0.6,
                       }}
                     >
                       <SunOutlined />
@@ -506,21 +511,24 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
                     }}
                   >
                     <div
+                      className="theme-color-block"
                       style={{
-                        width: 16,
-                        height: 16,
-                        borderRadius: 4,
+                        '--block-color': darkColor,
+                        width: 18,
+                        height: 18,
+                        borderRadius: 5,
                         background: darkColor,
-                        boxShadow: `0 0 8px ${darkColor}60`,
-                      }}
+                        boxShadow: `0 0 10px ${darkColor}50`,
+                      } as React.CSSProperties}
                     />
                     <div
                       style={{
                         position: 'absolute',
-                        right: 4,
-                        top: 4,
-                        fontSize: 8,
+                        right: 5,
+                        top: 5,
+                        fontSize: 9,
                         color: theme.colors.dark['--color-text-tertiary'],
+                        opacity: 0.6,
                       }}
                     >
                       <MoonOutlined />
@@ -536,14 +544,15 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        background: `${lightColor}15`,
+                        background: `${lightColor}18`,
+                        backdropFilter: 'blur(1px)',
                       }}
                     >
                       <CheckOutlined
                         style={{
-                          color: 'var(--color-primary)',
-                          fontSize: 20,
-                          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+                          color: lightColor,
+                          fontSize: 22,
+                          filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.4))',
                         }}
                       />
                     </div>
@@ -1040,7 +1049,7 @@ ${claudeConfig}`}
                     type="primary" 
                     block 
                     style={{ background: 'var(--color-warning)', borderColor: 'var(--color-warning)' }}
-                    onClick={() => window.open('https://iterminal.app/buy?plan=personal')}
+                    onClick={() => open('https://iterminal.app/buy?plan=personal').catch(() => {})}
                   >
                     立即购买
                   </Button>
@@ -1066,7 +1075,7 @@ ${claudeConfig}`}
                     type="primary" 
                     block 
                     style={{ background: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
-                    onClick={() => window.open('https://iterminal.app/buy?plan=professional')}
+                    onClick={() => open('https://iterminal.app/buy?plan=professional').catch(() => {})}
                   >
                     立即购买
                   </Button>
@@ -1296,6 +1305,7 @@ ${claudeConfig}`}
 
   return (
     <Modal
+      className="settings-modal"
       title="系统设置"
       open={visible}
       onCancel={handleClose}
@@ -1315,7 +1325,7 @@ ${claudeConfig}`}
           )}
         </div>
       ) : null}
-      width={600}
+      width={700}
       styles={{
         body: { padding: 0 },
         header: { borderBottom: '1px solid var(--color-border)' },
@@ -1332,15 +1342,18 @@ ${claudeConfig}`}
             mode="vertical"
             selectedKeys={[activeCategory]}
             onClick={(e) => handleCategoryChange(e.key as SettingCategory)}
+            className="settings-menu"
             style={{
               background: 'transparent',
               border: 'none',
               color: 'var(--color-text)',
+              paddingInline: 0,
             }}
             items={SETTING_CATEGORIES.map(item => ({
               key: item.key,
-              icon: item.icon,
+              icon: <span style={{ marginLeft: 8, display: 'inline-flex' }}>{item.icon}</span>,
               label: item.label,
+              style: { paddingInline: 16, marginInline: 0 },
             }))}
           />
         </div>

@@ -36,6 +36,7 @@ export function RightSidebar({
 }: RightSidebarProps) {
   return (
     <div
+      className="right-sidebar"
       style={{
         width: 32,
         height: '100%',
@@ -75,6 +76,7 @@ export function RightSidebar({
         />
       )}
       <div
+        className="right-sidebar-actions"
         style={{
           display: 'flex',
           flexDirection: 'column',

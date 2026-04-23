@@ -235,7 +235,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             left: 8,
             right: 8,
             padding: '12px 16px',
-            background: 'rgba(0, 185, 107, 0.15)',
+            background: 'color-mix(in srgb, var(--color-primary) 15%, transparent)',
             borderRadius: 6,
             border: '2px dashed var(--color-primary)',
             zIndex: 10,
@@ -428,7 +428,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             icon={<SearchOutlined />}
             onClick={() => fileOps.setSearchVisible(!fileOps.searchVisible)}
             style={{
-              background: fileOps.searchVisible ? 'rgba(0, 185, 107, 0.15)' : 'transparent',
+              background: fileOps.searchVisible ? 'color-mix(in srgb, var(--color-primary) 15%, transparent)' : 'transparent',
               border: '1px solid var(--color-border)',
               color: fileOps.searchVisible ? 'var(--color-primary)' : 'var(--color-text-tertiary)',
             }}
@@ -502,8 +502,6 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             loadDirectory(path, true)
           }}
           dragTargetPath={dragDrop.dragTargetPath}
-          onUploadFile={transfer.handleUploadFile}
-          onCreateFolder={() => fileOps.setNewFolderVisible(true)}
         />
       </div>
 
@@ -666,7 +664,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         ) : (
           <>
             {fileOps.previewTruncated && (
-              <div style={{ marginBottom: 8, color: '#faad14', fontSize: 12 }}>
+              <div style={{ marginBottom: 8, color: 'var(--color-warning)', fontSize: 12 }}>
                 文件较大，仅显示前 1MB 内容
               </div>
             )}

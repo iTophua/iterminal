@@ -41,7 +41,7 @@ export function DraggableSessionTab({
       {isDisconnected && (
         <WarningOutlined
           style={{
-            color: '#faad14',
+            color: 'var(--color-warning)',
             fontSize: 11,
             marginRight: 3,
             animation: 'tabDisconnectPulse 1.5s ease-in-out infinite',
@@ -51,7 +51,7 @@ export function DraggableSessionTab({
       <span
         style={{
           lineHeight: '16px',
-          color: isDisconnected ? '#faad14' : undefined,
+          color: isDisconnected ? 'var(--color-warning)' : undefined,
         }}
       >
         {title}
@@ -62,7 +62,7 @@ export function DraggableSessionTab({
           marginLeft: 4,
           fontSize: 9,
           cursor: 'pointer',
-          color: isDisconnected ? '#faad14' : undefined,
+          color: isDisconnected ? 'var(--color-warning)' : undefined,
         }}
         onClick={(e) => {
           e.stopPropagation()

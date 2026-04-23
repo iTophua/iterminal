@@ -33,7 +33,6 @@ import { useThemeStore } from '../stores/themeStore'
 import { useHistoryStore } from '../stores/historyStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import type { TerminalThemeColors } from '../types/theme'
-import { WarningOutlined } from '@ant-design/icons'
 
 const GhostTextOverlay = React.forwardRef<HTMLDivElement, {
   sessionKey: string
@@ -91,6 +90,16 @@ import type { Connection } from '../types/shared'
 
 interface TerminalProps {
   singleConnectionMode?: boolean
+}
+
+// 获取分组 CSS 类名（用于环境标签主题适配）
+function getGroupClass(group: string): string {
+  const map: Record<string, string> = {
+    '生产环境': 'group-accent-production',
+    '开发环境': 'group-accent-development',
+    '测试环境': 'group-accent-test',
+  }
+  return map[group] || 'group-accent-default'
 }
 
 function Terminal({ singleConnectionMode = false }: TerminalProps) {
@@ -1762,7 +1771,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
                 }}
                 onClick={() => handleQuickConnect(conn)}
               >
-                <span style={{ color: conn.group === '生产环境' ? '#E65100' : 'var(--color-text)' }}>
+                <span className={getGroupClass(conn.group)} style={{ color: 'var(--group-accent-color, var(--color-text))' }}>
                   {conn.name}
                 </span>
                 <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>
@@ -2061,7 +2070,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           ]}
           type="card"
           style={{ flex: '0 0 auto' }}
-          tabBarStyle={{ margin: 0, padding: '0 4px', background: 'var(--color-bg-elevated)', minHeight: 24, height: 24 }}
+          tabBarStyle={{ margin: 0, padding: '0 4px', background: 'var(--color-bg-container)', minHeight: 24, height: 24 }}
           onTabClick={(key) => { if (key === '__add__') handleAddSessionToPane() }}
           destroyInactiveTabPane={false}
           size="small"
@@ -2078,7 +2087,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           id={conn.connectionId}
           connectionName={conn.connection.name}
           label={
-            <span style={{ color: conn.disconnected ? 'var(--color-error)' : (conn.connection.group === '生产环境' ? '#E65100' : 'var(--color-text)'), fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
+            <span className={getGroupClass(conn.connection.group)} style={{ color: conn.disconnected ? 'var(--color-error)' : 'var(--group-accent-color, var(--color-text))', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
               {conn.disconnected && <DisconnectOutlined style={{ marginRight: 4 }} />}
               {conn.connection.username}@{conn.connection.host}
               {conn.reconnecting && <span style={{ marginLeft: 4, fontSize: 10 }}>重连中...</span>}
@@ -2192,7 +2201,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         overflow: 'hidden',
       }}>
         {!singleConnectionMode && (
-          <div style={{ 
+          <div className="connection-tabs-bar" style={{ 
             display: 'flex', 
             alignItems: 'center',
             background: 'var(--color-bg-elevated)',

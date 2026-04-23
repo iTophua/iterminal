@@ -68,7 +68,7 @@ function MenuItem({
         gap: 8,
       }}
       onClick={onClick}
-      onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.1)')}
+      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-spotlight)')}
       onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
     >
       {icon} {label}

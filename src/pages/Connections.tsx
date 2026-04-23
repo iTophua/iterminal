@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Card, Button, Input, Space, Tag, Modal, Form, Select, Typography, App, Upload, Checkbox, Row, Col, Radio } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined, FolderOpenOutlined, SwapOutlined, CheckSquareOutlined } from '@ant-design/icons'
+import { Button, Input, Space, Tag, Modal, Form, Select, Typography, App, Upload, Checkbox, Row, Col, Radio } from 'antd'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined, FolderOpenOutlined, SwapOutlined, CheckSquareOutlined, DesktopOutlined, CloudOutlined, DatabaseOutlined, ContainerOutlined, InboxOutlined, CodeOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
@@ -20,6 +20,38 @@ import {
 import { writeTextFile } from '@tauri-apps/plugin-fs'
 
 type TestResult = 'success' | 'failed' | null
+
+// 分组图标映射
+const GROUP_ICONS: Record<string, React.ReactNode> = {
+  '生产环境': <DatabaseOutlined />,
+  '开发环境': <CodeOutlined />,
+  '测试环境': <ContainerOutlined />,
+  '默认': <CloudOutlined />,
+}
+
+// 分组强调色 - 使用 CSS 变量，卡片通过 group-accent-* 类定义 --group-accent-color
+const GROUP_ACCENT_COLORS: Record<string, string> = {
+  '生产环境': 'var(--group-accent-color)',
+  '开发环境': 'var(--group-accent-color)',
+  '测试环境': 'var(--group-accent-color)',
+  '默认': 'var(--color-primary)',
+}
+
+// 服务器类型图标
+function getServerIcon(_conn: Connection) {
+  // 可根据主机名或标签推断，默认用桌面图标
+  return <DesktopOutlined />
+}
+
+// 获取分组CSS类名
+function getGroupClass(group: string): string {
+  const map: Record<string, string> = {
+    '生产环境': 'group-accent-production',
+    '开发环境': 'group-accent-development',
+    '测试环境': 'group-accent-test',
+  }
+  return map[group] || 'group-accent-default'
+}
 
 function Connections() {
   const navigate = useNavigate()
@@ -533,14 +565,6 @@ function Connections() {
   }
 
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'online': return 'var(--color-success)'
-      case 'connecting': return 'var(--color-info)'
-      default: return 'var(--color-text-quaternary)'
-    }
-  }
-
   const groupOptions = [
     { value: '生产环境', label: '生产环境' },
     { value: '开发环境', label: '开发环境' },
@@ -776,18 +800,19 @@ function Connections() {
             最近:
           </span>
           {recentConnections.slice(0, 6).map(conn => (
-            <Button
+            <button
               key={conn.id}
-              size="small"
+              className="recent-chip"
               onClick={() => handleConnect(conn)}
               style={{
-                background: 'var(--color-bg-elevated)',
-                border: '1px solid var(--color-border)',
-                fontSize: 12
+                padding: '4px 10px',
+                fontSize: 12,
+                cursor: 'pointer',
+                color: 'var(--color-text-secondary)',
               }}
             >
               {conn.name}
-            </Button>
+            </button>
           ))}
         </div>
       )}
@@ -805,31 +830,32 @@ function Connections() {
             加载中...
           </div>
         ) : filteredConnections.length === 0 ? (
-          <div style={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            height: '100%',
-            color: 'var(--color-text-tertiary)'
-          }}>
-            <p style={{ marginBottom: 16 }}>暂无连接</p>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-              新建连接
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <InboxOutlined style={{ fontSize: 56, color: 'var(--color-text-quaternary)' }} />
+            </div>
+            <div className="empty-state-title">
+              {searchText ? '未找到匹配的连接' : '暂无连接'}
+            </div>
+            <div className="empty-state-desc">
+              {searchText
+                ? '尝试更换搜索关键词，或清除筛选条件'
+                : '创建您的第一个 SSH 连接，开始管理远程服务器'
+              }
+            </div>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd} className="btn-primary-glow">
+              {searchText ? '清除搜索' : '新建连接'}
             </Button>
           </div>
         ) : (
           <>
             {isBatchMode && (
-              <div style={{ 
-                marginBottom: 10, 
-                padding: '8px 12px', 
-                background: 'var(--color-bg-elevated)', 
-                borderRadius: 6,
+              <div className="batch-toolbar" style={{
+                marginBottom: 12,
+                padding: '10px 14px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: 12,
-                border: '1px solid var(--color-primary)'
               }}>
                 <span style={{ color: 'var(--color-primary)', fontWeight: 500 }}>
                   已选择 {selectedIds.length} 项
@@ -888,18 +914,14 @@ function Connections() {
                       zIndex: 10
                     }} />
                   )}
-                  <Card
+                  <div
                     data-connection-id={conn.id}
-                    size="small"
-                    hoverable={conn.status !== 'connecting'}
+                    className={`connection-card ${getGroupClass(conn.group)} ${conn.status === 'connecting' ? 'connecting' : ''} ${isBatchMode && selectedIds.includes(conn.id) ? 'selected' : ''} card-list-enter`}
                     style={{
-                      background: 'var(--color-bg-elevated)',
-                      borderColor: draggedId === conn.id ? 'var(--color-primary)' : (dragOverId === conn.id ? 'var(--color-primary)' : ((isBatchMode && selectedIds.includes(conn.id)) ? 'var(--color-primary)' : (conn.status === 'connecting' ? 'var(--color-info)' : 'var(--color-border)'))),
                       cursor: isReorderMode ? 'grabbing' : 'pointer',
-                      opacity: draggedId === conn.id ? 0.3 : (conn.status === 'connecting' ? 0.85 : 1),
-                      transition: 'all 0.15s ease',
+                      opacity: draggedId === conn.id ? 0.35 : (conn.status === 'connecting' ? 0.88 : 1),
+                      animationDelay: `${(filteredConnections.indexOf(conn) % 20) * 40}ms`,
                     }}
-                    styles={{ body: { padding: '10px 12px' } }}
                     onPointerDown={(e) => handlePointerDown(conn.id, e)}
                     onPointerUp={handlePointerUp}
                     onPointerMove={handlePointerMove}
@@ -914,7 +936,7 @@ function Connections() {
                     onClick={() => {
                       if (isReorderMode) return
                       if (isBatchMode) {
-                        setSelectedIds(prev => 
+                        setSelectedIds(prev =>
                           prev.includes(conn.id) ? prev.filter(id => id !== conn.id) : [...prev, conn.id]
                         )
                       } else if (conn.status !== 'connecting') {
@@ -922,116 +944,135 @@ function Connections() {
                       }
                     }}
                   >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: 1, minWidth: 0 }}>
-                      {isBatchMode && (
-                        <Checkbox
-                          checked={selectedIds.includes(conn.id)}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedIds(prev => [...prev, conn.id])
-                            } else {
-                              setSelectedIds(prev => prev.filter(id => id !== conn.id))
-                            }
-                          }}
-                        />
-                      )}
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ 
-                            color: conn.group === '生产环境' ? '#E65100' : 'var(--color-text)', 
-                            fontWeight: 500,
-                            fontSize: 13,
-                          }}>{conn.name}</span>
-                          <span style={{
-                            display: 'inline-block',
-                            width: 6,
-                            height: 6,
-                            borderRadius: '50%',
-                            background: conn.status === 'connecting' ? 'var(--color-info)' : (isConnected(conn.id) ? 'var(--color-success)' : getStatusColor(conn.status)),
-                          }} />
+                    <div style={{ padding: '12px 14px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, flex: 1, minWidth: 0 }}>
+                          {isBatchMode && (
+                            <Checkbox
+                              checked={selectedIds.includes(conn.id)}
+                              onClick={(e) => e.stopPropagation()}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedIds(prev => [...prev, conn.id])
+                                } else {
+                                  setSelectedIds(prev => prev.filter(id => id !== conn.id))
+                                }
+                              }}
+                            />
+                          )}
+                          {/* 服务器图标 */}
+                          <div style={{
+                            width: 36,
+                            height: 36,
+                            borderRadius: 9,
+                            background: `color-mix(in srgb, ${GROUP_ACCENT_COLORS[conn.group] || 'var(--color-primary)'} 12%, var(--color-bg-container))`,
+                            border: `1px solid color-mix(in srgb, ${GROUP_ACCENT_COLORS[conn.group] || 'var(--color-primary)'} 20%, var(--color-border))`,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            color: GROUP_ACCENT_COLORS[conn.group] || 'var(--color-primary)',
+                            fontSize: 16,
+                            flexShrink: 0,
+                            marginTop: 1,
+                          }}>
+                            {GROUP_ICONS[conn.group] || getServerIcon(conn)}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <span style={{
+                                color: GROUP_ACCENT_COLORS[conn.group] || 'var(--color-text)',
+                                fontWeight: 600,
+                                fontSize: 14,
+                              }}>{conn.name}</span>
+                              <span className={`status-dot ${conn.status === 'connecting' ? 'connecting' : (isConnected(conn.id) ? 'online' : 'offline')}`} />
+                            </div>
+                            <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginTop: 3, fontFamily: "'Menlo', 'Monaco', monospace" }}>
+                              {conn.username}@{conn.host}:{conn.port}
+                            </div>
+                            <div style={{ marginTop: 8, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                              <Tag className="tag-enhanced" style={{ background: `color-mix(in srgb, ${GROUP_ACCENT_COLORS[conn.group] || 'var(--color-primary)'} 10%, var(--color-bg-container))`, border: `1px solid color-mix(in srgb, ${GROUP_ACCENT_COLORS[conn.group] || 'var(--color-primary)'} 18%, var(--color-border))`, color: GROUP_ACCENT_COLORS[conn.group] || 'var(--color-primary)' }}>
+                                {conn.group}
+                              </Tag>
+                              {conn.tags.slice(0, 2).map(tag => (
+                                <Tag key={tag} className="tag-enhanced" style={{ background: 'var(--color-primary)', border: 'none', color: '#fff' }}>
+                                  {tag}
+                                </Tag>
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                        <div style={{ color: 'var(--color-text-tertiary)', fontSize: 11, marginTop: 2 }}>
-                          {conn.username}@{conn.host}:{conn.port}
-                        </div>
-                        <div style={{ marginTop: 6, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                          <Tag style={{ background: 'var(--color-border)', border: 'none', color: 'var(--color-text)', fontSize: 10, padding: '0 4px', lineHeight: '18px' }}>
-                            {conn.group}
-                          </Tag>
-                          {conn.tags.slice(0, 2).map(tag => (
-                            <Tag key={tag} style={{ background: 'var(--color-primary)', border: 'none', color: '#fff', fontSize: 10, padding: '0 4px', lineHeight: '18px' }}>
-                              {tag}
-                            </Tag>
-                          ))}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 3, marginLeft: 6 }}>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="card-action-btn"
+                            icon={<EnvironmentOutlined style={{ fontSize: 11 }} />}
+                            onClick={(e) => handleQuickCopy(e, conn.host, 'IP')}
+                            style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 5px', height: 20, borderRadius: 4 }}
+                          >
+                            IP
+                          </Button>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="card-action-btn"
+                            icon={<KeyOutlined style={{ fontSize: 11 }} />}
+                            onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
+                            style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 5px', height: 20, borderRadius: 4 }}
+                          >
+                            信息
+                          </Button>
                         </div>
                       </div>
+                      {!isBatchMode && (
+                        <div style={{ marginTop: 10, display: 'flex', justifyContent: 'flex-end', gap: 4, borderTop: '1px solid var(--color-border-secondary)', paddingTop: 8 }}>
+                          <Button
+                            type="text"
+                            size="small"
+                            danger
+                            className="card-action-btn"
+                            icon={<DeleteOutlined style={{ fontSize: 11 }} />}
+                            onClick={(e) => handleDelete(e, conn.id, conn.name)}
+                            style={{ padding: '0 5px', height: 22, fontSize: 11, borderRadius: 4 }}
+                          />
+                          <Button
+                            type="text"
+                            size="small"
+                            className="card-action-btn"
+                            icon={<EditOutlined style={{ fontSize: 11 }} />}
+                            onClick={(e) => handleEdit(e, conn)}
+                            style={{ padding: '0 5px', height: 22, fontSize: 11, borderRadius: 4 }}
+                          />
+                          <Button
+                            type="text"
+                            size="small"
+                            className="card-action-btn"
+                            icon={<CopyOutlined style={{ fontSize: 11 }} />}
+                            onClick={(e) => handleCopyConfig(e, conn)}
+                            style={{ padding: '0 5px', height: 22, fontSize: 11, borderRadius: 4 }}
+                          >
+                            复制
+                          </Button>
+                          <Button
+                            type="text"
+                            size="small"
+                            className="card-action-btn"
+                            icon={conn.status === 'connecting' ? <LoadingOutlined style={{ fontSize: 11 }} /> : <PlayCircleOutlined style={{ fontSize: 11 }} />}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (conn.status !== 'connecting') handleConnect(conn)
+                            }}
+                            style={{ color: conn.status === 'connecting' ? 'var(--color-info)' : 'var(--color-primary)', padding: '0 5px', height: 22, fontSize: 11, borderRadius: 4 }}
+                          >
+                            {conn.status === 'connecting' ? '连接中' : (isConnected(conn.id) ? '打开' : '连接')}
+                          </Button>
+                        </div>
+                      )}
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, marginLeft: 8 }}>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EnvironmentOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => handleQuickCopy(e, conn.host, 'IP')}
-                        style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 4px', height: 18 }}
-                      >
-                        IP
-                      </Button>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<KeyOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
-                        style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 4px', height: 18 }}
-                      >
-                        信息
-                      </Button>
-                    </div>
+                    {conn.status === 'connecting' && (
+                      <div className="connecting-progress-bar" />
+                    )}
                   </div>
-                  {!isBatchMode && (
-                    <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end', gap: 4, borderTop: '1px solid var(--color-border)', paddingTop: 8 }}>
-                      <Button
-                        type="text"
-                        size="small"
-                        danger
-                        icon={<DeleteOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => handleDelete(e, conn.id, conn.name)}
-                        style={{ padding: '0 4px', height: 20, fontSize: 11 }}
-                      />
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => handleEdit(e, conn)}
-                        style={{ padding: '0 4px', height: 20, fontSize: 11 }}
-                      />
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<CopyOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => handleCopyConfig(e, conn)}
-                        style={{ padding: '0 4px', height: 20, fontSize: 11 }}
-                      >
-                        复制
-                      </Button>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={conn.status === 'connecting' ? <LoadingOutlined style={{ fontSize: 11 }} /> : <PlayCircleOutlined style={{ fontSize: 11 }} />}
-                        onClick={(e) => { 
-                          e.stopPropagation()
-                          if (conn.status !== 'connecting') handleConnect(conn) 
-                        }}
-                        style={{ color: conn.status === 'connecting' ? 'var(--color-info)' : undefined, padding: '0 4px', height: 20, fontSize: 11 }}
-                      >
-                        {conn.status === 'connecting' ? '连接中' : (isConnected(conn.id) ? '打开' : '连接')}
-                      </Button>
-                    </div>
-                  )}
-                {conn.status === 'connecting' && (
-                    <div className="connecting-progress-bar" />
-                  )}
-                </Card>
                 {dragOverId === conn.id && dropPosition === 'after' && (
                   <div style={{
                     position: 'absolute',
@@ -1360,7 +1401,7 @@ function Connections() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ 
-              color: draggedConnection.group === '生产环境' ? '#E65100' : 'var(--color-text)', 
+              color: GROUP_ACCENT_COLORS[draggedConnection.group] || 'var(--color-text)', 
               fontWeight: 500,
               fontSize: 13,
             }}>{draggedConnection.name}</span>

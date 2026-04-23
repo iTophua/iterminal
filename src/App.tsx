@@ -1,6 +1,7 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { Layout, Modal, Button, Space, message } from 'antd'
 import Sidebar from './components/Sidebar'
+import { TitleBar } from './components/TitleBar'
 import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
 import TerminalWindowPage from './pages/TerminalWindow'
@@ -248,6 +249,32 @@ function SessionSaver() {
   return null
 }
 
+// 页面切换动画包装组件
+function AnimatedPage({ show, children, padding = false }: { show: boolean; children: React.ReactNode; padding?: boolean }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        padding: padding ? 16 : 0,
+        overflow: padding ? 'auto' : 'hidden',
+        opacity: show ? 1 : 0,
+        transform: show ? 'translateY(0) scale(1)' : 'translateY(10px) scale(0.995)',
+        transition: 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+        pointerEvents: show ? 'auto' : 'none',
+        zIndex: show ? 1 : 0,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 // 主内容组件 - 处理终端的持久化
 function MainContent() {
   const location = useLocation()
@@ -264,46 +291,18 @@ function MainContent() {
       position: 'relative'
     }}>
       {/* 终端组件始终挂载，用 CSS 控制显示/隐藏 */}
-      <div style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: location.pathname === '/terminal' ? 'flex' : 'none',
-        flexDirection: 'column'
-      }}>
+      <AnimatedPage show={location.pathname === '/terminal'}>
         <Terminal />
-      </div>
+      </AnimatedPage>
       
       {/* 连接管理组件始终挂载，用 CSS 控制显示/隐藏 */}
-      <div style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: location.pathname === '/connections' ? 'flex' : 'none',
-        flexDirection: 'column',
-        padding: 16,
-        overflow: 'auto'
-      }}>
+      <AnimatedPage show={location.pathname === '/connections'} padding>
         <Connections />
-      </div>
+      </AnimatedPage>
       
-      <div style={{
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        display: location.pathname === '/transfers' ? 'flex' : 'none',
-        flexDirection: 'column',
-        padding: 16,
-        overflow: 'auto'
-      }}>
+      <AnimatedPage show={location.pathname === '/transfers'} padding>
         <Transfers />
-      </div>
+      </AnimatedPage>
       
       {/* 路由仅用于 URL 导航 */}
       <Routes>
@@ -334,11 +333,14 @@ function MainApp() {
       <SessionRestorer />
       <SessionSaver />
       <MenuActionHandler />
+      <TitleBar />
       <Layout style={{
-        minHeight: '100vh',
+        minHeight: 'calc(100vh - 28px)',
         background: 'var(--color-bg-container)',
         position: 'relative',
-        zIndex: 1
+        zIndex: 1,
+        display: 'flex',
+        flexDirection: 'column',
       }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>
@@ -347,17 +349,32 @@ function MainApp() {
           <MainContent />
         </Layout>
 
-        <div style={{
+        <div className="footer-bar" style={{
           height: 32,
-          background: 'var(--color-bg-elevated)',
-          borderTop: '1px solid var(--color-border)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           color: 'var(--color-text-tertiary)',
-          fontSize: 12
+          fontSize: 12,
+          gap: 8,
         }}>
-          <span className="gradient-text" style={{ fontWeight: 500 }}>iTerminal - SSH 连接管理器 ©2026</span>
+          <span style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: 'var(--color-primary)',
+            display: 'inline-block',
+            opacity: 0.7,
+          }} />
+          <span className="gradient-text" style={{ fontWeight: 500, letterSpacing: 0.3 }}>iTerminal - SSH 连接管理器 ©2026</span>
+          <span style={{
+            width: 6,
+            height: 6,
+            borderRadius: '50%',
+            background: 'var(--color-primary)',
+            display: 'inline-block',
+            opacity: 0.7,
+          }} />
         </div>
       </Layout>
     </>

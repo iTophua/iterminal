@@ -119,11 +119,8 @@ export interface TerminalSettings {
   cursorBlink: boolean
 }
 
-// ============ 主题相关 ============
-
-export type AppTheme = 'light' | 'dark'
-export type AppThemeMode = 'light' | 'dark' | 'system'
-export type TerminalThemeName = 'default' | 'pro' | 'dracula' | 'solarized' | 'gruvbox'
+// 注：主题相关类型统一定义在 theme.ts 中，避免重复
+// 如需使用，请从 theme.ts 导入
 
 // ============ 工具函数 ============
 

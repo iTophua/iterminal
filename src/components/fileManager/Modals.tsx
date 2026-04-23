@@ -210,7 +210,7 @@ export function ChmodModal({
           status={value && !/^[0-7]{1,4}$/.test(value) ? 'error' : undefined}
         />
         {value && !/^[0-7]{1,4}$/.test(value) && (
-          <span style={{ color: '#ff4d4f', fontSize: 12 }}>请输入有效的八进制权限值（0-7）</span>
+          <span style={{ color: 'var(--color-error)', fontSize: 12 }}>请输入有效的八进制权限值（0-7）</span>
         )}
       </Form.Item>
     </Modal>

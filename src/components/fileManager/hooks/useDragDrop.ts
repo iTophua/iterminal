@@ -114,8 +114,7 @@ export function useDragDrop({
           setDragTargetPath(null)
         } else if (event.payload.type === 'over') {
           const { position } = event.payload
-          const x = position.x
-          const y = position.y - 19
+          const y = position.y - 12
 
           const inPanel = isInFileManagerPanel(position.x, position.y)
           

@@ -143,7 +143,7 @@ export function useTransfer({
         `transfer-progress-${taskId}`,
         (event) => {
           const state = useTransferStore.getState()
-          const record = state.records[taskId]
+          const record = state.records.find(r => r.id === taskId)
           const speed = record ? calculateSpeed(event.payload.transferred, record.startTime) : 0
           state.updateProgress(
             taskId,
@@ -376,7 +376,7 @@ export function useTransfer({
             `transfer-progress-${taskId}`,
             (event) => {
               const state = useTransferStore.getState()
-              const record = state.records[taskId]
+              const record = state.records.find(r => r.id === taskId)
               const speed = record ? calculateSpeed(event.payload.transferred, record.startTime) : 0
               state.updateProgress(taskId, event.payload.transferred, event.payload.total, undefined, undefined, speed)
             }

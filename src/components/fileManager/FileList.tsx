@@ -88,7 +88,7 @@ export function FileList({
         height: '100%',
         overflow: 'auto',
         padding: 8,
-        background: 'var(--color-bg-elevated)',
+        background: 'var(--color-bg-container)',
         userSelect: 'none',
         WebkitUserSelect: 'none',
       }}
@@ -112,14 +112,14 @@ export function FileList({
               onDoubleClick={() => onSearchSelect(item)}
               style={{
                 padding: '8px 12px',
-                background: 'var(--color-bg-container)',
+        background: 'var(--color-bg-elevated)',
                 borderRadius: 4,
                 cursor: 'pointer',
                 transition: 'background 0.15s',
                 border: '1px solid var(--color-border)',
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.background = 'rgba(0, 185, 107, 0.1)'
+                e.currentTarget.style.background = 'color-mix(in srgb, var(--color-primary) 10%, transparent)'
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = 'var(--color-bg-container)'
@@ -286,9 +286,9 @@ export function FileList({
                 style={{
                   padding: '8px 12px',
                   background: selectedKeys.includes(item.key as string)
-                    ? 'rgba(0, 185, 107, 0.15)'
+                    ? 'color-mix(in srgb, var(--color-primary) 15%, transparent)'
                     : dragTargetPath === item.path
-                      ? 'rgba(0, 185, 107, 0.25)'
+                      ? 'color-mix(in srgb, var(--color-primary) 25%, transparent)'
                       : 'transparent',
                   borderRadius: 4,
                   cursor: 'pointer',

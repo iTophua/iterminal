@@ -72,7 +72,7 @@ export function ConnectionTab({
   return (
     <span
       style={{
-        color: connection.group === '生产环境' ? '#E65100' : 'var(--color-text)',
+        color: connection.group === '生产环境' ? 'var(--color-error)' : 'var(--color-text)',
         fontWeight: 500,
         display: 'inline-flex',
         alignItems: 'center',

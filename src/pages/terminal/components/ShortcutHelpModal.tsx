@@ -16,12 +16,6 @@ interface ShortcutHelpModalProps {
 
 const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0
 
-const CATEGORIES = [
-  { key: 'terminal', label: '终端操作', color: 'blue' },
-  { key: 'session', label: '会话管理', color: 'green' },
-  { key: 'edit', label: '编辑/搜索', color: 'purple' },
-]
-
 export function ShortcutHelpModal({ visible, onClose }: ShortcutHelpModalProps) {
   const shortcutSettings = useTerminalStore(state => state.shortcutSettings)
   const [shortcuts, setShortcuts] = useState<ShortcutItem[]>([])

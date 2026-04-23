@@ -11,7 +11,6 @@ import {
   UploadOutlined,
   CopyOutlined,
   ScissorOutlined,
-  CompressOutlined,
   FileZipOutlined,
   UnorderedListOutlined,
   DeleteOutlined,
@@ -139,7 +138,7 @@ export function ContextMenu({
         zIndex: 9999,
         background: 'var(--color-bg-elevated)',
         borderRadius: 4,
-        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+        boxShadow: 'var(--shadow-lg)',
         minWidth: 160,
         maxHeight: `calc(100vh - ${Math.min(position.y, window.innerHeight - 400) + 20}px)`,
         overflowY: 'auto',
@@ -157,7 +156,7 @@ export function ContextMenu({
               color: item.disabled
                 ? 'var(--color-text-quaternary)'
                 : item.danger
-                  ? '#ff4d4f'
+                  ? 'var(--color-error)'
                   : 'var(--color-text)',
               display: 'flex',
               alignItems: 'center',
@@ -173,7 +172,7 @@ export function ContextMenu({
             }}
             onMouseEnter={(e) => {
               if (!item.disabled) {
-                e.currentTarget.style.background = 'rgba(0, 185, 107, 0.15)'
+                e.currentTarget.style.background = 'color-mix(in srgb, var(--color-primary) 15%, transparent)'
               }
             }}
             onMouseLeave={(e) => {
