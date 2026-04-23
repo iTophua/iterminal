@@ -2087,14 +2087,15 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           id={conn.connectionId}
           connectionName={conn.connection.name}
           label={
-            <span className={getGroupClass(conn.connection.group)} style={{ color: conn.disconnected ? 'var(--color-error)' : 'var(--group-accent-color, var(--color-text))', fontWeight: 500, display: 'inline-flex', alignItems: 'center' }}>
-              {conn.disconnected && <DisconnectOutlined style={{ marginRight: 4 }} />}
-              {conn.connection.username}@{conn.connection.host}
-              {conn.reconnecting && <span style={{ marginLeft: 4, fontSize: 10 }}>重连中...</span>}
-              <CloseOutlined 
-                style={{ marginLeft: 4, fontSize: 9 }} 
+            <span className={getGroupClass(conn.connection.group)} style={{ color: conn.disconnected ? 'var(--color-error)' : 'var(--group-accent-color, var(--color-text))', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 2px' }}>
+              {conn.disconnected && <DisconnectOutlined style={{ fontSize: 10, flexShrink: 0 }} />}
+              <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{conn.connection.username}@{conn.connection.host}</span>
+              {conn.reconnecting && <span style={{ fontSize: 10, opacity: 0.7, flexShrink: 0 }}>重连中...</span>}
+              <CloseOutlined
+                className="connection-tab-close"
+                style={{ marginLeft: 4, fontSize: 10, opacity: 0.5, transition: 'opacity 0.2s', flexShrink: 0, cursor: 'pointer' }}
                 onPointerDown={e => e.stopPropagation()}
-                onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }} 
+                onClick={e => { e.stopPropagation(); handleCloseConnection(conn.connectionId) }}
               />
             </span>
           }

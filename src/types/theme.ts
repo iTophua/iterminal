@@ -364,7 +364,7 @@ export interface ThemeVariableSet {
   '--state-selected-border': string
   '--state-selected-text': string
 
-  // Shadow
+  // Shadow - 三层阴影系统
   '--shadow-none': string
   '--shadow-xs': string
   '--shadow-sm': string
@@ -372,6 +372,10 @@ export interface ThemeVariableSet {
   '--shadow-lg': string
   '--shadow-xl': string
   '--shadow-2xl': string
+  '--shadow-inner': string
+  '--shadow-inner-light': string
+  '--shadow-glow': string
+  '--shadow-glow-strong': string
 
   // Radius
   '--radius-none': string
@@ -521,6 +525,10 @@ export type CSSVariableName =
   | '--shadow-lg'
   | '--shadow-xl'
   | '--shadow-2xl'
+  | '--shadow-inner'
+  | '--shadow-inner-light'
+  | '--shadow-glow'
+  | '--shadow-glow-strong'
   // Radius
   | '--radius-none'
   | '--radius-xs'

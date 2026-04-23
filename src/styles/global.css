@@ -656,14 +656,14 @@ body {
 
 /* 紧凑型 Tabs 样式 */
 .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab {
-  padding: 2px 8px !important;
+  padding: 4px 14px !important;
   margin: 0 2px 0 0 !important;
-  line-height: 16px !important;
+  line-height: 20px !important;
 }
 
 .ant-tabs-card > .ant-tabs-nav .ant-tabs-tab .ant-tabs-tab-btn {
   padding: 0 !important;
-  line-height: 16px !important;
+  line-height: 20px !important;
 }
 
 .file-manager-panel .ant-tree-node-content-wrapper {
@@ -962,7 +962,53 @@ body {
   }
 }
 
-/* 终端标签页激活动画 */
+/* ============================================
+   连接 Tabs 栏样式
+   ============================================ */
+
+.connection-tabs-bar {
+  border-bottom: 1px solid var(--color-border);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.connection-tabs-bar .ant-tabs-tab {
+  padding: 4px 10px !important;
+  margin: 0 1px 0 0 !important;
+  font-size: 13px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0 !important;
+  transition: all 0.2s ease;
+}
+
+.connection-tabs-bar .ant-tabs-tab:not(.ant-tabs-tab-active) {
+  color: var(--color-text-secondary) !important;
+}
+
+.connection-tabs-bar .ant-tabs-tab:not(.ant-tabs-tab-active):hover {
+  color: var(--color-text) !important;
+  background: var(--state-hover-bg) !important;
+}
+
+.connection-tabs-bar .ant-tabs-tab-active {
+  background: var(--color-bg-container) !important;
+  border-bottom-color: var(--color-bg-container) !important;
+  font-weight: 500;
+}
+
+.connection-tabs-bar .ant-tabs-ink-bar {
+  height: 2px !important;
+  border-radius: 1px;
+  background: var(--color-primary) !important;
+  box-shadow: 0 0 8px var(--color-primary-glow);
+}
+
+.connection-tabs-bar .ant-tabs-nav::before {
+  border-bottom-color: var(--color-border) !important;
+}
+
+/* ============================================
+   终端标签页激活动画
+   ============================================ */
+
 .ant-tabs-tab {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
@@ -984,6 +1030,35 @@ body {
 
 .ant-tabs-tab-active::after {
   width: 100%;
+}
+
+/* ============================================
+   Tab 关闭按钮 hover 效果
+   ============================================ */
+
+/* 连接 tab 关闭按钮 */
+.ant-tabs-tab:hover .connection-tab-close {
+  opacity: 0.8 !important;
+}
+
+.ant-tabs-tab:hover .connection-tab-close:hover {
+  opacity: 1 !important;
+  color: var(--color-error) !important;
+}
+
+/* 会话 tab 关闭按钮 */
+.ant-tabs-tab:hover .session-tab-close {
+  opacity: 0.8 !important;
+}
+
+.ant-tabs-tab:hover .session-tab-close:hover {
+  opacity: 1 !important;
+  color: var(--color-error) !important;
+}
+
+/* SortableTab 拖拽图标 */
+.sortable-tab-wrapper:hover .sortable-tab-handle {
+  opacity: 1 !important;
 }
 
 /* 侧边栏菜单项动画 */
@@ -1034,28 +1109,19 @@ body {
   }
 }
 
-/* 终端容器增强 */
+/* 终端容器 - 保持干净专注，无任何装饰性光晕 */
 .terminal-container {
   position: relative;
+  background: var(--color-bg-container);
+}
+
+/* 终端区域禁用所有外部阴影和装饰 */
+.xterm {
+  box-shadow: none !important;
 }
 
 .terminal-container::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 8px;
-  padding: 1px;
-  background: linear-gradient(
-    135deg,
-    color-mix(in srgb, var(--color-primary) 20%, transparent),
-    transparent 50%,
-    color-mix(in srgb, var(--color-primary) 20%, transparent)
-  );
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  pointer-events: none;
-  opacity: 0.5;
+  display: none;
 }
 
 /* 工具栏按钮增强 */
@@ -1134,6 +1200,47 @@ body {
   border: 1px solid color-mix(in srgb, var(--color-primary) 12%, var(--color-border));
 }
 
+/* ============================================
+   渐变分隔线 - 替代生硬的 1px solid
+   ============================================ */
+
+.divider-gradient {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-border) 15%,
+    var(--color-border) 85%,
+    transparent 100%
+  );
+  border: none;
+}
+
+.divider-gradient-vertical {
+  width: 1px;
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    var(--color-border) 15%,
+    var(--color-border) 85%,
+    transparent 100%
+  );
+  border: none;
+}
+
+/* 侧边栏分隔线 */
+.ant-layout-sider .ant-menu-inline .ant-menu-item-divider,
+.ant-layout-sider > div > div[style*="border-bottom"],
+.ant-layout-sider > div > div[style*="border-top"] {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-border-secondary) 20%,
+    var(--color-border-secondary) 80%,
+    transparent 100%
+  ) !important;
+}
+
 /* Modal 遮罩毛玻璃 */
 .ant-modal-mask {
   background: color-mix(in srgb, var(--color-bg-mask) 70%, transparent) !important;
@@ -1141,14 +1248,23 @@ body {
   -webkit-backdrop-filter: blur(8px);
 }
 
-/* 卡片增强层叠感 */
+/* ============================================
+   卡片层叠感 - 简约克制风格 v2
+   使用三层阴影系统 + 内阴影深度 + 渐变边框
+   ============================================ */
+
 .connection-card {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
-  border-radius: 10px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: var(--radius-lg);
+  transition:
+    transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.3s ease;
   position: relative;
   overflow: hidden;
+  /* 内阴影创造微妙的内凹深度 */
+  box-shadow: var(--shadow-sm), var(--shadow-inner-light);
 }
 
 .connection-card::before {
@@ -1164,27 +1280,29 @@ body {
 }
 
 .connection-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--color-primary) 12%, rgba(0, 0, 0, 0.15));
-  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  transform: translateY(-2px) scale(1.005);
+  box-shadow: var(--shadow-md), var(--shadow-glow);
+  border-color: color-mix(in srgb, var(--color-primary) 20%, var(--color-border));
 }
 
 .connection-card:hover::before {
-  opacity: 0.6;
+  opacity: 0.7;
 }
 
 .connection-card:active {
-  transform: translateY(-1px);
+  transform: translateY(0) scale(0.995);
+  box-shadow: var(--shadow-xs), var(--shadow-inner);
+  transition-duration: 0.1s;
 }
 
 .connection-card.connecting {
-  border-color: var(--color-info);
-  box-shadow: 0 0 12px color-mix(in srgb, var(--color-info) 20%, transparent);
+  border-color: color-mix(in srgb, var(--color-info) 40%, var(--color-border));
+  box-shadow: var(--shadow-sm), 0 0 0 1px color-mix(in srgb, var(--color-info) 15%, transparent);
 }
 
 .connection-card.selected {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 15%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  box-shadow: var(--shadow-md), var(--shadow-glow-strong);
 }
 
 /* 状态指示灯 */
@@ -1232,24 +1350,28 @@ body {
   border-radius: 7px;
   color: #fff;
   font-size: 14px;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 30%, transparent);
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
 }
 
 .sidebar-logo:hover .sidebar-logo-icon {
-  transform: scale(1.05) rotate(-3deg);
-  box-shadow: 0 4px 14px color-mix(in srgb, var(--color-primary) 40%, transparent);
+  transform: scale(1.08) rotate(-2deg);
+  box-shadow: var(--shadow-md);
 }
 
 /* 菜单项增强 */
 .ant-menu-item {
-  border-radius: 6px !important;
+  border-radius: var(--radius-md) !important;
   margin: 2px 8px !important;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .ant-menu-item:not(.ant-menu-item-selected):hover {
-  background: color-mix(in srgb, var(--color-primary) 8%, transparent) !important;
+  background: var(--state-hover-bg) !important;
+}
+
+.ant-menu-item-selected {
+  font-weight: 500;
 }
 
 /* 页面切换过渡 */
@@ -1333,17 +1455,42 @@ body {
 
 /* 底部操作栏 */
 .footer-bar {
-  background: color-mix(in srgb, var(--color-bg-elevated) 80%, transparent);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border-top: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-elevated) 85%, transparent);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+  border-top: 1px solid transparent;
+  position: relative;
 }
+
+.footer-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 5%;
+  right: 5%;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--color-border-secondary) 20%,
+    var(--color-border-secondary) 80%,
+    transparent 100%
+  );
+}
+
+/* ============================================
+   微交互系统 - Micro-interactions v2
+   简约克制：微妙的 scale + 阴影变化，无夸张动画
+   ============================================ */
 
 /* 工具栏按钮增强 */
 .toolbar-btn-enhanced {
   position: relative;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 6px;
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.2s ease;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -1351,7 +1498,11 @@ body {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 0%, transparent), color-mix(in srgb, var(--color-primary) 8%, transparent));
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-primary) 0%, transparent),
+    color-mix(in srgb, var(--color-primary) 6%, transparent)
+  );
   opacity: 0;
   transition: opacity 0.25s ease;
   border-radius: inherit;
@@ -1359,8 +1510,8 @@ body {
 }
 
 .toolbar-btn-enhanced:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 15%, transparent);
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: var(--shadow-sm);
 }
 
 .toolbar-btn-enhanced:hover::after {
@@ -1368,22 +1519,131 @@ body {
 }
 
 .toolbar-btn-enhanced:active {
-  transform: translateY(0);
+  transform: translateY(0) scale(0.97);
+  box-shadow: var(--shadow-inner-light);
+  transition-duration: 0.1s;
+}
+
+/* 按钮通用微交互 */
+.ant-btn {
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease !important;
+}
+
+.ant-btn:not(.ant-btn-primary):not(.ant-btn-dangerous):not(.ant-btn-link):not(.ant-btn-text):hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.ant-btn:not(.ant-btn-primary):not(.ant-btn-dangerous):not(.ant-btn-link):not(.ant-btn-text):active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: var(--shadow-inner-light);
+}
+
+.ant-btn-primary {
+  position: relative;
+  overflow: visible;
+}
+
+.ant-btn-primary::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-hover));
+  opacity: 0;
+  filter: blur(8px);
+  transition: opacity 0.3s ease;
+  z-index: -1;
+}
+
+.ant-btn-primary:hover::before {
+  opacity: 0.35;
+}
+
+.ant-btn-primary:hover {
+  transform: translateY(-1px);
+}
+
+.ant-btn-primary:active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* 图标按钮微交互 */
+.ant-btn-icon-only {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s ease;
+}
+
+.ant-btn-icon-only:hover {
+  transform: scale(1.08);
+}
+
+.ant-btn-icon-only:active {
+  transform: scale(0.92);
+}
+
+/* 开关微交互 - 弹性动画 */
+.ant-switch {
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.ant-switch-handle {
+  transition: all 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) !important;
+}
+
+.ant-switch-checked .ant-switch-handle {
+  box-shadow: var(--shadow-sm);
+}
+
+/* 输入框微交互 */
+.ant-input,
+.ant-input-affix-wrapper,
+.ant-select-selector {
+  transition:
+    border-color 0.25s ease,
+    box-shadow 0.25s ease,
+    background-color 0.25s ease !important;
+}
+
+.ant-input:focus,
+.ant-input-affix-wrapper-focused,
+.ant-select-focused .ant-select-selector {
+  box-shadow: var(--shadow-glow) !important;
+}
+
+/* 下拉菜单微交互 */
+.ant-dropdown-menu-item {
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.ant-dropdown-menu-item:hover {
+  transform: translateX(2px);
 }
 
 /* 连接卡片操作按钮 */
 .card-action-btn {
-  opacity: 0.5;
-  transition: all 0.2s ease;
+  opacity: 0.4;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform: scale(0.9);
 }
 
 .connection-card:hover .card-action-btn {
   opacity: 1;
+  transform: scale(1);
 }
 
 .card-action-btn:hover {
-  background: color-mix(in srgb, var(--color-primary) 10%, transparent) !important;
+  background: var(--state-hover-bg) !important;
   color: var(--color-primary) !important;
+  transform: scale(1.12);
+}
+
+.card-action-btn:active {
+  transform: scale(0.95);
 }
 
 /* 分组标识色 */
@@ -1405,36 +1665,44 @@ body {
 
 /* 标签增强 */
 .tag-enhanced {
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 10px;
   padding: 0 6px;
   line-height: 18px;
   font-weight: 500;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  letter-spacing: 0.3px;
 }
 
 .tag-enhanced:hover {
-  transform: scale(1.05);
+  transform: scale(1.06);
 }
 
 /* 最近连接条 */
 .recent-chip {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  border-radius: 6px;
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xs);
 }
 
 .recent-chip:hover {
-  border-color: color-mix(in srgb, var(--color-primary) 30%, var(--color-border));
-  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-elevated));
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-primary) 10%, transparent);
+  border-color: color-mix(in srgb, var(--color-primary) 25%, var(--color-border));
+  background: var(--state-hover-bg);
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: var(--shadow-sm);
+}
+
+.recent-chip:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow: var(--shadow-inner-light);
 }
 
 /* 弹窗内容区增强 */
 .ant-modal-content {
   overflow: hidden;
+  box-shadow: var(--shadow-xl) !important;
 }
 
 .ant-modal-header {
@@ -1569,22 +1837,25 @@ body {
 
 /* 批量操作栏 */
 .batch-toolbar {
-  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-elevated));
-  border: 1px solid color-mix(in srgb, var(--color-primary) 20%, var(--color-border));
-  border-radius: 10px;
-  backdrop-filter: blur(4px);
+  background: color-mix(in srgb, var(--color-primary) 4%, var(--color-bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 15%, var(--color-border));
+  border-radius: var(--radius-xl);
+  backdrop-filter: blur(8px) saturate(1.1);
+  box-shadow: var(--shadow-md), var(--shadow-inner-light);
 }
 
 /* 搜索框增强 */
 .search-input-enhanced {
-  transition: all 0.3s ease;
-  border-radius: 8px;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-inner-light);
 }
 
 .search-input-enhanced:focus,
 .search-input-enhanced-focused {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-primary) 15%, transparent);
+  box-shadow: var(--shadow-glow);
   border-color: var(--color-primary);
+  transform: translateY(-1px);
 }
 
 /* 按钮主要操作发光 */
@@ -1606,7 +1877,15 @@ body {
 }
 
 .btn-primary-glow:hover::before {
-  opacity: 0.4;
+  opacity: 0.35;
+}
+
+.btn-primary-glow:hover {
+  transform: translateY(-1px);
+}
+
+.btn-primary-glow:active {
+  transform: translateY(0) scale(0.98);
 }
 
 /* ============================================
@@ -1876,6 +2155,102 @@ body {
 /* 工具栏按钮统一发光 */
 [data-material] .toolbar-button:hover {
   box-shadow: 0 4px 12px color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+/* ============================================
+   文字排版层级系统 - Typography Scale v2
+   简约克制：清晰的字号层级 + 精细的字距
+   ============================================ */
+
+/* 字体大小层级 */
+.text-xs { font-size: 11px; line-height: 1.5; }
+.text-sm { font-size: 12px; line-height: 1.5; }
+.text-base { font-size: 13px; line-height: 1.6; }
+.text-lg { font-size: 14px; line-height: 1.5; }
+.text-xl { font-size: 16px; line-height: 1.4; }
+.text-2xl { font-size: 20px; line-height: 1.3; }
+.text-3xl { font-size: 24px; line-height: 1.25; }
+
+/* 字重层级 */
+.font-normal { font-weight: 400; }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+
+/* 字距微调 */
+.tracking-tight { letter-spacing: -0.3px; }
+.tracking-normal { letter-spacing: 0; }
+.tracking-wide { letter-spacing: 0.3px; }
+.tracking-wider { letter-spacing: 0.5px; }
+
+/* 数字/等宽优化 */
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* 标题样式 */
+.heading-xs {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.heading-sm {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--color-text-secondary);
+}
+
+.heading-base {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+  color: var(--color-text);
+}
+
+.heading-lg {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--color-text);
+}
+
+/* 正文优化 */
+.body-text {
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 400;
+  letter-spacing: 0.2px;
+  color: var(--color-text-secondary);
+}
+
+/* 辅助文字 */
+.caption {
+  font-size: 11px;
+  line-height: 1.5;
+  font-weight: 400;
+  letter-spacing: 0.2px;
+  color: var(--color-text-tertiary);
+}
+
+/* 应用到 Ant Design 组件的默认文字优化 */
+.ant-typography {
+  letter-spacing: 0.1px;
+}
+
+.ant-typography.ant-typography-secondary {
+  letter-spacing: 0.2px;
+}
+
+/* 表格文字优化 */
+.ant-table {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 列表项文字优化 */
+.ant-list-item {
+  letter-spacing: 0.1px;
 }
 
 /* 响应式微调 */

@@ -58,7 +58,7 @@ export function FileList({
     >
       {node.title}
       {!node.isDirectory && node.size !== undefined && node.size > 0 && (
-        <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)', marginLeft: 8 }}>
+        <span style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginLeft: 8 }}>
           {formatSize(node.size)}
         </span>
       )}
@@ -98,7 +98,7 @@ export function FileList({
           <div
             style={{
               fontSize: 12,
-              color: 'var(--color-text-tertiary)',
+              color: 'var(--color-text-secondary)',
               marginBottom: 8,
               padding: '0 4px',
             }}
@@ -140,7 +140,7 @@ export function FileList({
                 {item.isDirectory ? (
                   <FolderOutlined style={{ color: 'var(--color-primary)' }} />
                 ) : (
-                  <FileOutlined style={{ color: 'var(--color-text-tertiary)' }} />
+                  <FileOutlined style={{ color: 'var(--color-text-secondary)' }} />
                 )}
                 <span
                   style={{

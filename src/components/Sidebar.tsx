@@ -67,7 +67,7 @@ function Sidebar() {
         <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
           <span>{group}</span>
           {groupCounts[group] !== undefined && (
-            <span style={{ color: 'var(--color-text-tertiary)', fontSize: 12 }}>{groupCounts[group]}</span>
+            <span style={{ color: 'var(--color-text-secondary)', fontSize: 12, opacity: 0.7 }}>{groupCounts[group]}</span>
           )}
         </span>
       ),

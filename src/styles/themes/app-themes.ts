@@ -122,9 +122,12 @@ function buildThemeVariables(config: CoreColorConfig): ThemeVariableSet {
     ? adjustColor(bgElevated, 0.06)
     : adjustColor(bgElevated, -0.04)
 
-  // 阴影颜色
-  const shadowColor = isDark ? '0, 0, 0' : themeHue
-  const shadowBaseOpacity = isDark ? 0.4 : 0.06
+  // 阴影颜色 - 暗色模式下使用带主色色调的深灰，更精致；亮色使用主色色相
+  const shadowColor = isDark ? themeHue : themeHue
+  const shadowBaseOpacity = isDark ? 0.35 : 0.05
+  // 环境阴影颜色（更柔和的漫反射）
+  const ambientShadowColor = isDark ? '0, 0, 0' : themeHue
+  const ambientOpacity = isDark ? 0.5 : 0.03
 
   // 状态色（基于 primary 的透明度混合）
   const primaryParsed = parseColor(primary)
@@ -215,14 +218,28 @@ function buildThemeVariables(config: CoreColorConfig): ThemeVariableSet {
     '--state-selected-border': primary,
     '--state-selected-text': primary,
 
-    // Shadow - Material Design 风格双阴影
+    // Shadow - 三层阴影系统：环境光（柔和漫反射）+ 方向光（清晰投影）+ 边界光（微妙轮廓）
     '--shadow-none': 'none',
-    '--shadow-xs': `0 1px 2px rgba(${shadowColor}, ${shadowBaseOpacity * 0.5})`,
-    '--shadow-sm': `0 1px 3px rgba(${shadowColor}, ${shadowBaseOpacity}), 0 1px 2px rgba(${shadowColor}, ${shadowBaseOpacity * 0.5})`,
-    '--shadow-md': `0 4px 6px -1px rgba(${shadowColor}, ${shadowBaseOpacity}), 0 2px 4px -2px rgba(${shadowColor}, ${shadowBaseOpacity * 0.6})`,
-    '--shadow-lg': `0 10px 15px -3px rgba(${shadowColor}, ${shadowBaseOpacity * 1.2}), 0 4px 6px -4px rgba(${shadowColor}, ${shadowBaseOpacity * 0.7})`,
-    '--shadow-xl': `0 20px 25px -5px rgba(${shadowColor}, ${shadowBaseOpacity * 1.5}), 0 8px 10px -6px rgba(${shadowColor}, ${shadowBaseOpacity * 0.8})`,
-    '--shadow-2xl': `0 25px 50px -12px rgba(${shadowColor}, ${shadowBaseOpacity * 2})`,
+    // xs: 仅用于内嵌元素，几乎不可见
+    '--shadow-xs': `0 1px 2px rgba(${ambientShadowColor}, ${ambientOpacity})`,
+    // sm: 小按钮、标签 - 极浅的方向光
+    '--shadow-sm': `0 1px 2px rgba(${shadowColor}, ${shadowBaseOpacity * 0.6}), 0 1px 3px rgba(${ambientShadowColor}, ${ambientOpacity})`,
+    // md: 卡片、输入框 - 清晰的方向光 + 柔和环境光
+    '--shadow-md': `0 4px 6px -1px rgba(${shadowColor}, ${shadowBaseOpacity}), 0 2px 4px -2px rgba(${ambientShadowColor}, ${ambientOpacity * 2})`,
+    // lg: 下拉菜单、浮动面板 - 更强的抬升感
+    '--shadow-lg': `0 10px 15px -3px rgba(${shadowColor}, ${shadowBaseOpacity * 1.1}), 0 4px 6px -4px rgba(${ambientShadowColor}, ${ambientOpacity * 2.5})`,
+    // xl: 模态框、对话框 - 明显的悬浮感
+    '--shadow-xl': `0 20px 25px -5px rgba(${shadowColor}, ${shadowBaseOpacity * 1.4}), 0 8px 10px -6px rgba(${ambientShadowColor}, ${ambientOpacity * 3})`,
+    // 2xl: 全屏覆盖层 - 最大的深度感
+    '--shadow-2xl': `0 25px 50px -12px rgba(${shadowColor}, ${shadowBaseOpacity * 1.8})`,
+    // inner: 内阴影，用于内凹效果、输入框、卡片深度
+    '--shadow-inner': `inset 0 1px 3px rgba(${ambientShadowColor}, ${ambientOpacity * 2.5})`,
+    // inner-light: 微弱的内阴影，用于精细的层次区分
+    '--shadow-inner-light': `inset 0 1px 1px rgba(${ambientShadowColor}, ${ambientOpacity})`,
+    // glow: 外发光，用于 hover 状态、激活状态
+    '--shadow-glow': `0 0 0 1px rgba(${primaryRgb}, ${isDark ? 0.15 : 0.08}), 0 0 20px rgba(${primaryRgb}, ${isDark ? 0.08 : 0.04})`,
+    // glow-strong: 更强的发光，用于 focus 状态
+    '--shadow-glow-strong': `0 0 0 2px rgba(${primaryRgb}, ${isDark ? 0.2 : 0.12}), 0 0 30px rgba(${primaryRgb}, ${isDark ? 0.1 : 0.06})`,
 
     // Radius
     '--radius-none': '0',
@@ -342,9 +359,9 @@ export const themes: Record<ThemeName, ThemeDefinition> = {
         bgContainer: '#ffffff',
         bgElevated: '#f0f5f2',
         textPrimary: 'rgba(0, 0, 0, 0.88)',
-        textSecondary: 'rgba(0, 0, 0, 0.65)',
-        textTertiary: 'rgba(0, 0, 0, 0.45)',
-        textQuaternary: 'rgba(0, 0, 0, 0.25)',
+        textSecondary: 'rgba(0, 0, 0, 0.72)',
+        textTertiary: 'rgba(0, 0, 0, 0.52)',
+        textQuaternary: 'rgba(0, 0, 0, 0.30)',
         border: 'rgba(0, 0, 0, 0.12)',
         borderSecondary: 'rgba(0, 0, 0, 0.06)',
         success: '#52c41a',
@@ -654,9 +671,9 @@ export const themes: Record<ThemeName, ThemeDefinition> = {
         bgContainer: '#ffffff',
         bgElevated: '#f3f4f6',
         textPrimary: 'rgba(17, 24, 39, 0.90)',
-        textSecondary: 'rgba(17, 24, 39, 0.55)',
-        textTertiary: 'rgba(17, 24, 39, 0.38)',
-        textQuaternary: 'rgba(17, 24, 39, 0.22)',
+        textSecondary: 'rgba(17, 24, 39, 0.68)',
+        textTertiary: 'rgba(17, 24, 39, 0.48)',
+        textQuaternary: 'rgba(17, 24, 39, 0.28)',
         border: 'rgba(0, 0, 0, 0.06)',
         borderSecondary: 'rgba(0, 0, 0, 0.03)',
         success: '#10b981',

@@ -986,7 +986,7 @@ function Connections() {
                               }}>{conn.name}</span>
                               <span className={`status-dot ${conn.status === 'connecting' ? 'connecting' : (isConnected(conn.id) ? 'online' : 'offline')}`} />
                             </div>
-                            <div style={{ color: 'var(--color-text-tertiary)', fontSize: 12, marginTop: 3, fontFamily: "'Menlo', 'Monaco', monospace" }}>
+                            <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, marginTop: 3, fontFamily: "'Menlo', 'Monaco', monospace", opacity: 0.85 }}>
                               {conn.username}@{conn.host}:{conn.port}
                             </div>
                             <div style={{ marginTop: 8, display: 'flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1008,7 +1008,7 @@ function Connections() {
                             className="card-action-btn"
                             icon={<EnvironmentOutlined style={{ fontSize: 11 }} />}
                             onClick={(e) => handleQuickCopy(e, conn.host, 'IP')}
-                            style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 5px', height: 20, borderRadius: 4 }}
+                            style={{ color: 'var(--color-text-secondary)', fontSize: 10, padding: '0 5px', height: 20, borderRadius: 4, opacity: 0.7 }}
                           >
                             IP
                           </Button>
@@ -1018,7 +1018,7 @@ function Connections() {
                             className="card-action-btn"
                             icon={<KeyOutlined style={{ fontSize: 11 }} />}
                             onClick={(e) => handleQuickCopy(e, `名称: ${conn.name}\n地址: ${conn.host}\n端口: ${conn.port}\n用户: ${conn.username}\n密码: ${conn.password || '无'}`, '信息')}
-                            style={{ color: 'var(--color-text-tertiary)', fontSize: 10, padding: '0 5px', height: 20, borderRadius: 4 }}
+                            style={{ color: 'var(--color-text-secondary)', fontSize: 10, padding: '0 5px', height: 20, borderRadius: 4, opacity: 0.7 }}
                           >
                             信息
                           </Button>

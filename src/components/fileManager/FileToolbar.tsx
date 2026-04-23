@@ -43,7 +43,7 @@ export function FileToolbar({
             icon={<ArrowLeftOutlined />}
             onClick={onGoBack}
             disabled={!canGoBack}
-            style={{ color: canGoBack ? 'var(--color-text-tertiary)' : 'var(--color-text-quaternary)' }}
+            style={{ color: canGoBack ? 'var(--color-text-secondary)' : 'var(--color-text-quaternary)' }}
           />
         </Tooltip>
         <Tooltip title="前进">
@@ -53,7 +53,7 @@ export function FileToolbar({
             icon={<ArrowRightOutlined />}
             onClick={onGoForward}
             disabled={!canGoForward}
-            style={{ color: canGoForward ? 'var(--color-text-tertiary)' : 'var(--color-text-quaternary)' }}
+            style={{ color: canGoForward ? 'var(--color-text-secondary)' : 'var(--color-text-quaternary)' }}
           />
         </Tooltip>
         <Tooltip title="主目录">
@@ -62,7 +62,7 @@ export function FileToolbar({
             type="text"
             icon={<HomeOutlined />}
             onClick={() => onNavigate('/home')}
-            style={{ color: 'var(--color-text-tertiary)' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>
       </Space>
@@ -85,7 +85,7 @@ export function FileToolbar({
             type="text"
             icon={<ReloadOutlined spin={loading} />}
             onClick={onRefresh}
-            style={{ color: 'var(--color-text-tertiary)' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>
         <Tooltip title={viewMode === 'tree' ? '列表视图' : '树形视图'}>
@@ -94,7 +94,7 @@ export function FileToolbar({
             type="text"
             icon={viewMode === 'tree' ? <UnorderedListOutlined /> : <PartitionOutlined />}
             onClick={() => onViewModeChange(viewMode === 'tree' ? 'list' : 'tree')}
-            style={{ color: 'var(--color-text-tertiary)' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>
         <Tooltip title={showHidden ? '隐藏隐藏文件' : '显示隐藏文件'}>
@@ -103,7 +103,7 @@ export function FileToolbar({
             type="text"
             icon={showHidden ? <EyeInvisibleOutlined /> : <EyeOutlined />}
             onClick={onToggleHidden}
-            style={{ color: showHidden ? 'var(--color-primary)' : 'var(--color-text-tertiary)' }}
+            style={{ color: showHidden ? 'var(--color-primary)' : 'var(--color-text-secondary)' }}
           />
         </Tooltip>
       </Space>
@@ -119,7 +119,7 @@ export function FileToolbar({
             type="text"
             icon={<FileAddOutlined />}
             onClick={onNewFile}
-            style={{ color: 'var(--color-text-tertiary)' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>
         <Tooltip title="新建文件夹">
@@ -128,7 +128,7 @@ export function FileToolbar({
             type="text"
             icon={<FolderAddOutlined />}
             onClick={onNewFolder}
-            style={{ color: 'var(--color-text-tertiary)' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>
         <Tooltip title="上传文件">
@@ -137,16 +137,7 @@ export function FileToolbar({
             type="text"
             icon={<UploadOutlined />}
             onClick={onUpload}
-            style={{ color: 'var(--color-text-tertiary)' }}
-          />
-        </Tooltip>
-        <Tooltip title="上传文件夹">
-          <Button
-            size="small"
-            type="text"
-            icon={<FolderAddOutlined />}
-            onClick={onUploadFolder}
-            style={{ color: 'var(--color-text-tertiary)' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>
       </Space>

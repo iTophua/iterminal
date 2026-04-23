@@ -36,8 +36,9 @@ export function SortableTab({ id, label, connectionName }: SortableTabProps) {
       {...listeners}
       data-connection-tab-id={id}
       data-connection-name={connectionName}
+      className="sortable-tab-wrapper"
     >
-      <HolderOutlined style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2 }} />
+      <HolderOutlined className="sortable-tab-handle" style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2, opacity: 0.6, transition: 'opacity 0.2s' }} />
       {label}
     </span>
   )

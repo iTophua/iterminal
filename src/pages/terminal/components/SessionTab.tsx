@@ -59,9 +59,11 @@ export function DraggableSessionTab({
       <CloseOutlined
         className="session-tab-close"
         style={{
-          marginLeft: 4,
-          fontSize: 9,
+          marginLeft: 10,
+          fontSize: 10,
           cursor: 'pointer',
+          opacity: 0.4,
+          transition: 'opacity 0.2s ease',
           color: isDisconnected ? 'var(--color-warning)' : undefined,
         }}
         onClick={(e) => {
