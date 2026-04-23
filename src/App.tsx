@@ -18,27 +18,9 @@ const { Content } = Layout
 
 const SESSION_STORAGE_KEY = 'iterminal_saved_sessions'
 
-function countSessionsInPane(pane: SplitPane): number {
-  if (pane.children) {
-    return pane.children.reduce((sum, child) => sum + countSessionsInPane(child), 0)
-  }
-  return pane.sessions.length
-}
-
 interface SavedSession {
   connectionId: string
-  connection: {
-    id: string
-    name: string
-    host: string
-    port: number
-    username: string
-    password?: string
-    keyFile?: string
-    group: string
-    tags: string[]
-  }
-  sessionCount: number
+  rootPane: SplitPane
   savedAt: number
 }
 
@@ -129,7 +111,9 @@ function SessionRestorer() {
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
   const [restoreModalVisible, setRestoreModalVisible] = useState(false)
   const [restoring, setRestoring] = useState(false)
-  const addConnection = useTerminalStore(s => s.addConnection)
+  const restoreConnection = useTerminalStore(s => s.restoreConnection)
+  const updateSessionShellId = useTerminalStore(s => s.updateSessionShellId)
+  const allConnections = useTerminalStore(s => s.allConnections)
 
   useEffect(() => {
     const saved = localStorage.getItem(SESSION_STORAGE_KEY)
@@ -152,24 +136,34 @@ function SessionRestorer() {
     let restored = 0
     for (const session of savedSessions) {
       try {
+        const conn = allConnections.find(c => c.id === session.connectionId)
+        if (!conn) {
+          console.error(`恢复连接失败: 未找到连接 ${session.connectionId}`)
+          continue
+        }
+
         await invoke('connect_ssh', {
-          id: session.connectionId,
+          id: conn.id,
           connection: {
-            host: session.connection.host,
-            port: session.connection.port,
-            username: session.connection.username,
-            password: session.connection.password,
-            key_file: session.connection.keyFile,
+            host: conn.host,
+            port: conn.port,
+            username: conn.username,
+            password: conn.password,
+            key_file: conn.keyFile,
           }
         })
-        const shellId = await invoke<string>('get_shell', { id: session.connectionId })
-        addConnection({
-          ...session.connection,
-          status: 'online',
-        }, shellId)
+
+        restoreConnection(conn, session.rootPane)
+
+        const sessions = getAllSessionsFromPane(session.rootPane)
+        for (const s of sessions) {
+          const newShellId = await invoke<string>('get_shell', { id: conn.id })
+          updateSessionShellId(conn.id, s.id, newShellId)
+        }
+
         restored++
       } catch (err) {
-        console.error(`恢复连接 ${session.connection.name} 失败:`, err)
+        console.error(`恢复连接失败:`, err)
       }
     }
     setRestoring(false)
@@ -204,17 +198,34 @@ function SessionRestorer() {
     >
       <p style={{ marginBottom: 16 }}>检测到上次未关闭的连接，是否重新连接？</p>
       <div style={{ maxHeight: 300, overflow: 'auto' }}>
-        {savedSessions.map(s => (
-          <div key={s.connectionId} style={{ padding: '8px 12px', background: 'var(--color-bg-container)', borderRadius: 4, marginBottom: 8 }}>
-            <div style={{ fontWeight: 500 }}>{s.connection.name}</div>
-            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-              {s.connection.username}@{s.connection.host}:{s.connection.port}
+        {savedSessions.map(s => {
+          const conn = allConnections.find(c => c.id === s.connectionId)
+          return (
+            <div key={s.connectionId} style={{ padding: '8px 12px', background: 'var(--color-bg-container)', borderRadius: 4, marginBottom: 8 }}>
+              <div style={{ fontWeight: 500 }}>{conn?.name || s.connectionId}</div>
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+                {conn ? `${conn.username}@${conn.host}:${conn.port}` : '连接信息缺失'}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </Modal>
   )
+}
+
+function getAllSessionsFromPane(pane: SplitPane): Array<{ id: string; connectionId: string }> {
+  const sessions: Array<{ id: string; connectionId: string }> = []
+  const traverse = (p: SplitPane) => {
+    for (const s of p.sessions) {
+      sessions.push({ id: s.id, connectionId: s.connectionId })
+    }
+    if (p.children) {
+      p.children.forEach(traverse)
+    }
+  }
+  traverse(pane)
+  return sessions
 }
 
 function SessionSaver() {
@@ -226,8 +237,7 @@ function SessionSaver() {
       if (connectedConnections.length > 0 && !savedRef.current) {
         const sessions: SavedSession[] = connectedConnections.map(conn => ({
           connectionId: conn.connectionId,
-          connection: conn.connection,
-          sessionCount: countSessionsInPane(conn.rootPane),
+          rootPane: conn.rootPane,
           savedAt: Date.now(),
         }))
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))

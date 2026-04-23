@@ -3,7 +3,7 @@ import { ConfigProvider, theme as antdTheme, App as AntdApp } from 'antd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { setTheme as setAppTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
-import { useThemeStore } from '../stores/themeStore'
+import { useThemeStore, getSystemTheme } from '../stores/themeStore'
 import { themes } from '../styles/themes/app-themes'
 import type { AppTheme, ThemeName, ThemeVariableSet } from '../types/theme'
 
@@ -121,7 +121,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       }))
       requestAnimationFrame(enableTransitions)
     }
-    
+
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
     const handleMediaQueryChange = (e: MediaQueryListEvent | MediaQueryList) => {
       const newTheme: AppTheme = e.matches ? 'dark' : 'light'
@@ -155,6 +155,26 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       }
     }
   }, [appThemeMode, selectedTheme])
+
+  // 跨窗口同步：主窗口切换主题后，新窗口通过 storage 事件更新 store
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key !== 'iterminal_theme' || !e.newValue) return
+      try {
+        const data = JSON.parse(e.newValue)
+        if (data.version !== 3) return
+        const resolvedTheme = data.appThemeMode === 'system' ? getSystemTheme() : data.appThemeMode
+        useThemeStore.setState({
+          appThemeMode: data.appThemeMode,
+          appTheme: resolvedTheme,
+          selectedTheme: data.selectedTheme,
+          terminalTheme: data.terminalTheme,
+        })
+      } catch {}
+    }
+    window.addEventListener('storage', handleStorageChange)
+    return () => window.removeEventListener('storage', handleStorageChange)
+  }, [])
   
   if (!hydrated) {
     return null

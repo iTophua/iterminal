@@ -4,7 +4,7 @@ import type { AppTheme, AppThemeMode, TerminalThemeName, ThemeName, ThemePersist
 const STORAGE_KEY = 'iterminal_theme'
 const CURRENT_VERSION = 3
 
-const getSystemTheme = (): AppTheme => {
+export const getSystemTheme = (): AppTheme => {
   if (typeof window !== 'undefined' && window.matchMedia) {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
   }

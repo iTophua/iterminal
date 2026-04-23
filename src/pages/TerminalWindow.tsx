@@ -1,9 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
-import { ConfigProvider, theme as antdTheme, App } from 'antd'
 import { useTerminalStore, type SplitPane, type Session } from '../stores/terminalStore'
-import { useThemeStore } from '../stores/themeStore'
-import { themes } from '../styles/themes/app-themes'
+import { ThemeProvider } from '../components/ThemeProvider'
 import Terminal from './Terminal'
 
 interface ConnectionData {
@@ -147,23 +145,9 @@ function getAllSessionsFromPane(pane: SplitPane): Session[] {
 }
 
 export default function TerminalWindowPage() {
-  const appTheme = useThemeStore(s => s.appTheme)
-  const selectedTheme = useThemeStore(s => s.selectedTheme)
-  const currentThemeDef = themes[selectedTheme]
-
   return (
-    <ConfigProvider
-      theme={{
-        algorithm: appTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-        token: {
-          colorPrimary: currentThemeDef.antdPrimary,
-          fontSize: 13,
-        },
-      }}
-    >
-      <App>
-        <TerminalWindow />
-      </App>
-    </ConfigProvider>
+    <ThemeProvider>
+      <TerminalWindow />
+    </ThemeProvider>
   )
 }

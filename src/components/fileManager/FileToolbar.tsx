@@ -1,6 +1,6 @@
 import { Input, Button, Tooltip, Space } from 'antd'
 import {
-  HomeOutlined, ReloadOutlined, UploadOutlined,
+  HomeOutlined, ReloadOutlined, UploadOutlined, CloudUploadOutlined,
   FolderAddOutlined, FileAddOutlined, EyeOutlined, EyeInvisibleOutlined,
   ArrowLeftOutlined, ArrowRightOutlined, UnorderedListOutlined, PartitionOutlined,
 } from '@ant-design/icons'
@@ -137,6 +137,15 @@ export function FileToolbar({
             type="text"
             icon={<UploadOutlined />}
             onClick={onUpload}
+            style={{ color: 'var(--color-text-secondary)' }}
+          />
+        </Tooltip>
+        <Tooltip title="上传文件夹">
+          <Button
+            size="small"
+            type="text"
+            icon={<CloudUploadOutlined />}
+            onClick={onUploadFolder}
             style={{ color: 'var(--color-text-secondary)' }}
           />
         </Tooltip>

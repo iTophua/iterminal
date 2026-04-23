@@ -19,13 +19,21 @@ export function SortableTab({ id, label, connectionName }: SortableTabProps) {
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    cursor: 'grab',
+    // 拖拽时取消 transition，避免与 dnd-kit 内部动画冲突导致内容空白
+    transition: isDragging ? 'none' : transition,
+    opacity: isDragging ? 0.6 : 1,
+    cursor: isDragging ? 'grabbing' : 'grab',
     display: 'inline-flex',
     alignItems: 'center',
     gap: 0,
     lineHeight: 1,
+    position: 'relative',
+    // 拖拽时提升层级，避免被其他 tab 遮挡导致内容空白
+    zIndex: isDragging ? 1 : undefined,
+    // 确保 transform 基准正确，避免文字被裁剪
+    transformOrigin: 'center center',
+    // 强制创建 GPU 合成层，避免被父元素 overflow:hidden 裁剪
+    willChange: isDragging ? 'transform' : undefined,
   }
 
   return (

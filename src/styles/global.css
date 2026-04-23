@@ -1061,6 +1061,23 @@ body {
   opacity: 1 !important;
 }
 
+/* SortableTab 拖拽时确保内容不被父元素 overflow:hidden 裁剪 */
+.sortable-tab-wrapper {
+  overflow: visible;
+}
+
+/* 拖拽过程中提升层级，避免文字被遮挡 */
+.sortable-tab-wrapper[style*="transform: translate3d"] {
+  z-index: 2;
+}
+
+/* 拖拽排序时：父元素 .ant-tabs-tab 的 overflow:hidden 会裁剪位移后的 tab 内容，
+   transition:all 会与 dnd-kit 的 transform 动画冲突导致内容空白 */
+.ant-tabs-tab:has(.sortable-tab-wrapper[style*="transform: translate3d"]) {
+  overflow: visible !important;
+  transition: none !important;
+}
+
 /* 侧边栏菜单项动画 */
 .ant-menu-item {
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);

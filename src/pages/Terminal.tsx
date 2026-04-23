@@ -2168,6 +2168,8 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               }
             }
             
+            await invoke('disconnect_ssh', { id: connectionId }).catch(() => {})
+            disconnectHandledRef.current.delete(connectionId)
             removeConnectionFromStore(connectionId)
             message.success('已在新窗口中打开')
           } else {
