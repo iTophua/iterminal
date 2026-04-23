@@ -1,8 +1,15 @@
 import { create } from 'zustand'
 import type { AppTheme, AppThemeMode, TerminalThemeName, ThemeName, ThemePersistData } from '../types/theme'
+import { themes } from '../styles/themes/app-themes'
 
 const STORAGE_KEY = 'iterminal_theme'
 const CURRENT_VERSION = 3
+
+const VALID_THEMES = Object.keys(themes) as ThemeName[]
+
+function isValidTheme(name: string): name is ThemeName {
+  return VALID_THEMES.includes(name as ThemeName)
+}
 
 export const getSystemTheme = (): AppTheme => {
   if (typeof window !== 'undefined' && window.matchMedia) {
@@ -83,12 +90,13 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   },
   
   setSelectedTheme: (theme) => {
-    set({ selectedTheme: theme })
+    const validTheme = isValidTheme(theme) ? theme : 'default'
+    set({ selectedTheme: validTheme })
     const state = get()
     persistTheme({
       appThemeMode: state.appThemeMode,
       appTheme: state.appTheme,
-      selectedTheme: theme,
+      selectedTheme: validTheme,
       terminalTheme: state.terminalTheme,
       version: CURRENT_VERSION,
     })
@@ -126,10 +134,11 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
       const resolvedTheme = persisted.appThemeMode === 'system' 
         ? getSystemTheme() 
         : (persisted.appThemeMode || persisted.appTheme)
+      const theme = isValidTheme(persisted.selectedTheme) ? persisted.selectedTheme : 'default'
       set({
         appThemeMode: persisted.appThemeMode || persisted.appTheme,
         appTheme: resolvedTheme,
-        selectedTheme: persisted.selectedTheme || 'default',
+        selectedTheme: theme,
         terminalTheme: persisted.terminalTheme,
         hydrated: true,
       })

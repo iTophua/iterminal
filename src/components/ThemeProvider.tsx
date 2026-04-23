@@ -67,7 +67,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const hydrate = useThemeStore(s => s.hydrate)
   const hydrated = useThemeStore(s => s.hydrated)
   
-  const currentThemeDef = themes[selectedTheme]
+  const currentThemeDef = themes[selectedTheme] ?? themes.default
   
   useIsomorphicLayoutEffect(() => {
     hydrate()
@@ -102,7 +102,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     
     const handleThemeChange = (newTheme: AppTheme) => {
       disableTransitions()
-      const themeDef = themes[selectedTheme]
+      const themeDef = themes[selectedTheme] ?? themes.default
       applyThemeToDOM(newTheme, selectedTheme, themeDef.colors[newTheme])
       useThemeStore.setState({ appTheme: newTheme })
 

@@ -31,12 +31,13 @@ export function useAppInitialization() {
   const [state, setState] = useState<InitializationState>({
     steps: DEFAULT_STEPS,
     progress: 0,
-    displayProgress: 0, // 用于平滑动画的显示进度
+    displayProgress: 0,
     isComplete: false,
     hasError: false,
   })
   const startTimeRef = useRef(Date.now())
   const progressTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const cancelledRef = useRef(false)
 
   const setAvailableFonts = useTerminalStore(s => s.setAvailableFonts)
   const setFontsLoading = useTerminalStore(s => s.setFontsLoading)
@@ -44,6 +45,7 @@ export function useAppInitialization() {
   const setConnectionsLoading = useTerminalStore(s => s.setConnectionsLoading)
 
   const updateStep = useCallback((key: string, status: InitStep['status']) => {
+    if (cancelledRef.current) return
     setState(prev => ({
       ...prev,
       steps: prev.steps.map(step =>
@@ -53,15 +55,22 @@ export function useAppInitialization() {
   }, [])
 
   const updateProgress = useCallback((progress: number) => {
+    if (cancelledRef.current) return
     setState(prev => ({ ...prev, progress }))
   }, [])
 
   // 平滑进度条动画 - 从当前显示进度渐变到目标进度
   const animateDisplayProgress = useCallback((targetProgress: number) => {
+    if (cancelledRef.current) return
     if (progressTimerRef.current) clearInterval(progressTimerRef.current)
 
     progressTimerRef.current = setInterval(() => {
+      if (cancelledRef.current) {
+        if (progressTimerRef.current) clearInterval(progressTimerRef.current)
+        return
+      }
       setState(prev => {
+        if (cancelledRef.current) return prev
         const diff = targetProgress - prev.displayProgress
         if (Math.abs(diff) < 0.5) {
           if (progressTimerRef.current) clearInterval(progressTimerRef.current)
@@ -73,7 +82,7 @@ export function useAppInitialization() {
   }, [])
 
   useEffect(() => {
-    let cancelled = false
+    cancelledRef.current = false
 
     const runInitialization = async () => {
       const totalSteps = DEFAULT_STEPS.length
@@ -83,26 +92,36 @@ export function useAppInitialization() {
       // 初始动画 - 从 0 平滑到 5%
       animateDisplayProgress(5)
 
-      if (cancelled) return
+      if (cancelledRef.current) return
       updateStep('database', 'loading')
       updateProgress(10)
       animateDisplayProgress(15)
 
       try {
         await initDatabase()
-        if (cancelled) return
+        if (cancelledRef.current) return
         updateStep('database', 'done')
-        completedSteps++
-        updateProgress((completedSteps / totalSteps) * 100)
-        animateDisplayProgress((completedSteps / totalSteps) * 100)
       } catch (error) {
         console.error('Database initialization failed:', error)
         updateStep('database', 'error')
-        setState(prev => ({ ...prev, hasError: true }))
+        if (!cancelledRef.current) {
+          setState(prev => ({ ...prev, hasError: true }))
+        }
+        // 数据库初始化失败，后续步骤均依赖数据库，直接结束
+        const elapsed = Date.now() - startTimeRef.current
+        const remainingTime = Math.max(0, MIN_DISPLAY_TIME - elapsed)
+        setTimeout(() => {
+          if (cancelledRef.current) return
+          if (progressTimerRef.current) clearInterval(progressTimerRef.current)
+          setState(prev => ({ ...prev, isComplete: true, displayProgress: 100 }))
+        }, remainingTime)
         return
       }
+      completedSteps++
+      updateProgress((completedSteps / totalSteps) * 100)
+      animateDisplayProgress((completedSteps / totalSteps) * 100)
 
-      if (cancelled) return
+      if (cancelledRef.current) return
       updateStep('fonts', 'loading')
       updateProgress(completedSteps / totalSteps * 100 + 10)
       setFontsLoading(true)
@@ -127,7 +146,7 @@ export function useAppInitialization() {
 
         if (!fontsLoaded) {
           const fonts = await invoke<string[]>('get_monospace_fonts')
-          if (cancelled) return
+          if (cancelledRef.current) return
           if (fonts.length > 0) {
             setAvailableFonts(fonts)
             localStorage.setItem('iterminal_cached_fonts', JSON.stringify(fonts))
@@ -142,7 +161,7 @@ export function useAppInitialization() {
       } catch (error) {
         console.error('Font loading failed:', error)
         setAvailableFonts(DEFAULT_FONTS)
-        updateStep('fonts', 'done')
+        updateStep('fonts', 'error')
         completedSteps++
         updateProgress((completedSteps / totalSteps) * 100)
         animateDisplayProgress((completedSteps / totalSteps) * 100)
@@ -150,14 +169,14 @@ export function useAppInitialization() {
         setFontsLoading(false)
       }
 
-      if (cancelled) return
+      if (cancelledRef.current) return
       updateStep('migrate', 'loading')
       updateProgress(completedSteps / totalSteps * 100 + 10)
       animateDisplayProgress(completedSteps / totalSteps * 100 + 15)
 
       try {
         const migratedCount = await migrateFromLocalStorage()
-        if (cancelled) return
+        if (cancelledRef.current) return
         if (migratedCount > 0) {
           console.log(`Migrated ${migratedCount} connections from localStorage`)
         }
@@ -167,13 +186,13 @@ export function useAppInitialization() {
         animateDisplayProgress((completedSteps / totalSteps) * 100)
       } catch (error) {
         console.error('Migration failed:', error)
-        updateStep('migrate', 'done')
+        updateStep('migrate', 'error')
         completedSteps++
         updateProgress((completedSteps / totalSteps) * 100)
         animateDisplayProgress((completedSteps / totalSteps) * 100)
       }
 
-      if (cancelled) return
+      if (cancelledRef.current) return
       updateStep('loadConnections', 'loading')
       updateProgress(completedSteps / totalSteps * 100 + 10)
       setConnectionsLoading(true)
@@ -181,7 +200,7 @@ export function useAppInitialization() {
 
       try {
         const connections = await getConnections()
-        if (cancelled) return
+        if (cancelledRef.current) return
         setAllConnections(connections)
         updateStep('loadConnections', 'done')
         completedSteps++
@@ -190,13 +209,15 @@ export function useAppInitialization() {
       } catch (error) {
         console.error('Load connections failed:', error)
         setAllConnections([])
-        updateStep('loadConnections', 'done')
+        updateStep('loadConnections', 'error')
         completedSteps++
         updateProgress((completedSteps / totalSteps) * 100)
         animateDisplayProgress((completedSteps / totalSteps) * 100)
+      } finally {
+        setConnectionsLoading(false)
       }
 
-      if (cancelled) return
+      if (cancelledRef.current) return
       updateStep('cleanup', 'loading')
       updateProgress(completedSteps / totalSteps * 100 + 10)
       animateDisplayProgress(completedSteps / totalSteps * 100 + 15)
@@ -204,25 +225,26 @@ export function useAppInitialization() {
       try {
         useTransferStore.getState().cleanupExpiredRecords()
         setupNightlyCleanup()
-        if (cancelled) return
+        if (cancelledRef.current) return
         updateStep('cleanup', 'done')
         completedSteps++
         updateProgress(100)
         animateDisplayProgress(100)
       } catch (error) {
         console.error('Cleanup failed:', error)
-        updateStep('cleanup', 'done')
+        updateStep('cleanup', 'error')
         completedSteps++
         updateProgress(100)
         animateDisplayProgress(100)
       }
 
-      if (!cancelled) {
+      if (!cancelledRef.current) {
         // 确保最小展示时间
         const elapsed = Date.now() - startTimeRef.current
         const remainingTime = Math.max(0, MIN_DISPLAY_TIME - elapsed)
 
         setTimeout(() => {
+          if (cancelledRef.current) return
           if (progressTimerRef.current) clearInterval(progressTimerRef.current)
           setState(prev => ({ ...prev, isComplete: true, displayProgress: 100 }))
         }, 200 + remainingTime)
@@ -232,10 +254,23 @@ export function useAppInitialization() {
     runInitialization()
 
     return () => {
-      cancelled = true
+      cancelledRef.current = true
       if (progressTimerRef.current) clearInterval(progressTimerRef.current)
     }
   }, [updateStep, updateProgress, setAvailableFonts, setFontsLoading, setAllConnections, setConnectionsLoading, animateDisplayProgress])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (cancelledRef.current) return
+      setState(prev => {
+        if (prev.isComplete) return prev
+        console.warn('[Init] Initialization timeout, forcing completion')
+        cancelledRef.current = true
+        return { ...prev, isComplete: true, displayProgress: 100, hasError: true }
+      })
+    }, 15000)
+    return () => clearTimeout(timer)
+  }, [])
 
   return state
 }

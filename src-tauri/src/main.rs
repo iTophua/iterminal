@@ -1,10 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem, Submenu},
     Emitter, Manager,
 };
 use tauri_plugin_opener::OpenerExt;
+
+static DEVTOOLS_OPEN: AtomicBool = AtomicBool::new(false);
 
 fn main() {
     tauri::Builder::default()
@@ -128,7 +131,10 @@ fn main() {
             let fullscreen =
                 MenuItem::with_id(app, "fullscreen", "全屏", true, Some("CmdOrCtrl+Shift+F"))?;
 
-            let view_menu = Submenu::with_items(app, "视图", true, &[&fullscreen])?;
+            let toggle_devtools =
+                MenuItem::with_id(app, "toggle_devtools", "开发者工具", true, Some("CmdOrCtrl+Shift+I"))?;
+
+            let view_menu = Submenu::with_items(app, "视图", true, &[&fullscreen, &toggle_devtools])?;
 
             let about = MenuItem::with_id(app, "about", "关于 iTerminal", true, None::<&str>)?;
             let github = MenuItem::with_id(app, "github", "GitHub 仓库", true, None::<&str>)?;
@@ -191,6 +197,17 @@ fn main() {
                     "fullscreen" => {
                         if let Some(window) = app.webview_windows().get("main") {
                             let _ = window.emit("menu-action", "toggle-fullscreen");
+                        }
+                    }
+                    "toggle_devtools" => {
+                        if let Some(window) = app.webview_windows().get("main") {
+                            if DEVTOOLS_OPEN.load(Ordering::Relaxed) {
+                                window.close_devtools();
+                                DEVTOOLS_OPEN.store(false, Ordering::Relaxed);
+                            } else {
+                                window.open_devtools();
+                                DEVTOOLS_OPEN.store(true, Ordering::Relaxed);
+                            }
                         }
                     }
                     "about" => {
