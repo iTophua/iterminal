@@ -621,6 +621,17 @@ const handlePointerUp = () => {
     () => activeConnection ? getVisibleSessions(activeConnection.rootPane) : [],
     [visibleSessionsKey]
   )
+
+  const paneStructureKey = useMemo(() => {
+    if (!activeConnection) return ''
+    const getKey = (pane: SplitPane): string => {
+      if (pane.children && pane.children.length > 0) {
+        return `${pane.id}-[${pane.children.map(getKey).join(',')}]`
+      }
+      return `${pane.id}-${pane.sessions.length}`
+    }
+    return getKey(activeConnection.rootPane)
+  }, [activeConnection?.rootPane])
   
   useEffect(() => {
     const instances = Object.values(terminalInstances.current)
@@ -722,7 +733,11 @@ const handlePointerUp = () => {
             existingContainer.innerHTML = ''
             existingContainer.appendChild(term.element)
             requestAnimationFrame(() => {
-              try { term.focus() } catch {}
+              try {
+                fitAddons.current[key]?.fit()
+                term.refresh(0, term.rows - 1)
+                term.focus()
+              } catch {}
             })
           }
           checkConnectionInitialized(connId)
@@ -1142,7 +1157,7 @@ const handlePointerUp = () => {
     }, 0)
 
     return () => clearTimeout(timerId)
-  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode, loadHistory])
+  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, paneStructureKey, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode, loadHistory])
 
   // initializing 超时保护：10秒后强制清除
   useEffect(() => {
@@ -1883,7 +1898,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       const isHorizontal = pane.splitDirection !== 'vertical'
       return (
         <Group
-          key={getPaneStructureKey(pane)}
+          key={pane.id}
           orientation={pane.splitDirection === 'vertical' ? 'vertical' : 'horizontal'}
           style={{ height: '100%', width: '100%' }}
         >
