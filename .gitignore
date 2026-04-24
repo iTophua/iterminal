@@ -3,6 +3,7 @@
 /src-tauri/target/
 /.idea/
 /.claude/
+/.qwen/
 /mcp/dist/
 /mcp/node_modules/
 /.opencode/
