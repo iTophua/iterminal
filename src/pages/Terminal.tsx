@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useCallback, useState } from 'react'
+import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react'
 import { Tabs, App, Button, Tooltip, Input, Modal, List, Popconfirm } from 'antd'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
@@ -34,6 +34,21 @@ import { useHistoryStore } from '../stores/historyStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import type { TerminalThemeColors } from '../types/theme'
 
+function computeGhostColor(foreground: string): string {
+  const rgbaMatch = foreground.match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/)
+  if (rgbaMatch) {
+    const r = rgbaMatch[1]
+    const g = rgbaMatch[2]
+    const b = rgbaMatch[3]
+    const originalAlpha = rgbaMatch[4] ? parseFloat(rgbaMatch[4]) : 1
+    return `rgba(${r}, ${g}, ${b}, ${(originalAlpha * 0.6).toFixed(2)})`
+  }
+  if (foreground.startsWith('#') && foreground.length === 7) {
+    return foreground + '99'
+  }
+  return foreground
+}
+
 const GhostTextOverlay = React.forwardRef<HTMLDivElement, {
   sessionKey: string
   fontFamily?: string
@@ -46,7 +61,7 @@ const GhostTextOverlay = React.forwardRef<HTMLDivElement, {
   themeColors,
 }, ref) {
   const ghostColor = React.useMemo(() => {
-    return `${themeColors.foreground}99`
+    return computeGhostColor(themeColors.foreground)
   }, [themeColors.foreground])
 
   return (
@@ -591,20 +606,30 @@ const handlePointerUp = () => {
     }
   }, [])
   
+  const currentThemeColors = useMemo(
+    () => resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey),
+    [selectedTheme, appTheme, terminalThemeKey]
+  )
+  
+  const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
+  const visibleSessionsKey = activeConnection
+    ? getVisibleSessions(activeConnection.rootPane).map(s => `${s.connectionId}_${s.id}_${s.shellId ?? ''}`).join('|')
+    : ''
+  const visibleSessions = useMemo(
+    () => activeConnection ? getVisibleSessions(activeConnection.rootPane) : [],
+    [visibleSessionsKey]
+  )
+  
   useEffect(() => {
-    const newTheme = resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey)
     const instances = Object.values(terminalInstances.current)
     for (let i = 0; i < instances.length; i++) {
       const term = instances[i]
       if (term) {
-        term.options.theme = newTheme
+        term.options.theme = currentThemeColors
         term.refresh(0, term.rows - 1)
       }
     }
-  }, [terminalThemeKey, appTheme, selectedTheme])
-  
-  const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
-  const visibleSessions = activeConnection ? getVisibleSessions(activeConnection.rootPane) : []
+  }, [currentThemeColors])
   
   // 强制在新窗口模式下等待 store 数据
   const [storeReady, setStoreReady] = useState(false)
@@ -727,7 +752,7 @@ const handlePointerUp = () => {
             cursorStyle: terminalSettings.cursorStyle,
             fontSize: terminalSettings.fontSize,
             fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-            theme: resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey),
+            theme: currentThemeColors,
             convertEol: true,
             disableStdin: false,
             scrollback: terminalSettings.scrollback,
@@ -1098,7 +1123,7 @@ const handlePointerUp = () => {
     }, 0)
 
     return () => clearTimeout(timerId)
-  }, [connectedConnections.length, activeConnectionId, visibleSessions, terminalSettings, shortcutSettings, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode, loadHistory])
+  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode, loadHistory])
 
   const reconnectTimersRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
 
@@ -1901,7 +1926,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             sessionKey={`${connectionId}_${s.id}`}
             fontFamily={terminalSettings.fontFamily}
             fontSize={terminalSettings.fontSize}
-            themeColors={resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey)}
+            themeColors={currentThemeColors}
             ref={(el) => { ghostTextElementsRef.current[`${connectionId}_${s.id}`] = el }}
           />
         </div>
