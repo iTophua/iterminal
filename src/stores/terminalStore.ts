@@ -41,6 +41,7 @@ export interface ConnectedConnection {
   reconnecting?: boolean
   reconnectAttempt?: number
   reconnectNextDelay?: number
+  initializing?: boolean
 }
 
 export type TransferStatus = 'pending' | 'transferring' | 'paused' | 'completed' | 'failed' | 'cancelled'
@@ -274,6 +275,7 @@ interface TerminalState {
   markConnectionDisconnected: (connectionId: string, reason: DisconnectReason) => void
   clearConnectionDisconnected: (connectionId: string) => void
   setConnectionReconnecting: (connectionId: string, reconnecting: boolean, attempt?: number, nextDelay?: number) => void
+  setConnectionInitializing: (connectionId: string, initializing: boolean) => void
 }
 
 function getNextSessionNumber(pane: SplitPane): number {
@@ -402,6 +404,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
           connectionId: connection.id,
           connection,
           rootPane,
+          initializing: true,
         }
       ],
       activeConnectionId: connection.id,
@@ -422,6 +425,7 @@ restoreConnection: (connection, rootPane) => {
           connectionId: connection.id,
           connection,
           rootPane,
+          initializing: true,
         }
       ],
       activeConnectionId: connection.id,
@@ -1226,7 +1230,7 @@ restoreConnection: (connection, rootPane) => {
     set((state) => ({
       connectedConnections: state.connectedConnections.map(c =>
         c.connectionId === connectionId
-          ? { ...c, disconnected: true, disconnectReason: reason, reconnecting: false }
+          ? { ...c, disconnected: true, disconnectReason: reason, reconnecting: false, initializing: false }
           : c
       ),
     }))
@@ -1236,7 +1240,7 @@ restoreConnection: (connection, rootPane) => {
     set((state) => ({
       connectedConnections: state.connectedConnections.map(c =>
         c.connectionId === connectionId
-          ? { ...c, disconnected: false, disconnectReason: undefined, reconnecting: false, reconnectAttempt: undefined, reconnectNextDelay: undefined }
+          ? { ...c, disconnected: false, disconnectReason: undefined, reconnecting: false, reconnectAttempt: undefined, reconnectNextDelay: undefined, initializing: false }
           : c
       ),
     }))
@@ -1247,6 +1251,16 @@ restoreConnection: (connection, rootPane) => {
       connectedConnections: state.connectedConnections.map(c =>
         c.connectionId === connectionId
           ? { ...c, reconnecting, reconnectAttempt: attempt, reconnectNextDelay: nextDelay }
+          : c
+      ),
+    }))
+  },
+
+  setConnectionInitializing: (connectionId: string, initializing: boolean) => {
+    set((state) => ({
+      connectedConnections: state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, initializing }
           : c
       ),
     }))

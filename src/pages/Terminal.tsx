@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useState, useMemo } from 'react'
-import { Tabs, App, Button, Tooltip, Input, Modal, List, Popconfirm } from 'antd'
+import { Tabs, App, Button, Tooltip, Input, Modal, List, Popconfirm, Spin } from 'antd'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -129,6 +129,7 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const markConnectionDisconnected = useTerminalStore(state => state.markConnectionDisconnected)
   const clearConnectionDisconnected = useTerminalStore(state => state.clearConnectionDisconnected)
   const setConnectionReconnecting = useTerminalStore(state => state.setConnectionReconnecting)
+  const setConnectionInitializing = useTerminalStore(state => state.setConnectionInitializing)
   const addConnection = useTerminalStore(state => state.addConnection)
   const updateSessionShellId = useTerminalStore(state => state.updateSessionShellId)
   const splitPane = useTerminalStore(state => state.splitPane)
@@ -188,6 +189,7 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const ghostTextStartXRef = useRef<{ [key: string]: number }>({})
   const ghostTextLineRef = useRef<{ [key: string]: number }>({})
   const commandTrackersRef = useRef<{ [key: string]: CommandTracker }>({})
+  const initializingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
   
   const updateGhostTextOverlay = useCallback((key: string, top: number, left: number, text: string, cellHeight?: number) => {
     const el = ghostTextElementsRef.current[key]
@@ -690,6 +692,19 @@ const handlePointerUp = () => {
     
     // setTimeout 确保 ref 回调已执行
     const timerId = setTimeout(() => {
+      const checkConnectionInitialized = (connId: string) => {
+        const conn = connectedConnectionsRef.current.find(c => c.connectionId === connId)
+        if (!conn || !conn.initializing) return
+        const allSessions = getAllSessions(conn.rootPane)
+        const allDone = allSessions.every(s => {
+          if (!s.shellId) return true
+          return initializedRef.current.has(`${connId}_${s.id}`)
+        })
+        if (allDone) {
+          setConnectionInitializing(connId, false)
+        }
+      }
+
       for (const session of sessionsToInit) {
         if (!session.shellId) {
           continue
@@ -710,6 +725,7 @@ const handlePointerUp = () => {
               try { term.focus() } catch {}
             })
           }
+          checkConnectionInitialized(connId)
           continue
         }
 
@@ -1114,16 +1130,48 @@ const handlePointerUp = () => {
           }
         }
 
-        initTerminal().catch(err => {
+        initTerminal().then(() => {
+            checkConnectionInitialized(connId)
+          }).catch(err => {
             const errorMsg = '终端初始化失败: ' + String(err)
             console.error('[Terminal] initTerminal failed for', key, ':', err)
             message.error(errorMsg)
+            setConnectionInitializing(connId, false)
           })
       }
     }, 0)
 
     return () => clearTimeout(timerId)
   }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, appTheme, terminalThemeKey, message, storeReady, singleConnectionMode, loadHistory])
+
+  // initializing 超时保护：10秒后强制清除
+  useEffect(() => {
+    for (const conn of connectedConnections) {
+      if (conn.initializing && !initializingTimeoutRef.current[conn.connectionId]) {
+        initializingTimeoutRef.current[conn.connectionId] = setTimeout(() => {
+          console.warn('[Terminal] initializing timeout for', conn.connectionId)
+          setConnectionInitializing(conn.connectionId, false)
+          delete initializingTimeoutRef.current[conn.connectionId]
+        }, 10000)
+      }
+      if (!conn.initializing && initializingTimeoutRef.current[conn.connectionId]) {
+        clearTimeout(initializingTimeoutRef.current[conn.connectionId])
+        delete initializingTimeoutRef.current[conn.connectionId]
+      }
+    }
+    const currentIds = new Set(connectedConnections.map(c => c.connectionId))
+    for (const id of Object.keys(initializingTimeoutRef.current)) {
+      if (!currentIds.has(id)) {
+        clearTimeout(initializingTimeoutRef.current[id])
+        delete initializingTimeoutRef.current[id]
+      }
+    }
+    return () => {
+      for (const id of Object.keys(initializingTimeoutRef.current)) {
+        clearTimeout(initializingTimeoutRef.current[id])
+      }
+    }
+  }, [connectedConnections, setConnectionInitializing])
 
   const reconnectTimersRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
 
@@ -1912,11 +1960,11 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         <div style={{ position: 'relative', height: '100%' }}>
           <div
             ref={el => { terminalRefs.current[`${connectionId}_${s.id}`] = el }}
-            style={{ 
-              height: '100%', 
-              background: 'var(--color-bg-container)', 
-              overflow: 'hidden', 
-              boxSizing: 'border-box', 
+            style={{
+              height: '100%',
+              background: 'var(--color-bg-container)',
+              overflow: 'hidden',
+              boxSizing: 'border-box',
               padding: 4,
             }}
             onContextMenu={(e) => handleContextMenu(e, `${connectionId}_${s.id}`)}
@@ -1929,6 +1977,26 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             themeColors={currentThemeColors}
             ref={(el) => { ghostTextElementsRef.current[`${connectionId}_${s.id}`] = el }}
           />
+          {conn?.initializing && s.id === activeSess.id && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+                background: 'var(--color-bg-container)',
+                zIndex: 5,
+              }}
+            >
+              <Spin size="default" />
+              <span style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>
+                正在初始化终端...
+              </span>
+            </div>
+          )}
         </div>
       ),
     }))
@@ -2114,6 +2182,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           label={
             <span className={getGroupClass(conn.connection.group)} style={{ color: conn.disconnected ? 'var(--color-error)' : 'var(--group-accent-color, var(--color-text))', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 2px' }}>
               {conn.disconnected && <DisconnectOutlined style={{ fontSize: 10, flexShrink: 0 }} />}
+              {conn.initializing && <Spin size="small" style={{ fontSize: 10, flexShrink: 0 }} />}
               <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>{conn.connection.username}@{conn.connection.host}</span>
               {conn.reconnecting && <span style={{ fontSize: 10, opacity: 0.7, flexShrink: 0 }}>重连中...</span>}
               <CloseOutlined
