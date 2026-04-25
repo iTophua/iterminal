@@ -112,8 +112,8 @@ function SessionRestorer() {
   const [restoreModalVisible, setRestoreModalVisible] = useState(false)
   const [restoring, setRestoring] = useState(false)
   const restoreConnection = useTerminalStore(s => s.restoreConnection)
-  const updateSessionShellId = useTerminalStore(s => s.updateSessionShellId)
   const allConnections = useTerminalStore(s => s.allConnections)
+  const connectedConnections = useTerminalStore(s => s.connectedConnections)
 
   useEffect(() => {
     const saved = localStorage.getItem(SESSION_STORAGE_KEY)
@@ -124,6 +124,9 @@ function SessionRestorer() {
         if (recentSessions.length > 0) {
           setSavedSessions(recentSessions)
           setRestoreModalVisible(true)
+        } else {
+          // 所有会话都已过期，清除 localStorage 避免下次启动再次读取
+          localStorage.removeItem(SESSION_STORAGE_KEY)
         }
       } catch {
         localStorage.removeItem(SESSION_STORAGE_KEY)
@@ -136,6 +139,12 @@ function SessionRestorer() {
     let restored = 0
     for (const session of savedSessions) {
       try {
+        // 校验该连接是否已在连接 tab 中
+        if (connectedConnections.some(c => c.connectionId === session.connectionId)) {
+          message.warning(`连接 "${session.connectionId}" 已在标签页中，跳过恢复`)
+          continue
+        }
+
         const conn = allConnections.find(c => c.id === session.connectionId)
         if (!conn) {
           console.error(`恢复连接失败: 未找到连接 ${session.connectionId}`)
@@ -153,13 +162,25 @@ function SessionRestorer() {
           }
         })
 
-        restoreConnection(conn, session.rootPane)
-
+        // 先获取所有新的 shellId，再 restoreConnection，避免 Terminal 初始化时用到旧的 shellId
         const sessions = getAllSessionsFromPane(session.rootPane)
+        const shellIdMap: Record<string, string> = {}
         for (const s of sessions) {
           const newShellId = await invoke<string>('get_shell', { id: conn.id })
-          updateSessionShellId(conn.id, s.id, newShellId)
+          shellIdMap[s.id] = newShellId
         }
+
+        const updatePaneShellIds = (pane: SplitPane): SplitPane => ({
+          ...pane,
+          sessions: pane.sessions.map(s => ({
+            ...s,
+            shellId: shellIdMap[s.id] || s.shellId,
+          })),
+          children: pane.children?.map(updatePaneShellIds),
+        })
+        const updatedRootPane = updatePaneShellIds(session.rootPane)
+
+        restoreConnection(conn, updatedRootPane)
 
         restored++
       } catch (err) {
@@ -200,9 +221,13 @@ function SessionRestorer() {
       <div style={{ maxHeight: 300, overflow: 'auto' }}>
         {savedSessions.map(s => {
           const conn = allConnections.find(c => c.id === s.connectionId)
+          const alreadyConnected = connectedConnections.some(c => c.connectionId === s.connectionId)
           return (
-            <div key={s.connectionId} style={{ padding: '8px 12px', background: 'var(--color-bg-container)', borderRadius: 4, marginBottom: 8 }}>
-              <div style={{ fontWeight: 500 }}>{conn?.name || s.connectionId}</div>
+            <div key={s.connectionId} style={{ padding: '8px 12px', background: 'var(--color-bg-container)', borderRadius: 4, marginBottom: 8, opacity: alreadyConnected ? 0.5 : 1 }}>
+              <div style={{ fontWeight: 500, display: 'flex', alignItems: 'center', gap: 8 }}>
+                {conn?.name || s.connectionId}
+                {alreadyConnected && <span style={{ fontSize: 11, color: 'var(--color-primary)', border: '1px solid var(--color-primary)', padding: '0 6px', borderRadius: 4 }}>已连接</span>}
+              </div>
               <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
                 {conn ? `${conn.username}@${conn.host}:${conn.port}` : '连接信息缺失'}
               </div>
@@ -231,13 +256,28 @@ function getAllSessionsFromPane(pane: SplitPane): Array<{ id: string; connection
 function SessionSaver() {
   const connectedConnections = useTerminalStore(s => s.connectedConnections)
   const savedRef = useRef(false)
+  const isClosing = useRef(false)
 
   useEffect(() => {
-    const unlisten = listen('tauri://close-requested', async () => {
+    const appWindow = getCurrentWindow()
+    let unlisten: (() => void) | null = null
+
+    // 使用 onCloseRequested 阻止默认关闭行为，确保异步清理完成后再关闭窗口
+    appWindow.onCloseRequested(async (event) => {
+      event.preventDefault()
+      if (isClosing.current) return
+      isClosing.current = true
+      
       if (connectedConnections.length > 0 && !savedRef.current) {
+        // 保存前清除 shellId，避免恢复时用到已失效的后端 shell 标识
+        const clearShellIds = (pane: SplitPane): SplitPane => ({
+          ...pane,
+          sessions: pane.sessions.map(s => ({ ...s, shellId: '' })),
+          children: pane.children?.map(clearShellIds),
+        })
         const sessions: SavedSession[] = connectedConnections.map(conn => ({
           connectionId: conn.connectionId,
-          rootPane: conn.rootPane,
+          rootPane: clearShellIds(conn.rootPane),
           savedAt: Date.now(),
         }))
         localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions))
@@ -248,11 +288,13 @@ function SessionSaver() {
         await invoke('disconnect_ssh', { id: conn.connectionId }).catch(() => {})
       }
       
-      window.close()
+      await appWindow.close().catch(() => {})
+    }).then(fn => {
+      unlisten = fn
     })
 
     return () => {
-      unlisten.then(fn => fn())
+      if (unlisten) unlisten()
     }
   }, [connectedConnections])
 

@@ -62,7 +62,9 @@ fn set_bg_color_macos(
                 alpha: a_f64
             ];
             
-            let _: () = msg_send![ns_window, setBackgroundColor: color_obj];
+            if !color_obj.is_null() {
+                let _: () = msg_send![ns_window, setBackgroundColor: color_obj];
+            }
             
             let is_opaque: bool = a >= 254;
             let _: () = msg_send![ns_window, setOpaque: is_opaque];

@@ -882,7 +882,8 @@ mod tests {
                 group_name TEXT,
                 tags TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                sort_order INTEGER DEFAULT 0
             )",
             [],
         )
@@ -909,8 +910,8 @@ mod tests {
         let encrypted_password = connection.password.as_ref().map(|p| encrypt_password(p));
 
         conn.execute(
-            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP, ?10)",
             rusqlite::params![
                 connection.id,
                 connection.name,
@@ -921,6 +922,7 @@ mod tests {
                 connection.key_file,
                 connection.group_name,
                 connection.tags,
+                connection.sort_order,
             ],
         ).map_err(|e| e.to_string())?;
 
@@ -933,7 +935,7 @@ mod tests {
         let conn = db.lock().map_err(|e| e.to_string())?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at FROM connections ORDER BY name"
+            "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at, sort_order FROM connections ORDER BY name"
         ).map_err(|e| e.to_string())?;
 
         let connections = stmt
@@ -954,6 +956,7 @@ mod tests {
                     last_connected_at: None,
                     created_at: row.get(9)?,
                     updated_at: row.get(10)?,
+                    sort_order: row.get(11)?,
                 })
             })
             .map_err(|e| e.to_string())?;
@@ -986,6 +989,7 @@ mod tests {
             last_connected_at: None,
             created_at: None,
             updated_at: None,
+            sort_order: None,
         };
 
         save_connection_test(&db, &conn).unwrap();
@@ -1014,6 +1018,7 @@ mod tests {
             last_connected_at: None,
             created_at: None,
             updated_at: None,
+            sort_order: None,
         };
 
         save_connection_test(&db, &conn).unwrap();
@@ -1039,6 +1044,7 @@ mod tests {
             last_connected_at: None,
             created_at: None,
             updated_at: None,
+            sort_order: None,
         };
 
         save_connection_test(&db, &conn).unwrap();
@@ -1065,6 +1071,7 @@ mod tests {
             last_connected_at: None,
             created_at: None,
             updated_at: None,
+            sort_order: None,
         };
 
         save_connection_test(&db, &conn).unwrap();
@@ -1082,6 +1089,7 @@ mod tests {
             last_connected_at: None,
             created_at: None,
             updated_at: None,
+            sort_order: None,
         };
 
         save_connection_test(&db, &updated).unwrap();
@@ -1147,11 +1155,13 @@ mod tests {
                 key_file: None,
                 group_name: None,
                 tags: None,
-                last_connected_at: None,
-                created_at: None,
-                updated_at: None,
-            };
-            save_connection_test(&db, &conn).unwrap();
+            last_connected_at: None,
+            created_at: None,
+            updated_at: None,
+            sort_order: None,
+        };
+
+        save_connection_test(&db, &conn).unwrap();
         }
 
         let connections = get_connections_test(&db).unwrap();

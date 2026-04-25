@@ -124,7 +124,9 @@ static SHELLS: Lazy<RwLock<HashMap<String, ShellSession>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 async fn cleanup_connection(connection_id: &str) {
-    let prefix = format!("{}-shell", connection_id);
+    // 使用 "-shell-" 结尾的 prefix，确保精确匹配该 connection 的 shell，
+    // 避免误清理其他 connection 的 shell（例如 id 为 "abc-shell-xxx" 的 connection）
+    let prefix = format!("{}-shell-", connection_id);
     {
         let mut shells = SHELLS.write().await;
         let shell_ids: Vec<String> = shells
@@ -140,8 +142,6 @@ async fn cleanup_connection(connection_id: &str) {
     }
     
     super::sftp::close_sftp_session(connection_id).await;
-    
-    SESSIONS.write().await.remove(connection_id);
 }
 
 #[tauri::command]
