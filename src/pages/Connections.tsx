@@ -65,6 +65,7 @@ function Connections() {
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<TestResult>(null)
   const [testMessage, setTestMessage] = useState('')
+  const [testCooldown, setTestCooldown] = useState(false)
   const [isQuickImportOpen, setIsQuickImportOpen] = useState(false)
   const [quickImportText, setQuickImportText] = useState('')
   const [quickImportGroup, setQuickImportGroup] = useState<string>('默认')
@@ -82,6 +83,7 @@ function Connections() {
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null)
   const [dropPosition, setDropPosition] = useState<'before' | 'after' | null>(null)
   const dragTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const testIdRef = useRef(0)
   const [isReorderMode, setIsReorderMode] = useState(false)
   const clearConnectionHistory = useHistoryStore(state => state.clearConnectionHistory)
   const [isDraggingActive, setIsDraggingActive] = useState(false)
@@ -485,10 +487,24 @@ function Connections() {
     }
   }
   const handleTestConnection = async () => {
+    if (testCooldown) return
+
+    if (testLoading) {
+      testIdRef.current += 1
+      setTestLoading(false)
+      setTestResult('failed')
+      setTestMessage('测试已取消')
+      setTestCooldown(true)
+      setTimeout(() => setTestCooldown(false), 1500)
+      return
+    }
+
+    const currentTestId = ++testIdRef.current
+
     try {
       const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile'])
       const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
-      
+
       setTestLoading(true)
       setTestResult(null)
       setTestMessage('')
@@ -503,6 +519,8 @@ function Connections() {
         }
       })
 
+      if (testIdRef.current !== currentTestId) return
+
       if (result) {
         setTestResult('success')
         setTestMessage('连接成功')
@@ -511,10 +529,13 @@ function Connections() {
         setTestMessage('连接失败：认证失败')
       }
     } catch (error) {
+      if (testIdRef.current !== currentTestId) return
       setTestResult('failed')
       setTestMessage(`连接失败：${error}`)
     } finally {
-      setTestLoading(false)
+      if (testIdRef.current === currentTestId) {
+        setTestLoading(false)
+      }
     }
   }
 
@@ -1191,12 +1212,13 @@ function Connections() {
           </Row>
           <Form.Item style={{ marginBottom: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Button 
+              <Button
                 onClick={handleTestConnection}
-                loading={testLoading}
                 size="small"
+                disabled={testCooldown}
+                icon={testLoading ? <LoadingOutlined /> : undefined}
               >
-                测试连接
+                {testLoading ? '取消测试' : '测试连接'}
               </Button>
               {testResult && (
                 <Space size={4}>

@@ -312,32 +312,57 @@ pub async fn test_connection(connection: SSHConnection) -> Result<bool, String> 
 
     let config = Arc::new(russh::client::Config::default());
     let handler = SshClientHandler::new(connection.host.clone(), connection.port);
-    let mut handle = russh::client::connect(config, &socket_addr.to_string(), handler)
-        .await
-        .map_err(|e| format!("连接失败: {}", e))?;
+    let connect_result = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        russh::client::connect(config, &socket_addr.to_string(), handler),
+    )
+    .await;
 
-    let auth_success = if let Some(password) = &connection.password {
-        handle
-            .authenticate_password(&connection.username, password)
-            .await
-            .map(|auth| auth.success())
-            .unwrap_or(false)
-    } else if let Some(key_file) = &connection.key_file {
-        let key_path = shellexpand::tilde(key_file).into_owned();
-        match russh::keys::load_secret_key(&key_path, None) {
-            Ok(key_pair) => {
-                let key_with_hash =
-                    russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
+    let mut handle = match connect_result {
+        Ok(Ok(handle)) => handle,
+        Ok(Err(e)) => return Err(format!("连接失败: {}", e)),
+        Err(_) => return Err("连接超时，请检查网络或服务器地址".to_string()),
+    };
+
+    let auth_success = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        async {
+            if let Some(password) = &connection.password {
                 handle
-                    .authenticate_publickey(&connection.username, key_with_hash)
+                    .authenticate_password(&connection.username, password)
                     .await
                     .map(|auth| auth.success())
                     .unwrap_or(false)
+            } else if let Some(key_file) = &connection.key_file {
+                let key_path = shellexpand::tilde(key_file).into_owned();
+                match russh::keys::load_secret_key(&key_path, None) {
+                    Ok(key_pair) => {
+                        let key_with_hash =
+                            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
+                        handle
+                            .authenticate_publickey(&connection.username, key_with_hash)
+                            .await
+                            .map(|auth| auth.success())
+                            .unwrap_or(false)
+                    }
+                    Err(_) => false,
+                }
+            } else {
+                false
             }
-            Err(_) => false,
+        },
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            tokio::spawn(async move {
+                let _ = handle
+                    .disconnect(Disconnect::ByApplication, "Test timeout", "en")
+                    .await;
+            });
+            return Err("认证超时".to_string());
         }
-    } else {
-        false
     };
 
     let _ = handle
