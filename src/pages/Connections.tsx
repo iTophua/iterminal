@@ -12,6 +12,7 @@ import {
   saveConnection, 
   deleteConnection as deleteConnectionFromDb,
   importConnections,
+  exportConnections,
   readImportFile,
   recordConnectionHistory,
   getRecentConnections,
@@ -739,8 +740,9 @@ function Connections() {
       
       if (!filePath) return
       
-      const data = JSON.stringify(toExport, null, 2)
-      await writeTextFile(filePath, data)
+      const ids = toExport.map(c => c.id)
+      const exportData = await exportConnections(ids)
+      await writeTextFile(filePath, exportData)
       setIsExportModalOpen(false)
       message.success(`已导出 ${toExport.length} 个连接`)
     } catch (error) {

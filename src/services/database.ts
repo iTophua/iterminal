@@ -97,10 +97,10 @@ export async function saveSetting(key: string, value: string): Promise<boolean> 
   return invoke<boolean>('save_setting', { key, value })
 }
 
-export async function exportConnections(): Promise<string> {
+export async function exportConnections(connectionIds?: string[]): Promise<string> {
   await initDatabase()
   
-  return invoke<string>('export_connections')
+  return invoke<string>('export_connections', { connectionIds })
 }
 
 export async function importConnections(jsonData: string, merge: boolean): Promise<number> {

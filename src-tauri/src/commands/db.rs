@@ -380,9 +380,30 @@ pub fn save_setting(key: String, value: String) -> Result<bool, String> {
     Ok(true)
 }
 
+#[derive(Debug, Deserialize)]
+struct LegacyConnection {
+    id: String,
+    name: String,
+    host: String,
+    port: u16,
+    username: String,
+    password: Option<String>,
+    #[serde(rename = "keyFile")]
+    key_file: Option<String>,
+    #[serde(rename = "group")]
+    group_name: Option<String>,
+    tags: Option<Vec<String>>,
+    #[serde(rename = "lastConnectedAt")]
+    last_connected_at: Option<String>,
+}
+
 #[tauri::command]
-pub fn export_connections() -> Result<String, String> {
-    let connections = get_connections()?;
+pub fn export_connections(connection_ids: Option<Vec<String>>) -> Result<String, String> {
+    let all_connections = get_connections()?;
+    let connections = match connection_ids {
+        Some(ids) => all_connections.into_iter().filter(|c| ids.contains(&c.id)).collect(),
+        None => all_connections,
+    };
 
     let export_data = ExportData {
         version: "1.0".to_string(),
@@ -396,7 +417,29 @@ pub fn export_connections() -> Result<String, String> {
 
 #[tauri::command]
 pub fn import_connections(json_data: String, merge: bool) -> Result<usize, String> {
-    let import_data: ExportData = serde_json::from_str(&json_data).map_err(|e| e.to_string())?;
+    // 尝试解析为新的 ExportData 格式
+    let connections: Vec<ConnectionRecord> = if let Ok(export_data) = serde_json::from_str::<ExportData>(&json_data) {
+        export_data.connections
+    } else {
+        // 兼容旧格式：直接是 Connection[] 数组（前端旧版导出的格式）
+        let legacy: Vec<LegacyConnection> = serde_json::from_str(&json_data)
+            .map_err(|e| format!("无效的导入文件格式: {}", e))?;
+        legacy.into_iter().map(|c| ConnectionRecord {
+            id: c.id,
+            name: c.name,
+            host: c.host,
+            port: c.port,
+            username: c.username,
+            password: c.password,
+            key_file: c.key_file,
+            group_name: c.group_name,
+            tags: c.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
+            last_connected_at: c.last_connected_at,
+            created_at: None,
+            updated_at: None,
+            sort_order: None,
+        }).collect()
+    };
 
     let conn = get_db()?;
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
@@ -407,7 +450,7 @@ pub fn import_connections(json_data: String, merge: bool) -> Result<usize, Strin
     }
 
     let mut imported_count = 0;
-    for record in import_data.connections {
+    for record in connections {
         let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
         tx.execute(
             "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)

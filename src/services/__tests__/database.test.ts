@@ -235,7 +235,24 @@ describe('database service', () => {
       mockInvoke.mockResolvedValueOnce(mockExportData)
       
       const result = await database.exportConnections()
-      
+
+      expect(mockInvoke).toHaveBeenLastCalledWith('export_connections', { connectionIds: undefined })
+      expect(result).toBe(mockExportData)
+    })
+
+    it('should export selected connections', async () => {
+      const mockExportData = JSON.stringify({
+        version: '1.0',
+        exported_at: '2024-01-01',
+        connections: [{ id: '1', name: 'Test' }],
+      })
+
+      mockInvoke.mockResolvedValueOnce(true)
+      mockInvoke.mockResolvedValueOnce(mockExportData)
+
+      const result = await database.exportConnections(['1', '2'])
+
+      expect(mockInvoke).toHaveBeenLastCalledWith('export_connections', { connectionIds: ['1', '2'] })
       expect(result).toBe(mockExportData)
     })
 
