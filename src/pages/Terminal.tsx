@@ -1146,6 +1146,8 @@ const handlePointerUp = () => {
     const sessionsWithShell = sessions.filter(s => s.shellId)
 
     try {
+      await invoke('disconnect_ssh', { id: connectionId }).catch(() => {})
+
       await invoke('connect_ssh', {
         id: connectionId,
         connection: {
@@ -1179,7 +1181,17 @@ const handlePointerUp = () => {
             if (typeof event.payload === 'object' && (event.payload as any).eof) {
               return
             }
+
             term.write(event.payload)
+            
+            const tracker = commandTrackersRef.current[key]
+            if (tracker && typeof event.payload === 'string') {
+              const result = tracker.processOutput(event.payload, term)
+              if (result.command) {
+                const [connId] = key.split('_')
+                addCommand(connId, result.command)
+              }
+            }
           }
         })
         unlistenersRef.current[key] = unlisten
@@ -1222,7 +1234,7 @@ const handlePointerUp = () => {
       const nextDelay = getReconnectDelay(nextAttempt)
       setConnectionReconnecting(connectionId, false, nextAttempt, nextDelay)
     }
-  }, [connectedConnections, setConnectionReconnecting, clearConnectionDisconnected, updateSessionShellId, message, getReconnectDelay])
+  }, [connectedConnections, setConnectionReconnecting, clearConnectionDisconnected, updateSessionShellId, addCommand, message, getReconnectDelay])
 
   useEffect(() => {
     const disconnectedConns = connectedConnections.filter(c => c.disconnected && !c.reconnecting)
