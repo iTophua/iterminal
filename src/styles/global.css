@@ -713,32 +713,6 @@ body {
     0 0 10px color-mix(in srgb, var(--color-primary) 10%, transparent) !important;
 }
 
-/* 连接状态指示灯动画 */
-.connection-status-indicator {
-  position: relative;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-}
-
-.connection-status-indicator.connected {
-  background: var(--color-success);
-  box-shadow: 0 0 8px var(--color-success);
-  animation: statusPulse 2s ease-in-out infinite;
-}
-
-.connection-status-indicator.connecting {
-  background: var(--color-warning);
-  box-shadow: 0 0 8px var(--color-warning);
-  animation: statusPulse 1s ease-in-out infinite;
-}
-
-.connection-status-indicator.disconnected {
-  background: var(--color-error);
-  box-shadow: 0 0 8px var(--color-error);
-}
-
 @keyframes statusPulse {
   0%, 100% {
     transform: scale(1);
@@ -826,43 +800,7 @@ body {
     0 0 40px color-mix(in srgb, var(--color-primary) 50%, transparent);
 }
 
-/* 边框流动动画 */
-@keyframes borderFlow {
-  0% {
-    background-position: 0% 50%;
-  }
-  50% {
-    background-position: 100% 50%;
-  }
-  100% {
-    background-position: 0% 50%;
-  }
-}
 
-.border-flow {
-  position: relative;
-  overflow: hidden;
-}
-
-.border-flow::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 2px;
-  background: linear-gradient(
-    90deg,
-    var(--color-primary),
-    var(--color-primary-hover),
-    var(--color-primary-active),
-    var(--color-primary)
-  );
-  background-size: 300% 100%;
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: borderFlow 3s linear infinite;
-}
 
 /* 悬浮卡片效果 */
 .hover-lift {
@@ -876,27 +814,7 @@ body {
     0 0 1px var(--color-primary);
 }
 
-/* 加载骨架屏动画 */
-@keyframes skeleton-loading {
-  0% {
-    background-position: 200% 0;
-  }
-  100% {
-    background-position: -200% 0;
-  }
-}
 
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--color-bg-elevated) 25%,
-    var(--color-border-secondary) 50%,
-    var(--color-bg-elevated) 75%
-  );
-  background-size: 200% 100%;
-  animation: skeleton-loading 1.5s ease-in-out infinite;
-  border-radius: 4px;
-}
 
 /* 页面切换动画 */
 .page-enter {
@@ -1102,28 +1020,16 @@ body {
   transform: scaleY(1);
 }
 
-/* 渐变文字效果 */
+/* 渐变文字效果 —— 静态渐变（移除无限动画以降低 GPU 合成负载，文字蒙版重算昂贵） */
 .gradient-text {
   background: linear-gradient(
     135deg,
     var(--color-primary),
-    var(--color-primary-hover),
-    var(--color-primary)
+    var(--color-primary-hover)
   );
-  background-size: 200% auto;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent !important;
   background-clip: text;
-  animation: gradientShift 3s linear infinite;
-}
-
-@keyframes gradientShift {
-  0% {
-    background-position: 0% center;
-  }
-  100% {
-    background-position: 200% center;
-  }
 }
 
 /* 终端容器 - 保持干净专注，无任何装饰性光晕 */
@@ -1170,52 +1076,13 @@ body {
   animation: badgeBounce 2s ease-in-out infinite;
 }
 
-/* 加载遮罩动画 */
-.loading-overlay {
-  position: relative;
-  overflow: hidden;
-}
 
-.loading-overlay::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    color-mix(in srgb, var(--color-primary) 5%, transparent),
-    transparent
-  );
-  animation: shimmer 1.5s infinite;
-}
-
-@keyframes shimmer {
-  0% {
-    transform: translateX(-100%);
-  }
-  100% {
-    transform: translateX(100%);
-  }
-}
 
 /* ============================================
    全局UI增强 - 毛玻璃/层叠/过渡效果
    ============================================ */
 
-/* 毛玻璃效果 */
-.glass-effect {
-  background: color-mix(in srgb, var(--color-bg-elevated) 85%, transparent);
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
-  border: 1px solid color-mix(in srgb, var(--color-primary) 8%, var(--color-border));
-}
 
-.glass-effect-strong {
-  background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
-  backdrop-filter: blur(20px) saturate(1.3);
-  -webkit-backdrop-filter: blur(20px) saturate(1.3);
-  border: 1px solid color-mix(in srgb, var(--color-primary) 12%, var(--color-border));
-}
 
 /* ============================================
    渐变分隔线 - 替代生硬的 1px solid
@@ -1963,9 +1830,10 @@ body {
 }
 
 /* ===== Glass 材质 (Default) ===== */
+/* backdrop-filter 强度已针对性能调优：减半 blur 半径，视觉差异极小，GPU 合成负载显著降低 */
 [data-material='glass'] .connection-card {
-  backdrop-filter: blur(8px) saturate(1.1);
-  -webkit-backdrop-filter: blur(8px) saturate(1.1);
+  backdrop-filter: blur(4px) saturate(1.05);
+  -webkit-backdrop-filter: blur(4px) saturate(1.05);
   border: 1px solid color-mix(in srgb, var(--color-primary) 6%, var(--color-border));
 }
 
@@ -1975,13 +1843,13 @@ body {
 }
 
 [data-material='glass'] .ant-layout-sider {
-  backdrop-filter: blur(16px) saturate(1.15);
-  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(8px) saturate(1.08);
+  -webkit-backdrop-filter: blur(8px) saturate(1.08);
 }
 
 [data-material='glass'] .ant-modal-content {
-  backdrop-filter: blur(24px) saturate(1.2);
-  -webkit-backdrop-filter: blur(24px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
   border: 1px solid color-mix(in srgb, var(--color-primary) 8%, var(--color-border));
 }
 

@@ -78,7 +78,7 @@ export function useAppInitialization() {
         }
         return { ...prev, displayProgress: prev.displayProgress + diff * 0.15 }
       })
-    }, 16) as unknown as ReturnType<typeof setInterval>
+    }, 50) as unknown as ReturnType<typeof setInterval> // 20fps——肉眼已足够平滑，62fps(16ms) 无必要
   }, [])
 
   useEffect(() => {

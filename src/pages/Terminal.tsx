@@ -135,6 +135,8 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const ghostTextCellHeightRef = useRef<{ [key: string]: number }>({})
   const ghostTextStartXRef = useRef<{ [key: string]: number }>({})
   const ghostTextLineRef = useRef<{ [key: string]: number }>({})
+  // 缓存终端单元格尺寸和偏移，避免每次按键都调用 getBoundingClientRect（触发强制重排）
+  const cellMetricsCacheRef = useRef<{ [key: string]: { cellWidth: number; cellHeight: number; offsetX: number; screenOffsetTop: number; cols: number; rows: number } }>({})
   const commandTrackersRef = useRef<{ [key: string]: CommandTracker }>({})
   const initializingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
   const xtermDomRefs = useRef<{ [key: string]: { screen: HTMLElement | null } }>({})
@@ -199,27 +201,48 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
 
           const domCache = xtermDomRefs.current[key]
           const xtermScreen = domCache?.screen
-          const firstRow = xtermScreen?.querySelector('.xterm-row')
-          
+
           if (!xtermScreen) {
             updateGhostTextOverlay(key, 0, 0, '')
             return
           }
 
-          const screenRect = xtermScreen.getBoundingClientRect()
-          const containerRect = container.getBoundingClientRect()
-
+          // 使用缓存的单元格尺寸，仅在首次测量或尺寸变化时重新计算
+          // 避免每次按键都调用 getBoundingClientRect（强制同步重排）
+          const cached = cellMetricsCacheRef.current[key]
+          let actualCellWidth: number
           let actualCellHeight: number
-          if (firstRow) {
-            actualCellHeight = (firstRow as HTMLElement).getBoundingClientRect().height
+          let offsetX: number
+          let screenOffsetTop: number
+
+          if (cached && cached.cols === term.cols && cached.rows === term.rows) {
+            actualCellWidth = cached.cellWidth
+            actualCellHeight = cached.cellHeight
+            offsetX = cached.offsetX
+            screenOffsetTop = cached.screenOffsetTop
           } else {
-            actualCellHeight = screenRect.height / (term.rows || 24)
+            const screenRect = xtermScreen.getBoundingClientRect()
+            const containerRect = container.getBoundingClientRect()
+
+            const firstRow = xtermScreen.querySelector('.xterm-row')
+            if (firstRow) {
+              actualCellHeight = (firstRow as HTMLElement).getBoundingClientRect().height
+            } else {
+              actualCellHeight = screenRect.height / (term.rows || 24)
+            }
+            actualCellWidth = screenRect.width / (term.cols || 80)
+            offsetX = screenRect.left - containerRect.left
+            screenOffsetTop = screenRect.top - containerRect.top
+
+            cellMetricsCacheRef.current[key] = {
+              cellWidth: actualCellWidth,
+              cellHeight: actualCellHeight,
+              offsetX,
+              screenOffsetTop,
+              cols: term.cols,
+              rows: term.rows,
+            }
           }
-
-          const actualCellWidth = screenRect.width / (term.cols || 80)
-
-          const offsetX = screenRect.left - containerRect.left
-          const screenOffsetTop = screenRect.top - containerRect.top
 
           ghostTextCellHeightRef.current[key] = actualCellHeight
 
@@ -248,6 +271,7 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
     delete ghostTextStartXRef.current[key]
     delete ghostTextLineRef.current[key]
+    delete cellMetricsCacheRef.current[key]
     updateGhostTextOverlay(key, 0, 0, '')
   }, [updateGhostTextOverlay])
   
@@ -713,6 +737,7 @@ const handlePointerUp = () => {
                   ghostEl.style.display = 'none'
                   ghostEl.textContent = ''
                 }
+                delete cellMetricsCacheRef.current[key]
                 resizeTimer = null
               }, 100)
             })

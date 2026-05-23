@@ -1007,7 +1007,7 @@ function Connections() {
                                 fontWeight: 600,
                                 fontSize: 14,
                               }}>{conn.name}</span>
-                              <span className={`status-dot ${conn.status === 'connecting' ? 'connecting' : (isConnected(conn.id) ? 'online' : 'offline')}`} />
+                              <span className={`status-dot ${conn.status === 'connecting' ? 'connecting' : (isConnected(conn.id) || conn.status === 'online' ? 'online' : 'offline')}`} />
                             </div>
                             <div style={{ color: 'var(--color-text-secondary)', fontSize: 12, marginTop: 3, fontFamily: "'Menlo', 'Monaco', monospace", opacity: 0.85 }}>
                               {conn.username}@{conn.host}:{conn.port}

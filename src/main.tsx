@@ -132,18 +132,50 @@ function AppWithSplash() {
 
     document.addEventListener('contextmenu', handleContextMenu)
 
-    const disableAutocomplete = () => {
-      document.querySelectorAll('input:not([autocorrect="off"]), textarea:not([autocorrect="off"])').forEach((el) => {
-        el.setAttribute('autocorrect', 'off')
-      })
+    // 初始设置所有已有的 input/textarea 禁用系统自动纠正
+    document.querySelectorAll('input, textarea').forEach((el) => {
+      el.setAttribute('autocorrect', 'off')
+    })
+
+    // rAF 节流：将一帧内所有 DOM 变更合并为一次批量处理
+    // xterm.js 每写入一个字符就插入 <span>，不加节流会导致每秒数百次回调
+    let pendingMutations: MutationRecord[] = []
+    let rafId: number | null = null
+
+    const processMutations = (mutations: MutationRecord[]) => {
+      const seen = new Set<Element>()
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue
+          const el = node as HTMLElement
+          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+            if (!seen.has(el)) {
+              seen.add(el)
+              el.setAttribute('autocorrect', 'off')
+            }
+          }
+          if (el.querySelectorAll) {
+            el.querySelectorAll('input, textarea').forEach(child => {
+              if (!seen.has(child)) {
+                seen.add(child)
+                child.setAttribute('autocorrect', 'off')
+              }
+            })
+          }
+        }
+      }
     }
 
-    disableAutocomplete()
-
-    let debounceTimer: ReturnType<typeof setTimeout> | null = null
-    const observer = new MutationObserver(() => {
-      if (debounceTimer) clearTimeout(debounceTimer)
-      debounceTimer = setTimeout(disableAutocomplete, 100)
+    const observer = new MutationObserver((mutations) => {
+      pendingMutations.push(...mutations)
+      if (rafId === null) {
+        rafId = requestAnimationFrame(() => {
+          rafId = null
+          const batch = pendingMutations
+          pendingMutations = []
+          processMutations(batch)
+        })
+      }
     })
 
     observer.observe(document.body, { childList: true, subtree: true })
