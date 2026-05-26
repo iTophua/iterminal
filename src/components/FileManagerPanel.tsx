@@ -303,6 +303,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           onChange={(e) => setPathInput(e.target.value)}
           onPressEnter={onPathInputPressEnter}
           placeholder="输入路径..."
+          allowClear
           style={{
             flex: 1,
             background: 'var(--color-bg-container)',
@@ -453,6 +454,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             onChange={(e) => fileOps.setSearchQuery(e.target.value)}
             onPressEnter={fileOps.handleSearch}
             placeholder="输入文件名搜索..."
+            allowClear
             autoCorrect="off"
             style={{
               flex: 1,
@@ -709,6 +711,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
             value={fileOps.editContent}
             onChange={(e) => fileOps.setEditContent(e.target.value)}
             rows={20}
+            allowClear
             style={{
               fontFamily: 'monospace',
               fontSize: 12,

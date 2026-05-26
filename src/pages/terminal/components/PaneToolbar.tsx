@@ -189,6 +189,7 @@ export function PaneToolbar({
                 value={searchText}
                 onChange={(e) => onSearchTextChange(e.target.value)}
                 onPressEnter={() => handleSearch('next')}
+                allowClear
                 style={{ 
                   width: 180, 
                   background: 'var(--color-bg-container)', 

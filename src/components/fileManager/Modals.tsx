@@ -34,6 +34,7 @@ export function NewFileModal({
           placeholder="输入文件名"
           onPressEnter={onConfirm}
           autoFocus
+          allowClear
         />
       </Form.Item>
     </Modal>
@@ -74,6 +75,7 @@ export function NewFolderModal({
           placeholder="输入文件夹名"
           onPressEnter={onConfirm}
           autoFocus
+          allowClear
         />
       </Form.Item>
     </Modal>
@@ -114,6 +116,7 @@ export function RenameModal({
           placeholder="输入新名称"
           onPressEnter={onConfirm}
           autoFocus
+          allowClear
         />
       </Form.Item>
     </Modal>
@@ -207,6 +210,7 @@ export function ChmodModal({
           onPressEnter={onConfirm}
           autoFocus
           maxLength={4}
+          allowClear
           status={value && !/^[0-7]{1,4}$/.test(value) ? 'error' : undefined}
         />
         {value && !/^[0-7]{1,4}$/.test(value) && (
@@ -251,6 +255,7 @@ export function CompressModal({
           placeholder="output.tar.gz"
           onPressEnter={onConfirm}
           autoFocus
+          allowClear
           suffix=".tar.gz"
         />
       </Form.Item>

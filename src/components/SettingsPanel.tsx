@@ -1096,6 +1096,7 @@ ${claudeConfig}`}
                   value={licenseKey}
                   onChange={e => setLicenseKey(e.target.value)}
                   onPressEnter={handleActivate}
+                  allowClear
                 />
                 <Button 
                   type="primary" 

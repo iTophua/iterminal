@@ -775,6 +775,7 @@ function Connections() {
           value={searchText}
           onChange={e => setSearchText(e.target.value)}
           style={{ width: 240 }}
+          allowClear
         />
         <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
           新建连接
@@ -1126,18 +1127,19 @@ function Connections() {
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit} size="small" style={{ marginTop: -8 }}>
           <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入连接名称' }]} style={{ marginBottom: 12 }}>
-            <Input placeholder="连接名称" />
+            <Input placeholder="连接名称" allowClear />
           </Form.Item>
           <Row gutter={12}>
             <Col span={18}>
               <Form.Item name="host" label="主机" rules={[{ required: true, message: '请输入主机地址' }]} style={{ marginBottom: 12 }}>
-                <Input placeholder="IP 地址或主机名" />
+                <Input placeholder="IP 地址或主机名" allowClear />
               </Form.Item>
             </Col>
             <Col span={6}>
               <Form.Item name="port" label="端口" initialValue={22} style={{ marginBottom: 12 }}>
                 <Input 
                   placeholder="22" 
+                  allowClear
                   onKeyDown={(e) => {
                     if (['e', 'E', '+', '-', '.'].includes(e.key)) {
                       e.preventDefault()
@@ -1148,7 +1150,7 @@ function Connections() {
             </Col>
           </Row>
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]} style={{ marginBottom: 12 }}>
-            <Input placeholder="root" />
+            <Input placeholder="root" allowClear />
           </Form.Item>
           <Form.Item label="认证方式" style={{ marginBottom: 8 }}>
             <Radio.Group 
@@ -1169,7 +1171,7 @@ function Connections() {
           </Form.Item>
           {authType === 'password' ? (
             <Form.Item name="password" label="密码" style={{ marginBottom: 12 }}>
-              <Input.Password placeholder="输入密码" />
+              <Input.Password placeholder="输入密码" allowClear />
             </Form.Item>
           ) : (
             <Form.Item 
@@ -1180,6 +1182,7 @@ function Connections() {
             >
               <Input 
                 placeholder="~/.ssh/id_rsa"
+                allowClear
                 addonAfter={
                   <FolderOpenOutlined 
                     style={{ cursor: 'pointer', fontSize: 12 }}
@@ -1279,6 +1282,7 @@ function Connections() {
           onChange={e => setQuickImportText(e.target.value)}
           placeholder="粘贴连接信息..."
           rows={8}
+          allowClear
           style={{ marginBottom: 12 }}
         />
         
