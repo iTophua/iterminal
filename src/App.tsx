@@ -288,7 +288,7 @@ function SessionSaver() {
         await invoke('disconnect_ssh', { id: conn.connectionId }).catch(() => {})
       }
       
-      await appWindow.close().catch(() => {})
+      await appWindow.destroy().catch(() => {})
     }).then(fn => {
       unlisten = fn
     })
