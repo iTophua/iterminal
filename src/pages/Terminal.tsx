@@ -124,6 +124,11 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const resizeObserversRef = useRef<{ [key: string]: ResizeObserver }>({})
   const searchAddons = useRef<{ [key: string]: SearchAddon }>({})
   const shellIdsRef = useRef<{ [key: string]: string }>({})
+  // 终端写入队列状态（enqueueWrite 见下方定义，统一所有 invoke('write_shell') 走 FIFO 队列）
+  const writeQueueRef = useRef<{ [key: string]: string }>({})
+  const writeDrainingRef = useRef<{ [key: string]: boolean }>({})
+  // 用 ref 暴露 enqueueWrite，使定义在 enqueueWrite 之前的回调（如 selectHistoryCommand）也能使用
+  const enqueueWriteRef = useRef<(key: string, data: string) => void>(() => {})
   const apiLogVisibleRef = useRef(false)
   const shortcutSettingsRef = useRef(shortcutSettings)
   const terminalSettingsRef = useRef(terminalSettings)
@@ -361,11 +366,9 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
   const selectHistoryCommand = useCallback((command: string) => {
     if (!historyModalKey) return
     const key = historyModalKey
-    const currentShellId = shellIdsRef.current[key]
-    if (currentShellId) {
-      invoke('write_shell', { id: currentShellId, data: command }).catch(err => {
-        console.error('写入终端失败:', err)
-      })
+    if (shellIdsRef.current[key]) {
+      // 走统一写入队列，保证与随后按键的顺序（避免选历史命令后立刻回车产生乱序）
+      enqueueWriteRef.current(key, command)
       currentInputRef.current[key] = command
     }
     hideHistoryModal()
@@ -663,6 +666,55 @@ const handlePointerUp = () => {
     paneStructureRef.current = structureKey
   }, [activeConnection, activeConnection?.rootPane])
 
+  // 终端输入写入队列：保证字符严格 FIFO，避免快速输入时丢字符/乱序。
+  // 根因：原来每个按键都 fire-and-forget 一次 invoke('write_shell')，Tauri 对
+  // 并发触发的 async 命令不保证 FIFO（各自 tokio::spawn 后由调度器抢占），
+  // 快速输入时字符会乱序甚至丢失（表现为命令少一个字母）。
+  // 解决：每个 session key 一个缓冲区 + 单条串行 drain 循环，保证严格 FIFO。
+  // 附带收益：同一同步执行栈内多次 enqueue（如粘贴/IME/组合键）会合并为一次 invoke。
+  const enqueueWrite = useCallback((key: string, data: string) => {
+    if (!data) return
+    writeQueueRef.current[key] = (writeQueueRef.current[key] || '') + data
+    // 已有 drain 在跑就追加等它下一轮处理，避免并发 invoke 竞态
+    if (writeDrainingRef.current[key]) return
+    writeDrainingRef.current[key] = true
+
+    // 用微任务延迟一拍启动 drain，使同一同步执行栈内的连续 enqueue 合并成一次 invoke
+    Promise.resolve().then(async () => {
+      try {
+        // 串行 drain：上一批写完再写下一批，期间到达的输入累积进队列
+        while (true) {
+          const shellId = shellIdsRef.current[key]
+          // shellId 未就绪（重连中）时不要取走 chunk，等下次 enqueueWrite 再触发写出
+          if (!shellId) break
+          // 连接已断开/重连中：丢弃残留 chunk，避免写入孤儿 shell
+          // （onData 已拦截，此处防御从 enqueueWriteRef 直接写入的路径，如历史命令选择）
+          const [connId] = key.split('_')
+          const connState = connectedConnectionsRef.current.find(c => c.connectionId === connId)
+          if (!connState || connState.disconnected || connState.reconnecting) {
+            writeQueueRef.current[key] = ''
+            break
+          }
+          const chunk = writeQueueRef.current[key]
+          if (!chunk) break
+          writeQueueRef.current[key] = ''
+          try {
+            await invoke('write_shell', { id: shellId, data: chunk })
+          } catch (err) {
+            console.error('写入终端失败:', err)
+          }
+        }
+      } finally {
+        writeDrainingRef.current[key] = false
+      }
+    })
+  }, [])
+
+  // 暴露给定义在 enqueueWrite 之前的回调使用（如 selectHistoryCommand）
+  useEffect(() => {
+    enqueueWriteRef.current = enqueueWrite
+  }, [enqueueWrite])
+
   useEffect(() => {
     // 在 singleConnectionMode 下等待 store 数据准备好
     if (singleConnectionMode && !storeReady) {
@@ -875,9 +927,8 @@ const handlePointerUp = () => {
                 if (text) {
                   const currentShellId = shellIdsRef.current[key]
                   if (currentShellId) {
-                    invoke('write_shell', { id: currentShellId, data: text }).catch(err => {
-                      console.error('写入终端失败:', err)
-                    })
+                    // 走统一写入队列，与后续按键保持 FIFO，避免粘贴后立即输入产生乱序
+                    enqueueWrite(key, text)
                   }
                 }
               }).catch(err => {
@@ -938,9 +989,7 @@ const handlePointerUp = () => {
               if (ghost && ghost.suggestion) {
                 const currentShellId = shellIdsRef.current[key]
                 if (currentShellId) {
-                  invoke('write_shell', { id: currentShellId, data: ghost.suggestion }).catch(err => {
-                    console.error('写入终端失败:', err)
-                  })
+                  enqueueWrite(key, ghost.suggestion)
                   currentInputRef.current[key] = ghost.input + ghost.suggestion
                   ghostTextRef.current[key] = { input: ghost.input + ghost.suggestion, suggestion: '', allSuggestions: [], currentIndex: 0 }
                   updateGhostTextOverlay(key, 0, 0, '')
@@ -1001,12 +1050,7 @@ const handlePointerUp = () => {
               matchAndUpdateGhostText(key, connId, newInput)
             }
             
-            const currentShellId = shellIdsRef.current[key]
-            if (currentShellId) {
-              invoke('write_shell', { id: currentShellId, data }).catch(err => {
-                console.error('写入终端失败:', err)
-              })
-            }
+            enqueueWrite(key, data)
           })
 
           terminal.onResize(({ cols, rows }) => {
@@ -1366,6 +1410,9 @@ const handlePointerUp = () => {
     delete resizeObserversRef.current[key]
     delete commandTrackersRef.current[key]
     delete xtermDomRefs.current[key]
+    // 清理写入队列，避免会话关闭后残留状态
+    delete writeQueueRef.current[key]
+    delete writeDrainingRef.current[key]
     initializedRef.current.delete(key)
     
     if (allSessions.length === 1) {
@@ -1466,7 +1513,8 @@ const handlePointerUp = () => {
           const allSessions = getAllSessions(conn.rootPane)
           const sess = allSessions.find(s => s.id === sessId)
           if (sess?.shellId) {
-            await invoke('write_shell', { id: sess.shellId, data: text })
+            // 走统一写入队列，与后续按键保持 FIFO
+            enqueueWriteRef.current(contextMenu.sessionKey, text)
           }
         }
       }
@@ -1577,6 +1625,9 @@ const handlePointerUp = () => {
       delete resizeObserversRef.current[key]
       delete commandTrackersRef.current[key]
       delete xtermDomRefs.current[key]
+      // 清理写入队列，避免会话关闭后残留状态
+      delete writeQueueRef.current[key]
+      delete writeDrainingRef.current[key]
       initializedRef.current.delete(key)
     }
     closePane(connId, pane.id)
@@ -1782,6 +1833,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       delete resizeObserversRef.current[key]
       delete commandTrackersRef.current[key]
       delete xtermDomRefs.current[key]
+      // 清理写入队列，避免会话关闭后残留状态
+      delete writeQueueRef.current[key]
+      delete writeDrainingRef.current[key]
       initializedRef.current.delete(key)
     }
     closePane(connectionId, paneId)
@@ -1936,6 +1990,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               delete resizeObserversRef.current[key]
               delete commandTrackersRef.current[key]
               delete xtermDomRefs.current[key]
+              // 清理写入队列，避免会话关闭后残留状态
+              delete writeQueueRef.current[key]
+              delete writeDrainingRef.current[key]
               initializedRef.current.delete(key)
               if (s.shellId) {
                 await invoke('close_shell', { id: s.shellId }).catch(() => {})
