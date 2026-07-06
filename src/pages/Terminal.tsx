@@ -48,6 +48,7 @@ import { getAllSessions, getActiveSessionInPane, findPaneBySessionId, hasSplitCh
 import { getRecentConnections, recordConnectionHistory } from '../services/database'
 import { createCommandTracker, CommandTracker } from '../utils/shellOutputParser'
 import { matchShortcut } from '../utils/shortcutUtils'
+import { applyXtermImePatch } from '../utils/xtermImePatch'
 import type { Connection } from '../types/shared'
 
 interface TerminalProps {
@@ -145,6 +146,11 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const commandTrackersRef = useRef<{ [key: string]: CommandTracker }>({})
   const initializingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
   const xtermDomRefs = useRef<{ [key: string]: { screen: HTMLElement | null } }>({})
+  // ghost text 按帧合并：快速输入时多次 onData 在同一帧内只算一次 ghost text，
+  // 避免每个按键都触发同步 DOM 操作导致主线程阻塞、WKWebView 丢弃按键事件。
+  // pendingInputRef 记录最新待处理的 input；rafIdRef 保证一帧只调度一次 rAF。
+  const ghostPendingInputRef = useRef<{ [key: string]: { connId: string; input: string } }>({})
+  const ghostRafIdRef = useRef<{ [key: string]: number | null }>({})
   const messageRef = useRef(message)
   useEffect(() => { messageRef.current = message }, [message])
   
@@ -277,8 +283,32 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     delete ghostTextStartXRef.current[key]
     delete ghostTextLineRef.current[key]
     delete cellMetricsCacheRef.current[key]
+    // 取消待处理的 ghost 更新，避免清空后又被 rAF 回调重新显示
+    delete ghostPendingInputRef.current[key]
+    const rafId = ghostRafIdRef.current[key]
+    if (rafId !== null && rafId !== undefined) {
+      cancelAnimationFrame(rafId)
+      delete ghostRafIdRef.current[key]
+    }
     updateGhostTextOverlay(key, 0, 0, '')
   }, [updateGhostTextOverlay])
+
+  // 按帧合并 ghost text 更新：同一帧内多次调用只保留最新 input，rAF 回调里算一次。
+  // 这样快速输入时每帧最多触发一次 matchAndUpdateGhostText（含 DOM 操作），
+  // 避免每个按键都同步重排导致 WKWebView 丢弃后续 keydown 事件。
+  const scheduleGhostUpdate = useCallback((key: string, connId: string, input: string) => {
+    ghostPendingInputRef.current[key] = { connId, input }
+    if (ghostRafIdRef.current[key] !== null && ghostRafIdRef.current[key] !== undefined) {
+      return // 已有 rAF 待执行，最新 input 已记录，回调会读到
+    }
+    ghostRafIdRef.current[key] = requestAnimationFrame(() => {
+      ghostRafIdRef.current[key] = null
+      const pending = ghostPendingInputRef.current[key]
+      delete ghostPendingInputRef.current[key]
+      if (!pending) return
+      matchAndUpdateGhostText(key, pending.connId, pending.input)
+    })
+  }, [matchAndUpdateGhostText])
   
   const switchSuggestion = useCallback((key: string, connId: string, direction: 'next' | 'prev') => {
     const ghost = ghostTextRef.current[key]
@@ -687,14 +717,6 @@ const handlePointerUp = () => {
           const shellId = shellIdsRef.current[key]
           // shellId 未就绪（重连中）时不要取走 chunk，等下次 enqueueWrite 再触发写出
           if (!shellId) break
-          // 连接已断开/重连中：丢弃残留 chunk，避免写入孤儿 shell
-          // （onData 已拦截，此处防御从 enqueueWriteRef 直接写入的路径，如历史命令选择）
-          const [connId] = key.split('_')
-          const connState = connectedConnectionsRef.current.find(c => c.connectionId === connId)
-          if (!connState || connState.disconnected || connState.reconnecting) {
-            writeQueueRef.current[key] = ''
-            break
-          }
           const chunk = writeQueueRef.current[key]
           if (!chunk) break
           writeQueueRef.current[key] = ''
@@ -861,7 +883,10 @@ const handlePointerUp = () => {
           
           container.innerHTML = ''
           terminal.open(container)
-          
+
+          // 应用 xterm IME keyCode=229 丢字符补丁（必须在 open 后，_core 已初始化）
+          applyXtermImePatch(terminal)
+
           const xtermScreenEl = terminal.element?.querySelector('.xterm-screen') as HTMLElement | null
           if (xtermScreenEl) {
             xtermDomRefs.current[key] = { screen: xtermScreenEl }
@@ -971,14 +996,14 @@ const handlePointerUp = () => {
           terminal.onData(data => {
             const [connId] = key.split('_')
             const conn = connectedConnectionsRef.current.find(c => c.connectionId === connId)
-            
+
             if (conn?.disconnected && !conn.reconnecting) {
               if (data === '\r' || data === '\n') {
                 handleReconnect(connId)
               }
               return
             }
-            
+
             if (conn?.reconnecting) {
               return
             }
@@ -1031,9 +1056,7 @@ const handlePointerUp = () => {
                 if (newInput === '') {
                   clearGhostText(key)
                 } else {
-                  requestAnimationFrame(() => {
-                    matchAndUpdateGhostText(key, connId, newInput)
-                  })
+                  scheduleGhostUpdate(key, connId, newInput)
                 }
               }
             }
@@ -1047,7 +1070,12 @@ const handlePointerUp = () => {
               }
               const newInput = currentInput + data
               currentInputRef.current[key] = newInput
-              matchAndUpdateGhostText(key, connId, newInput)
+              // ⚠️ 异步 + 按帧合并更新 ghost text：matchAndUpdateGhostText 会触发同步 DOM 写入
+              // （getBoundingClientRect 强制重排 + style 修改）。若同步执行会阻塞主线程，
+              // WKWebView 在高频 keydown 风暴中会合并/丢弃后续按键事件，
+              // 表现为快速输入时随机字符丢失（如 grep 的 e、mysql 的 s、docker 的 r）。
+              // scheduleGhostUpdate 把 DOM 操作推迟到下一帧，且同一帧多次输入只算一次。
+              scheduleGhostUpdate(key, connId, newInput)
             }
             
             enqueueWrite(key, data)
@@ -1101,7 +1129,7 @@ const handlePointerUp = () => {
               }
 
               term.write(event.payload)
-              
+
               const tracker = commandTrackersRef.current[key]
               if (tracker && typeof event.payload === 'string') {
                 const result = tracker.processOutput(event.payload, term)
@@ -1252,7 +1280,7 @@ const handlePointerUp = () => {
             }
 
             term.write(event.payload)
-            
+
             const tracker = commandTrackersRef.current[key]
             if (tracker && typeof event.payload === 'string') {
               const result = tracker.processOutput(event.payload, term)
@@ -1413,6 +1441,13 @@ const handlePointerUp = () => {
     // 清理写入队列，避免会话关闭后残留状态
     delete writeQueueRef.current[key]
     delete writeDrainingRef.current[key]
+    // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
+    delete ghostPendingInputRef.current[key]
+    const ghostRafId = ghostRafIdRef.current[key]
+    if (ghostRafId !== null && ghostRafId !== undefined) {
+      cancelAnimationFrame(ghostRafId)
+    }
+    delete ghostRafIdRef.current[key]
     initializedRef.current.delete(key)
     
     if (allSessions.length === 1) {
@@ -1628,6 +1663,13 @@ const handlePointerUp = () => {
       // 清理写入队列，避免会话关闭后残留状态
       delete writeQueueRef.current[key]
       delete writeDrainingRef.current[key]
+      // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
+      delete ghostPendingInputRef.current[key]
+      const ghostRafId = ghostRafIdRef.current[key]
+      if (ghostRafId !== null && ghostRafId !== undefined) {
+        cancelAnimationFrame(ghostRafId)
+      }
+      delete ghostRafIdRef.current[key]
       initializedRef.current.delete(key)
     }
     closePane(connId, pane.id)
@@ -1836,6 +1878,13 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       // 清理写入队列，避免会话关闭后残留状态
       delete writeQueueRef.current[key]
       delete writeDrainingRef.current[key]
+      // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
+      delete ghostPendingInputRef.current[key]
+      const ghostRafId = ghostRafIdRef.current[key]
+      if (ghostRafId !== null && ghostRafId !== undefined) {
+        cancelAnimationFrame(ghostRafId)
+      }
+      delete ghostRafIdRef.current[key]
       initializedRef.current.delete(key)
     }
     closePane(connectionId, paneId)
@@ -1993,6 +2042,13 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               // 清理写入队列，避免会话关闭后残留状态
               delete writeQueueRef.current[key]
               delete writeDrainingRef.current[key]
+              // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
+              delete ghostPendingInputRef.current[key]
+              const ghostRafId = ghostRafIdRef.current[key]
+              if (ghostRafId !== null && ghostRafId !== undefined) {
+                cancelAnimationFrame(ghostRafId)
+              }
+              delete ghostRafIdRef.current[key]
               initializedRef.current.delete(key)
               if (s.shellId) {
                 await invoke('close_shell', { id: s.shellId }).catch(() => {})
