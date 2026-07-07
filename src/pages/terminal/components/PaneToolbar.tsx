@@ -9,6 +9,7 @@ import {
   LeftOutlined,
   RightOutlined,
   ToolOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { useCallback, useState } from 'react'
 import { SearchAddon } from '@xterm/addon-search'
@@ -30,6 +31,8 @@ interface PaneToolbarProps {
   onCloseSplit?: () => void
   onClear: () => void
   onExport: () => void
+  broadcastEnabled: boolean
+  onToggleBroadcast: () => void
 }
 
 export function PaneToolbar({
@@ -48,6 +51,8 @@ export function PaneToolbar({
   onCloseSplit,
   onClear,
   onExport,
+  broadcastEnabled,
+  onToggleBroadcast,
 }: PaneToolbarProps) {
   const [isHovered, setIsHovered] = useState(false)
 
@@ -140,6 +145,14 @@ export function PaneToolbar({
                 onClick={onToggleSearch}
               >
                 <SearchOutlined />
+              </span>
+            </Tooltip>
+            <Tooltip title={broadcastEnabled ? '输入广播：已开启（击键同步到所有终端）' : '输入广播：关闭'}>
+              <span
+                style={{ color: broadcastEnabled ? 'var(--color-primary)' : 'var(--color-text-tertiary)', cursor: 'pointer', padding: '2px 4px', fontSize: 12 }}
+                onClick={onToggleBroadcast}
+              >
+                <ThunderboltOutlined />
               </span>
             </Tooltip>
             <div style={{ width: 1, height: 12, background: 'var(--color-border)', margin: '0 2px' }} />

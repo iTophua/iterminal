@@ -22,6 +22,7 @@ import {
   NewFileModal,
   NewFolderModal,
   RenameModal,
+  CopyMoveModal,
   DeleteModal,
   ChmodModal,
   CompressModal,
@@ -541,10 +542,16 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
           fileOps.setChmodVisible(true)
           setContextMenuVisible(false)
         }}
+        onCopyTo={() => {
+          fileOps.handleCopy()
+          setContextMenuVisible(false)
+        }}
+        onMoveTo={() => {
+          fileOps.handleMove()
+          setContextMenuVisible(false)
+        }}
         onDownload={() => {
-          if (selectedNode && !selectedNode.isDirectory) {
-            transfer.handleDownload(selectedNode.path, selectedNode.title)
-          }
+          transfer.handleDownloadSelected()
           setContextMenuVisible(false)
         }}
         onUpload={() => {
@@ -608,6 +615,18 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         onCancel={() => {
           fileOps.setRenameVisible(false)
           fileOps.setRenameValue('')
+        }}
+      />
+
+      <CopyMoveModal
+        visible={fileOps.moveVisible}
+        mode={fileOps.moveMode}
+        targetPath={fileOps.moveTargetPath}
+        onTargetPathChange={fileOps.setMoveTargetPath}
+        onConfirm={fileOps.handleConfirmMove}
+        onCancel={() => {
+          fileOps.setMoveVisible(false)
+          fileOps.setMoveTargetPath('')
         }}
       />
 

@@ -14,6 +14,8 @@ import {
   FileZipOutlined,
   UnorderedListOutlined,
   DeleteOutlined,
+  DragOutlined,
+  SnippetsOutlined,
 } from '@ant-design/icons'
 import { TreeNode } from './types'
 import { isCompressedFile } from './utils'
@@ -46,6 +48,8 @@ interface ContextMenuProps {
   onEdit: () => void
   onRename: () => void
   onChmod: () => void
+  onCopyTo: () => void
+  onMoveTo: () => void
   onDownload: () => void
   onUpload: () => void
   onUploadFolder: () => void
@@ -68,6 +72,8 @@ export function ContextMenu({
   onEdit,
   onRename,
   onChmod,
+  onCopyTo,
+  onMoveTo,
   onDownload,
   onUpload,
   onUploadFolder,
@@ -101,6 +107,8 @@ export function ContextMenu({
       type: 'item',
     },
     { key: 'rename', label: '重命名', icon: <FontColorsOutlined />, onClick: onRename, type: 'item' },
+    { key: 'copyTo', label: '复制到...', icon: <SnippetsOutlined />, onClick: onCopyTo, type: 'item' },
+    { key: 'moveTo', label: '移动到...', icon: <DragOutlined />, onClick: onMoveTo, type: 'item' },
     { key: 'chmod', label: '修改权限', icon: <LockOutlined />, onClick: onChmod, type: 'item' },
     { type: 'divider' },
     {
@@ -108,7 +116,6 @@ export function ContextMenu({
       label: '下载',
       icon: <DownloadOutlined />,
       onClick: onDownload,
-      disabled: selectedNode?.isDirectory,
       type: 'item',
     },
     { key: 'upload', label: '上传文件', icon: <UploadOutlined />, onClick: onUpload, type: 'item' },

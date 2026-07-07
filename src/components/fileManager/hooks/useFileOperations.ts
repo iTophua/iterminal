@@ -39,6 +39,11 @@ export function useFileOperations({
   const [compressVisible, setCompressVisible] = useState(false)
   const [compressName, setCompressName] = useState('')
 
+  // 复制/移动共用对话框：moveMode 区分操作类型
+  const [moveVisible, setMoveVisible] = useState(false)
+  const [moveMode, setMoveMode] = useState<'copy' | 'move'>('copy')
+  const [moveTargetPath, setMoveTargetPath] = useState('')
+
   const [previewVisible, setPreviewVisible] = useState(false)
   const [previewContent, setPreviewContent] = useState('')
   const [previewFile, setPreviewFile] = useState<{ name: string; path: string } | null>(null)
@@ -116,6 +121,57 @@ export function useFileOperations({
       message.error(`重命名失败: ${err}`)
     }
   }, [connectionId, message, renameValue, refreshCurrent, selectedNode])
+
+  // 打开复制对话框，预填当前目录作为目标
+  const handleCopy = useCallback(() => {
+    if (!selectedNode) {
+      message.warning('请先选择要复制的文件或文件夹')
+      return
+    }
+    setMoveMode('copy')
+    setMoveTargetPath(currentPath)
+    setMoveVisible(true)
+  }, [selectedNode, currentPath, message])
+
+  // 打开移动对话框（移动本质是 rename，支持跨目录）
+  const handleMove = useCallback(() => {
+    if (!selectedNode) {
+      message.warning('请先选择要移动的文件或文件夹')
+      return
+    }
+    setMoveMode('move')
+    setMoveTargetPath(currentPath)
+    setMoveVisible(true)
+  }, [selectedNode, currentPath, message])
+
+  // 确认复制/移动
+  const handleConfirmMove = useCallback(async () => {
+    const targetDir = moveTargetPath.trim()
+    if (!targetDir || !selectedNode) return
+    const destPath = targetDir.replace(/\/$/, '') + '/' + selectedNode.title
+    try {
+      if (moveMode === 'copy') {
+        await invoke('copy_path', {
+          connectionId,
+          sourcePath: selectedNode.path,
+          destPath,
+        })
+        message.success('复制成功')
+      } else {
+        await invoke('rename_file', {
+          connectionId,
+          oldPath: selectedNode.path,
+          newPath: destPath,
+        })
+        message.success('移动成功')
+      }
+      setMoveVisible(false)
+      setMoveTargetPath('')
+      refreshCurrent()
+    } catch (err) {
+      message.error(`${moveMode === 'copy' ? '复制' : '移动'}失败: ${err}`)
+    }
+  }, [connectionId, message, moveMode, moveTargetPath, refreshCurrent, selectedNode])
 
   const handleDelete = useCallback(async () => {
     const nodesToDelete = selectedNodes.length > 0 ? selectedNodes : (selectedNodeRef.current ? [selectedNodeRef.current] : [])
@@ -410,6 +466,14 @@ export function useFileOperations({
     handleCreateFile,
     handleCreateFolder,
     handleRename,
+    handleCopy,
+    handleMove,
+    handleConfirmMove,
+    moveVisible,
+    setMoveVisible,
+    moveMode,
+    moveTargetPath,
+    setMoveTargetPath,
     handleDelete,
     handleBatchDownload,
     handleChmod,

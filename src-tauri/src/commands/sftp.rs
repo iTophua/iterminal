@@ -269,6 +269,73 @@ pub async fn rename_file(
     Ok(true)
 }
 
+/// 远程复制文件或目录（递归）。
+/// SFTP 协议无原生 copy，需 read 源 + write 目标实现。
+#[tauri::command]
+pub async fn copy_path(
+    connection_id: String,
+    source_path: String,
+    dest_path: String,
+) -> Result<bool, String> {
+    let source_path = validate_path(&source_path)?;
+    let dest_path = validate_path(&dest_path)?;
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    copy_remote_recursive(&sftp, &source_path, &dest_path)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(true)
+}
+
+/// 递归复制远程路径（文件或目录）
+async fn copy_remote_recursive(
+    sftp: &Arc<SftpSession>,
+    source: &str,
+    dest: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use russh_sftp::protocol::OpenFlags;
+
+    // 判断源是文件还是目录
+    let entries = match sftp.read_dir(source).await {
+        Ok(e) => e,
+        Err(_) => {
+            // read_dir 失败说明是文件（或不存在），按文件处理
+            let mut src_file = sftp.open_with_flags(source, OpenFlags::READ).await?;
+            let mut dest_file = sftp
+                .open_with_flags(dest, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+                .await?;
+            tokio::io::copy(&mut src_file, &mut dest_file).await?;
+            src_file.shutdown().await.ok();
+            dest_file.shutdown().await.ok();
+            return Ok(());
+        }
+    };
+
+    // 源是目录：创建目标目录，递归复制子项
+    sftp.create_dir(dest).await.ok();
+
+    for entry in entries {
+        let name = entry.file_name();
+        if name == "." || name == ".." {
+            continue;
+        }
+        let src_sub = if source.ends_with('/') {
+            format!("{}{}", source, name)
+        } else {
+            format!("{}/{}", source, name)
+        };
+        let dest_sub = if dest.ends_with('/') {
+            format!("{}{}", dest, name)
+        } else {
+            format!("{}/{}", dest, name)
+        };
+        Box::pin(copy_remote_recursive(sftp, &src_sub, &dest_sub)).await?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn delete_file(connection_id: String, path: String) -> Result<bool, String> {
     let path = validate_path(&path)?;
@@ -720,6 +787,245 @@ pub async fn download_file(
     });
 
     Ok(task_id)
+}
+
+/// 递归统计远程目录的文件数和总大小
+async fn count_remote_recursive(
+    sftp: &Arc<SftpSession>,
+    remote: &str,
+) -> (u64, u64) {
+    let mut count = 0u64;
+    let mut size = 0u64;
+    let entries = match sftp.read_dir(remote).await {
+        Ok(e) => e,
+        Err(_) => return (0, 0),
+    };
+    for entry in entries {
+        let metadata = entry.metadata();
+        let name = entry.file_name();
+        if name == "." || name == ".." {
+            continue;
+        }
+        let child_path = if remote.ends_with('/') {
+            format!("{}{}", remote, name)
+        } else {
+            format!("{}/{}", remote, name)
+        };
+        if metadata.is_dir() {
+            let (c, s) = Box::pin(count_remote_recursive(sftp, &child_path)).await;
+            count += c;
+            size += s;
+        } else {
+            count += 1;
+            size += metadata.size.unwrap_or(0);
+        }
+    }
+    (count, size)
+}
+
+/// 下载整个远程文件夹到本地（递归），带进度、暂停、取消
+#[tauri::command]
+pub async fn download_folder(
+    connection_id: String,
+    remote_path: String,
+    local_path: String,
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<TransferResult, String> {
+    let remote_path = validate_path(&remote_path)?;
+    let sftp = get_sftp_session(&connection_id).await?;
+    let task_id_clone = task_id.clone();
+    let app_clone = app.clone();
+
+    // 先递归统计总数与总大小（用于进度条）
+    let (total_files, total_size) = count_remote_recursive(&sftp, &remote_path).await;
+
+    let _ = app.emit(
+        &format!("transfer-progress-{}", task_id_clone),
+        serde_json::json!({
+            "transferred": 0,
+            "total": total_size,
+            "totalFiles": total_files,
+            "completedFiles": 0,
+            "percentage": 0
+        }),
+    );
+
+    tokio::spawn(async move {
+        use russh_sftp::protocol::OpenFlags;
+        use tauri::Emitter;
+
+        let mut completed_files = 0u64;
+        let mut transferred = 0u64;
+        let mut cancelled = false;
+        let mut last_progress_update = std::time::Instant::now();
+
+        fn download_dir_recursive<'a>(
+            sftp: &'a Arc<SftpSession>,
+            remote: &'a str,
+            local: &'a std::path::Path,
+            transferred: &'a mut u64,
+            completed_files: &'a mut u64,
+            total_files: u64,
+            total_size: u64,
+            task_id: &'a str,
+            app: &'a tauri::AppHandle,
+            last_progress_update: &'a mut std::time::Instant,
+            cancelled: &'a mut bool,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+            Box::pin(async move {
+                if TRANSFER_CANCELLED
+                    .read()
+                    .await
+                    .get(task_id)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    *cancelled = true;
+                    return Ok(());
+                }
+
+                // 创建本地目录
+                tokio::fs::create_dir_all(local)
+                    .await
+                    .map_err(|e| format!("Failed to create local directory: {}", e))?;
+
+                let entries = sftp
+                    .read_dir(remote)
+                    .await
+                    .map_err(|e| format!("Failed to read remote directory: {}", e))?;
+
+                for entry in entries {
+                    if *cancelled
+                        || TRANSFER_CANCELLED
+                            .read()
+                            .await
+                            .get(task_id)
+                            .copied()
+                            .unwrap_or(false)
+                    {
+                        *cancelled = true;
+                        break;
+                    }
+
+                    // 暂停处理
+                    loop {
+                        if TRANSFER_PAUSED
+                            .read()
+                            .await
+                            .get(task_id)
+                            .copied()
+                            .unwrap_or(false)
+                        {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let name = entry.file_name();
+                    if name == "." || name == ".." {
+                        continue;
+                    }
+                    let remote_sub = if remote.ends_with('/') {
+                        format!("{}{}", remote, name)
+                    } else {
+                        format!("{}/{}", remote, name)
+                    };
+                    let local_sub = local.join(&name);
+
+                    let metadata = entry.metadata();
+                    if metadata.is_dir() {
+                        download_dir_recursive(
+                            sftp,
+                            &remote_sub,
+                            &local_sub,
+                            transferred,
+                            completed_files,
+                            total_files,
+                            total_size,
+                            task_id,
+                            app,
+                            last_progress_update,
+                            cancelled,
+                        )
+                        .await?;
+                    } else {
+                        let mut remote_file = sftp
+                            .open_with_flags(&remote_sub, OpenFlags::READ)
+                            .await
+                            .map_err(|e| format!("Failed to open remote file: {}", e))?;
+
+                        let file_size = metadata.size.unwrap_or(0);
+
+                        let mut local_file = tokio::fs::File::create(&local_sub)
+                            .await
+                            .map_err(|e| format!("Failed to create local file: {}", e))?;
+
+                        tokio::io::copy(&mut remote_file, &mut local_file)
+                            .await
+                            .map_err(|e| format!("Failed to copy file: {}", e))?;
+
+                        remote_file.shutdown().await.ok();
+
+                        *transferred += file_size;
+                        *completed_files += 1;
+
+                        if last_progress_update.elapsed().as_millis() > 200 {
+                            let _ = app.emit(
+                                &format!("transfer-progress-{}", task_id),
+                                serde_json::json!({
+                                    "transferred": *transferred,
+                                    "total": total_size,
+                                    "totalFiles": total_files,
+                                    "completedFiles": *completed_files,
+                                    "percentage": if total_size > 0 { (*transferred * 100 / total_size) as u8 } else { 0 }
+                                }),
+                            );
+                            *last_progress_update = std::time::Instant::now();
+                        }
+                    }
+                }
+
+                Ok(())
+            })
+        }
+
+        let result = download_dir_recursive(
+            &sftp,
+            &remote_path,
+            std::path::Path::new(&local_path),
+            &mut transferred,
+            &mut completed_files,
+            total_files,
+            total_size,
+            &task_id_clone,
+            &app_clone,
+            &mut last_progress_update,
+            &mut cancelled,
+        )
+        .await;
+
+        TRANSFER_CANCELLED.write().await.remove(&task_id_clone);
+        TRANSFER_PAUSED.write().await.remove(&task_id_clone);
+
+        let _ = app_clone.emit(
+            &format!("transfer-complete-{}", task_id_clone),
+            serde_json::json!({
+                "success": result.is_ok() && !cancelled,
+                "bytes_transferred": transferred,
+                "cancelled": cancelled,
+                "error": result.err().map(|e| e.to_string())
+            }),
+        );
+    });
+
+    Ok(TransferResult {
+        success: true,
+        bytes_transferred: 0,
+        error: None,
+        cancelled: false,
+    })
 }
 
 #[tauri::command]

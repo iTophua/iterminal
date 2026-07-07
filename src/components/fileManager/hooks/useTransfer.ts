@@ -431,22 +431,118 @@ export function useTransfer({
     [connectionId, connection, message, calculateSpeed, setupTransferTimeout]
   )
 
+  const handleDownloadFolder = useCallback(
+    async (remotePath: string, folderName: string) => {
+      try {
+        // 选择本地目标目录（文件夹下载到该目录下，自动创建同名子目录）
+        const localDir = await open({ directory: true, multiple: false, title: '选择保存位置' })
+        if (!localDir) return
+
+        // 本地最终路径 = 选择的目录 / 文件夹名
+        const savePath = `${localDir}/${folderName}`
+        const taskId = generateTaskId()
+        const now = Date.now()
+        const conn = connection
+
+        useTransferStore.getState().addRecord({
+          id: taskId,
+          connectionId,
+          connectionName: conn?.name || 'Unknown',
+          connectionHost: conn?.host || '',
+          type: 'download',
+          localPath: savePath,
+          remotePath,
+          fileName: folderName,
+          fileSize: 0,
+          transferred: 0,
+          status: 'pending',
+          startTime: now,
+        })
+
+        useTransferStore.getState().updateRecord(taskId, { status: 'transferring' })
+
+        listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
+          `transfer-progress-${taskId}`,
+          (event) => {
+            const state = useTransferStore.getState()
+            const record = state.records.find(r => r.id === taskId)
+            const speed = record ? calculateSpeed(event.payload.transferred, record.startTime) : 0
+            state.updateProgress(
+              taskId,
+              event.payload.transferred,
+              event.payload.total,
+              event.payload.totalFiles,
+              event.payload.completedFiles,
+              speed
+            )
+          }
+        ).then((unlistenProgress) => {
+          listen<{ success: boolean; cancelled: boolean; error?: string }>(
+            `transfer-complete-${taskId}`,
+            (event) => {
+              unlistenProgress()
+              const result = event.payload
+              if (result.cancelled) {
+                useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+              } else if (result.success) {
+                useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+                message.success(`下载完成: ${folderName}`)
+              } else {
+                useTransferStore.getState().updateRecord(taskId, {
+                  status: 'failed',
+                  error: result.error || 'Unknown error',
+                })
+                message.error(`下载失败: ${result.error}`)
+              }
+            }
+          ).then((unlistenComplete) => {
+            const failWithError = (err: string) => {
+              useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: err })
+              message.error(`下载失败: ${err}`)
+            }
+
+            const timeoutInterval = setupTransferTimeout(taskId, unlistenProgress, unlistenComplete, failWithError)
+
+            invoke('download_folder', {
+              taskId,
+              connectionId,
+              remotePath,
+              localPath: savePath,
+            }).catch((err) => {
+              clearInterval(timeoutInterval)
+              unlistenProgress()
+              unlistenComplete()
+              useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
+              message.error(`下载失败: ${err}`)
+            }).finally(() => {
+              clearInterval(timeoutInterval)
+            })
+          })
+        })
+      } catch (err) {
+        console.error('下载文件夹失败:', err)
+      }
+    },
+    [connectionId, connection, message, calculateSpeed, setupTransferTimeout]
+  )
+
   const handleDownloadSelected = useCallback(() => {
     if (!selectedNode) {
       message.warning('请先选择要下载的文件')
       return
     }
     if (selectedNode.isDirectory) {
-      message.warning('暂不支持下载文件夹，请选择文件')
+      handleDownloadFolder(selectedNode.path, selectedNode.title)
       return
     }
     handleDownload(selectedNode.path, selectedNode.title)
-  }, [selectedNode, handleDownload, message])
+  }, [selectedNode, handleDownload, handleDownloadFolder, message])
 
   return {
     handleUploadFile,
     handleUploadFolder,
     handleDownload,
+    handleDownloadFolder,
     handleDownloadSelected,
     uploadFile,
     uploadFolder,

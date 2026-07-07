@@ -20,6 +20,7 @@ import {
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -70,6 +71,7 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const navigate = useNavigate()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
+  const broadcastEnabled = useTerminalStore(state => state.broadcastEnabled)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
@@ -134,6 +136,8 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const shortcutSettingsRef = useRef(shortcutSettings)
   const terminalSettingsRef = useRef(terminalSettings)
   const connectedConnectionsRef = useRef(connectedConnections)
+  // 广播状态 ref：onData 闭包里读取，避免闭包持有旧值
+  const broadcastEnabledRef = useRef(broadcastEnabled)
   const currentInputRef = useRef<{ [key: string]: string }>({})
   const ghostTextRef = useRef<{ [key: string]: { input: string, suggestion: string, allSuggestions: string[], currentIndex: number } }>({})
   const ghostTextOverlayRef = useRef<{ [key: string]: { top: number, left: number, text: string } }>({})
@@ -340,6 +344,10 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
   useEffect(() => {
     connectedConnectionsRef.current = connectedConnections
   }, [connectedConnections])
+
+  useEffect(() => {
+    broadcastEnabledRef.current = broadcastEnabled
+  }, [broadcastEnabled])
   
   const {
     isFullscreen,
@@ -878,6 +886,8 @@ const handlePointerUp = () => {
 
           const fitAddon = new FitAddon()
           terminal.loadAddon(fitAddon)
+          // 终端链接检测：URL/IP/路径自动识别，Cmd/Ctrl+点击用系统默认程序打开
+          terminal.loadAddon(new WebLinksAddon())
           
           const ghostOverlayElement = ghostTextElementsRef.current[key]
           
@@ -1079,6 +1089,20 @@ const handlePointerUp = () => {
             }
             
             enqueueWrite(key, data)
+
+            // 输入广播：开启后把同样输入同步发送到所有其它活跃终端。
+            // 只复用 enqueueWrite（纯字符写入），ghost text/命令追踪仅作用于源终端。
+            // 跳过断开/重连中的连接，避免广播到死会话。
+            if (broadcastEnabledRef.current) {
+              for (const otherKey of Object.keys(shellIdsRef.current)) {
+                if (otherKey === key) continue
+                const [otherConnId] = otherKey.split('_')
+                const otherConn = connectedConnectionsRef.current.find(c => c.connectionId === otherConnId)
+                if (otherConn?.disconnected || otherConn?.reconnecting) continue
+                if (!shellIdsRef.current[otherKey]) continue
+                enqueueWrite(otherKey, data)
+              }
+            }
           })
 
           terminal.onResize(({ cols, rows }) => {

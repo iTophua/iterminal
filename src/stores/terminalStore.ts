@@ -174,6 +174,8 @@ interface TerminalState {
   connectionsLoading: boolean
   // 侧边栏折叠状态
   sidebarCollapsed: boolean
+  // 输入广播：开启后，在一个终端的输入会同步发送到所有其它活跃终端
+  broadcastEnabled: boolean
   // 文件管理面板显示状态（按连接ID）
   fileManagerVisible: { [connectionId: string]: boolean }
   // 传输管理面板显示状态（按连接ID）
@@ -228,6 +230,9 @@ interface TerminalState {
   // 获取当前激活的会话
   getActiveSession: () => Session | null
   setSidebarCollapsed: (collapsed: boolean) => void
+  // 切换输入广播开关
+  toggleBroadcast: () => void
+  setBroadcastEnabled: (enabled: boolean) => void
   reorderConnections: (oldIndex: number, newIndex: number) => void
 
   splitPane: (connectionId: string, paneId: string, direction: 'horizontal' | 'vertical', newPaneId: string, shellId: string) => void
@@ -307,6 +312,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   allConnections: [],
   connectionsLoading: true,
   sidebarCollapsed: false,
+  broadcastEnabled: false,
   fileManagerVisible: {},
   transferManagerVisible: {},
   transferTasks: {},
@@ -641,6 +647,14 @@ restoreConnection: (connection, rootPane) => {
 
   setSidebarCollapsed: (collapsed: boolean) => {
     set({ sidebarCollapsed: collapsed })
+  },
+
+  toggleBroadcast: () => {
+    set((state) => ({ broadcastEnabled: !state.broadcastEnabled }))
+  },
+
+  setBroadcastEnabled: (enabled: boolean) => {
+    set({ broadcastEnabled: enabled })
   },
 
   reorderConnections: (oldIndex: number, newIndex: number) => {

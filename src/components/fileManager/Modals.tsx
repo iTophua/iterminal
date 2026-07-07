@@ -91,6 +91,46 @@ interface RenameModalProps {
   loading?: boolean
 }
 
+interface CopyMoveModalProps {
+  visible: boolean
+  mode: 'copy' | 'move'
+  targetPath: string
+  onTargetPathChange: (path: string) => void
+  onConfirm: () => void
+  onCancel: () => void
+}
+
+export function CopyMoveModal({
+  visible,
+  mode,
+  targetPath,
+  onTargetPathChange,
+  onConfirm,
+  onCancel,
+}: CopyMoveModalProps) {
+  return (
+    <Modal
+      title={mode === 'copy' ? '复制到...' : '移动到...'}
+      open={visible}
+      onOk={onConfirm}
+      onCancel={onCancel}
+      okText={mode === 'copy' ? '复制' : '移动'}
+      cancelText="取消"
+    >
+      <Form.Item label="目标目录" style={{ marginTop: 16 }}>
+        <Input
+          value={targetPath}
+          onChange={e => onTargetPathChange(e.target.value)}
+          placeholder="输入目标目录的绝对路径"
+          onPressEnter={onConfirm}
+          autoFocus
+          allowClear
+        />
+      </Form.Item>
+    </Modal>
+  )
+}
+
 export function RenameModal({
   visible,
   currentValue,

@@ -99,6 +99,8 @@ export const LeafPane = React.memo(function LeafPane({
   const splitPane = useTerminalStore((state: any) => state.splitPane)
   const addSessionToPane = useTerminalStore((state: any) => state.addSessionToPane)
   const setActiveSessionInPane = useTerminalStore((state: any) => state.setActiveSessionInPane)
+  const broadcastEnabled = useTerminalStore((state: any) => state.broadcastEnabled)
+  const toggleBroadcast = useTerminalStore((state: any) => state.toggleBroadcast)
 
   const activeSessRaw = pane.activeSessionId
     ? pane.sessions.find(s => s.id === pane.activeSessionId)
@@ -302,6 +304,8 @@ export const LeafPane = React.memo(function LeafPane({
         onCloseSplit={handleCloseSplit}
         onClear={handleClear}
         onExport={handleExport}
+        broadcastEnabled={broadcastEnabled}
+        onToggleBroadcast={toggleBroadcast}
       />
 
       <Tabs
