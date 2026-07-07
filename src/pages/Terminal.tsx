@@ -1092,13 +1092,15 @@ const handlePointerUp = () => {
 
             // 输入广播：开启后把同样输入同步发送到所有其它活跃终端。
             // 只复用 enqueueWrite（纯字符写入），ghost text/命令追踪仅作用于源终端。
-            // 跳过断开/重连中的连接，避免广播到死会话。
+            // 只广播到「存在于 connectedConnections 且未断开/重连」的连接，
+            // 避免广播到已关闭但 shellIdsRef 残留 key 的死会话。
             if (broadcastEnabledRef.current) {
               for (const otherKey of Object.keys(shellIdsRef.current)) {
                 if (otherKey === key) continue
                 const [otherConnId] = otherKey.split('_')
                 const otherConn = connectedConnectionsRef.current.find(c => c.connectionId === otherConnId)
-                if (otherConn?.disconnected || otherConn?.reconnecting) continue
+                // 必须存在且状态正常才广播
+                if (!otherConn || otherConn.disconnected || otherConn.reconnecting) continue
                 if (!shellIdsRef.current[otherKey]) continue
                 enqueueWrite(otherKey, data)
               }

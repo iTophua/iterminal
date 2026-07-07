@@ -281,39 +281,59 @@ pub async fn copy_path(
     let dest_path = validate_path(&dest_path)?;
     let sftp = get_sftp_session(&connection_id).await?;
 
-    copy_remote_recursive(&sftp, &source_path, &dest_path)
-        .await
-        .map_err(|e| e.to_string())?;
+    copy_remote_recursive(&sftp, &source_path, &dest_path).await?;
 
     Ok(true)
 }
 
-/// 递归复制远程路径（文件或目录）
+/// 递归复制远程路径（文件或目录）。
+/// 用 metadata 明确判断类型，避免依赖 read_dir 失败的隐式假设。
+/// 防止 dest 位于 source 子树时无限递归。
 async fn copy_remote_recursive(
     sftp: &Arc<SftpSession>,
     source: &str,
     dest: &str,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<(), String> {
     use russh_sftp::protocol::OpenFlags;
 
-    // 判断源是文件还是目录
-    let entries = match sftp.read_dir(source).await {
-        Ok(e) => e,
-        Err(_) => {
-            // read_dir 失败说明是文件（或不存在），按文件处理
-            let mut src_file = sftp.open_with_flags(source, OpenFlags::READ).await?;
-            let mut dest_file = sftp
-                .open_with_flags(dest, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
-                .await?;
-            tokio::io::copy(&mut src_file, &mut dest_file).await?;
-            src_file.shutdown().await.ok();
-            dest_file.shutdown().await.ok();
-            return Ok(());
-        }
-    };
+    // 防止复制到自身或自身子目录（无限递归）
+    let source_norm = source.trim_end_matches('/');
+    let dest_norm = dest.trim_end_matches('/');
+    if dest_norm == source_norm || dest_norm.starts_with(&format!("{}/", source_norm)) {
+        return Err("目标路径不能是源路径或其子目录".to_string());
+    }
 
-    // 源是目录：创建目标目录，递归复制子项
+    // 用 metadata 明确判断类型（read_dir 失败可能是因为不存在，不能等同于"是文件"）
+    let metadata = sftp
+        .metadata(source)
+        .await
+        .map_err(|e| format!("无法读取源路径信息 '{}': {}", source, e))?;
+
+    if !metadata.is_dir() {
+        // 文件：read 源 + write 目标
+        let mut src_file = sftp
+            .open_with_flags(source, OpenFlags::READ)
+            .await
+            .map_err(|e| format!("打开源文件失败: {}", e))?;
+        let mut dest_file = sftp
+            .open_with_flags(dest, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+            .await
+            .map_err(|e| format!("创建目标文件失败: {}", e))?;
+        tokio::io::copy(&mut src_file, &mut dest_file)
+            .await
+            .map_err(|e| format!("复制文件内容失败: {}", e))?;
+        src_file.shutdown().await.ok();
+        dest_file.shutdown().await.ok();
+        return Ok(());
+    }
+
+    // 目录：创建目标目录，递归复制子项
     sftp.create_dir(dest).await.ok();
+
+    let entries = sftp
+        .read_dir(source)
+        .await
+        .map_err(|e| format!("读取源目录失败: {}", e))?;
 
     for entry in entries {
         let name = entry.file_name();
@@ -789,17 +809,18 @@ pub async fn download_file(
     Ok(task_id)
 }
 
-/// 递归统计远程目录的文件数和总大小
+/// 递归统计远程目录的文件数和总大小。
+/// 路径不存在或无权限时返回错误（避免静默下载 0 文件误导用户）。
 async fn count_remote_recursive(
     sftp: &Arc<SftpSession>,
     remote: &str,
-) -> (u64, u64) {
+) -> Result<(u64, u64), String> {
     let mut count = 0u64;
     let mut size = 0u64;
-    let entries = match sftp.read_dir(remote).await {
-        Ok(e) => e,
-        Err(_) => return (0, 0),
-    };
+    let entries = sftp
+        .read_dir(remote)
+        .await
+        .map_err(|e| format!("Failed to read remote directory '{}': {}", remote, e))?;
     for entry in entries {
         let metadata = entry.metadata();
         let name = entry.file_name();
@@ -812,7 +833,8 @@ async fn count_remote_recursive(
             format!("{}/{}", remote, name)
         };
         if metadata.is_dir() {
-            let (c, s) = Box::pin(count_remote_recursive(sftp, &child_path)).await;
+            let (c, s) = Box::pin(count_remote_recursive(sftp, &child_path))
+                .await?;
             count += c;
             size += s;
         } else {
@@ -820,7 +842,7 @@ async fn count_remote_recursive(
             size += metadata.size.unwrap_or(0);
         }
     }
-    (count, size)
+    Ok((count, size))
 }
 
 /// 下载整个远程文件夹到本地（递归），带进度、暂停、取消
@@ -837,8 +859,22 @@ pub async fn download_folder(
     let task_id_clone = task_id.clone();
     let app_clone = app.clone();
 
-    // 先递归统计总数与总大小（用于进度条）
-    let (total_files, total_size) = count_remote_recursive(&sftp, &remote_path).await;
+    // 先递归统计总数与总大小（用于进度条）。失败时立即通知前端，不进入 spawn。
+    let (total_files, total_size) = match count_remote_recursive(&sftp, &remote_path).await {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = app.emit(
+                &format!("transfer-complete-{}", task_id_clone),
+                serde_json::json!({ "success": false, "error": e, "cancelled": false }),
+            );
+            return Ok(TransferResult {
+                success: false,
+                bytes_transferred: 0,
+                error: Some(e),
+                cancelled: false,
+            });
+        }
+    };
 
     let _ = app.emit(
         &format!("transfer-progress-{}", task_id_clone),
