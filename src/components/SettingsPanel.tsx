@@ -962,22 +962,21 @@ ${claudeConfig}`}
   }
 
   const renderLicenseSettings = () => {
-    const currentType = licenseInfo?.license_type || 'Free'
+    // 标注为字符串，避免 TS 基于后续 === 'Enterprise' 判断做控制流收窄
+    const currentType: string = licenseInfo?.license_type ?? 'Free'
     const isPaid = currentType !== 'Free'
     const isEnterprise = currentType === 'Enterprise'
     
     const licenseTypeLabels: Record<string, string> = {
       Free: '免费版',
-      Personal: '个人版',
-      Professional: '专业版',
+      Pro: '专业版',
       Enterprise: '企业版',
     }
 
     const licenseFeatures = {
       Free: ['SSH 连接管理', 'SFTP 文件传输', '系统监控', '最多 3 个连接'],
-      Personal: ['无限连接', 'AI 日志分析', '命令片段库', '终端主题', '优先支持'],
-      Professional: ['无限连接', 'AI 日志分析', '命令片段库', '终端主题', '团队协作', '审计日志', '私有部署支持'],
-      Enterprise: ['所有功能', '无限连接', '专属客服', '定制开发'],
+      Pro: ['无限连接', 'AI 日志分析', '命令片段库', '端口转发', '配置云同步', '终端主题', '优先支持'],
+      Enterprise: ['所有功能', 'Docker 管理', '审计日志', '团队协作', '专属客服', '定制开发'],
     }
 
     const handleActivate = async () => {
@@ -1010,7 +1009,7 @@ ${claudeConfig}`}
           </div>
           
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {licenseFeatures[currentType].map(feature => (
+            {licenseFeatures[currentType as 'Free' | 'Pro' | 'Enterprise'].map(feature => (
               <Tag key={feature} style={{ margin: 0 }}>
                 <CheckCircleOutlined style={{ color: 'var(--color-success)', marginRight: 4 }} />
                 {feature}
@@ -1029,55 +1028,62 @@ ${claudeConfig}`}
               </Text>
               
               <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
-                <div 
-                  style={{ 
-                    flex: 1, 
-                    padding: 16, 
-                    border: `1px solid ${currentType === 'Personal' ? 'var(--color-warning)' : 'var(--color-border)'}`,
+                <div
+                  style={{
+                    flex: 1,
+                    padding: 16,
+                    border: `1px solid ${currentType === 'Pro' ? 'var(--color-primary)' : 'var(--color-border)'}`,
                     borderRadius: 8,
-                    background: currentType === 'Personal' ? 'color-mix(in srgb, var(--color-warning) 5%, transparent)' : 'var(--color-bg-container)',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                    <CrownOutlined style={{ color: 'var(--color-warning)' }} />
-                    <Text strong style={{ color: 'var(--color-text)' }}>个人版</Text>
-                  </div>
-                  <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
-                    ¥99<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
-                  </div>
-                  <Button 
-                    type="primary" 
-                    block 
-                    style={{ background: 'var(--color-warning)', borderColor: 'var(--color-warning)' }}
-                    onClick={() => open('https://iterminal.app/buy?plan=personal').catch(() => {})}
-                  >
-                    立即购买
-                  </Button>
-                </div>
-                
-                <div 
-                  style={{ 
-                    flex: 1, 
-                    padding: 16, 
-                    border: `1px solid ${currentType === 'Professional' ? 'var(--color-primary)' : 'var(--color-border)'}`,
-                    borderRadius: 8,
-                    background: currentType === 'Professional' ? 'color-mix(in srgb, var(--color-primary) 5%, transparent)' : 'var(--color-bg-container)',
+                    background: currentType === 'Pro' ? 'color-mix(in srgb, var(--color-primary) 5%, transparent)' : 'var(--color-bg-container)',
                   }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
                     <CrownOutlined style={{ color: 'var(--color-primary)' }} />
                     <Text strong style={{ color: 'var(--color-text)' }}>专业版</Text>
                   </div>
-                  <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
-                    ¥299<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
+                  <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.6 }}>
+                    无限连接 · AI 日志分析 · 命令片段库<br />
+                    端口转发 · 配置云同步
                   </div>
-                  <Button 
-                    type="primary" 
-                    block 
+                  <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
+                    ¥99<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}>/年</span>
+                  </div>
+                  <Button
+                    type="primary"
+                    block
                     style={{ background: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}
-                    onClick={() => open('https://iterminal.app/buy?plan=professional').catch(() => {})}
+                    onClick={() => open('https://iterminal.app/buy?plan=pro').catch(() => {})}
                   >
                     立即购买
+                  </Button>
+                </div>
+
+                <div
+                  style={{
+                    flex: 1,
+                    padding: 16,
+                    border: `1px solid ${currentType === 'Enterprise' ? 'var(--color-warning)' : 'var(--color-border)'}`,
+                    borderRadius: 8,
+                    background: currentType === 'Enterprise' ? 'color-mix(in srgb, var(--color-warning) 5%, transparent)' : 'var(--color-bg-container)',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                    <CrownOutlined style={{ color: 'var(--color-warning)' }} />
+                    <Text strong style={{ color: 'var(--color-text)' }}>企业版</Text>
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.6 }}>
+                    全部 Pro 功能<br />
+                    Docker 管理 · 审计日志 · 团队协作
+                  </div>
+                  <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
+                    定制<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}> / 联系销售</span>
+                  </div>
+                  <Button
+                    block
+                    style={{ borderColor: 'var(--color-warning)', color: 'var(--color-warning)' }}
+                    onClick={() => open('https://iterminal.app/buy?plan=enterprise').catch(() => {})}
+                  >
+                    联系销售
                   </Button>
                 </div>
               </div>

@@ -64,8 +64,6 @@ fn main() {
             iterminal::commands::license::is_feature_available,
             iterminal::commands::license::check_connection_limit,
             iterminal::commands::license::clear_license,
-            iterminal::commands::license::set_license_bypass,
-            iterminal::commands::license::is_license_bypassed,
             iterminal::commands::db::init_database,
             iterminal::commands::db::get_connections,
             iterminal::commands::db::save_connection,
@@ -93,6 +91,11 @@ fn main() {
             if let Err(e) = iterminal::commands::db::init_database(app.handle().clone()) {
                 eprintln!("Failed to initialize database: {}", e);
             }
+
+            // 从持久化文件加载已激活的 License（Pro 构建生效；Free stub 为空操作）
+            tauri::async_runtime::spawn(async {
+                iterminal::commands::license::init_from_storage().await;
+            });
 
             let new_conn =
                 MenuItem::with_id(app, "new_connection", "新建连接", true, Some("CmdOrCtrl+N"))?;

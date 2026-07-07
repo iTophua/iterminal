@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { invoke } from '@tauri-apps/api/core'
 
-export type LicenseType = 'Free' | 'Personal' | 'Professional' | 'Enterprise'
+export type LicenseType = 'Free' | 'Pro' | 'Enterprise'
 
 export interface LicenseInfo {
   license_type: LicenseType
@@ -16,23 +16,36 @@ interface LicenseState {
   licenseInfo: LicenseInfo | null
   loading: boolean
   error: string | null
-  bypassed: boolean
-  
+
   fetchLicense: () => Promise<void>
   verifyLicense: (key: string) => Promise<boolean>
   clearLicense: () => Promise<void>
   isFeatureAvailable: (feature: string) => boolean
   getMaxConnections: () => number
-  setBypass: (bypass: boolean) => Promise<void>
-  fetchBypassStatus: () => Promise<void>
 }
 
-const DEFAULT_LICENSE: LicenseInfo = {
-  license_type: 'Enterprise',
-  expires_at: '2099-12-31',
-  features: ['*'],
+/**
+ * 免费版默认信息。
+ *
+ * 仅在后端 get_license 调用失败（异常）时作为兜底，
+ * 保证应用在 Pro 构建未正确注入 license 时仍能以 Free 模式运行。
+ */
+const FREE_FALLBACK: LicenseInfo = {
+  license_type: 'Free',
+  expires_at: null,
+  features: [
+    'basic_ssh',
+    'basic_sftp',
+    'basic_monitor',
+    'terminal_links',
+    'folder_download',
+    'file_copy_move',
+    'broadcast_input',
+    'proxy_jump',
+    'themes',
+  ],
   is_valid: true,
-  max_connections: 999,
+  max_connections: 3,
   email: null,
 }
 
@@ -40,7 +53,6 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
   licenseInfo: null,
   loading: false,
   error: null,
-  bypassed: false,
 
   fetchLicense: async () => {
     set({ loading: true, error: null })
@@ -48,10 +60,11 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
       const info = await invoke<LicenseInfo>('get_license')
       set({ licenseInfo: info, loading: false })
     } catch (e) {
-      set({ 
-        licenseInfo: DEFAULT_LICENSE, 
+      // 后端调用失败时回退 Free，避免阻塞应用启动
+      set({
+        licenseInfo: FREE_FALLBACK,
         loading: false,
-        error: e as string 
+        error: e as string,
       })
     }
   },
@@ -71,39 +84,19 @@ export const useLicenseStore = create<LicenseState>((set, get) => ({
   clearLicense: async () => {
     try {
       await invoke('clear_license')
-      set({ licenseInfo: DEFAULT_LICENSE, error: null })
+      set({ licenseInfo: FREE_FALLBACK, error: null })
     } catch (e) {
       set({ error: e as string })
     }
   },
 
   isFeatureAvailable: (feature: string) => {
-    if (get().bypassed) return true
-    const info = get().licenseInfo || DEFAULT_LICENSE
+    const info = get().licenseInfo || FREE_FALLBACK
     return info.features.includes(feature) || info.features.includes('*')
   },
 
   getMaxConnections: () => {
-    if (get().bypassed) return 999
-    const info = get().licenseInfo || DEFAULT_LICENSE
+    const info = get().licenseInfo || FREE_FALLBACK
     return info.max_connections
-  },
-
-  setBypass: async (bypass: boolean) => {
-    try {
-      await invoke('set_license_bypass', { bypass })
-      set({ bypassed: bypass })
-    } catch (e) {
-      console.error('Failed to set license bypass:', e)
-    }
-  },
-
-  fetchBypassStatus: async () => {
-    try {
-      const bypassed = await invoke<boolean>('is_license_bypassed')
-      set({ bypassed })
-    } catch (e) {
-      console.error('Failed to fetch bypass status:', e)
-    }
   },
 }))

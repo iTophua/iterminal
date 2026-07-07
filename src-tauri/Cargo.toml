@@ -38,12 +38,21 @@ aes-gcm = "0.10"
 base64 = "0.22"
 lazy_static = "1.4"
 shellexpand = "3.1"
+# License 签名（Free stub 不使用，Pro 构建注入 license.rs 后使用）
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 dirs = "5"
 hostname = "0.4"
 
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+# Pro 构建：由 build-pro.sh 注入 license.rs 后启用。
+# 用途：让代码能用 #[cfg(feature = "pro")] 区分 Free / Pro 构建行为。
+# 注意：license.rs 本身是文件覆盖式注入，不依赖此 flag；
+#       此 flag 用于未来 Pro 专属逻辑（如 AI 服务的密钥注入开关）。
+pro = []
 
 [profile.release]
 panic = "abort"
