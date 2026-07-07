@@ -16,6 +16,7 @@ import {
   FullscreenOutlined,
   FullscreenExitOutlined,
   HistoryOutlined,
+  BulbOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -32,6 +33,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore, DisconnectReason, SplitPane } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { useHistoryStore } from '../stores/historyStore'
+import { useLicenseStore } from '../stores/licenseStore'
 import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 
 
@@ -39,6 +41,9 @@ import { RightSidebar } from '../components/RightSidebar'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
 import McpLogPanel from '../components/McpLogPanel'
+import SnippetsPanel from '../components/SnippetsPanel'
+import AiAssistantModal from '../components/AiAssistantModal'
+import PortForwardPanel from '../components/PortForwardPanel'
 import { STORAGE_KEYS } from '../config/constants'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
 import { SortableTab, LeafPane } from './terminal/components'
@@ -73,6 +78,12 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
   const broadcastEnabled = useTerminalStore(state => state.broadcastEnabled)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
+  const isFeatureAvailable = useLicenseStore(state => state.isFeatureAvailable)
+  const snippetsEnabled = isFeatureAvailable('snippets')
+  const aiEnabled = isFeatureAvailable('ai_assistant')
+  const portForwardEnabled = isFeatureAvailable('port_forward')
+  const [aiModalVisible, setAiModalVisible] = useState(false)
+  const [aiInitialText, setAiInitialText] = useState('')
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
   const removeConnectionFromStore = useTerminalStore(state => state.removeConnectionFromStore)
@@ -463,6 +474,10 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     setMonitorVisible,
     apiLogVisible,
     setApiLogVisible,
+    snippetsVisible,
+    setSnippetsVisible,
+    portForwardVisible,
+    setPortForwardVisible,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
 
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -1610,6 +1625,14 @@ const handlePointerUp = () => {
     hideContextMenu()
   }, [contextMenu.sessionKey])
 
+  const handleAiAnalyze = useCallback(() => {
+    const term = terminalInstances.current[contextMenu.sessionKey]
+    const selection = term ? (term.getSelection() || '') : ''
+    setAiInitialText(selection)
+    setAiModalVisible(true)
+    hideContextMenu()
+  }, [contextMenu.sessionKey])
+
   const handleSplitHorizontalFromContextMenu = useCallback(async () => {
     const [connId, sessId] = contextMenu.sessionKey.split('_')
     const conn = connectedConnections.find(c => c.connectionId === connId)
@@ -2280,6 +2303,26 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         {apiLogVisible && (
           <McpLogPanel onClose={() => setApiLogVisible(false)} />
         )}
+        {snippetsVisible && snippetsEnabled && (
+          <SnippetsPanel
+            onClose={() => setSnippetsVisible(false)}
+            onInsert={(cmd) => {
+              // 插入到当前活动终端：拼接活动连接+活动 session 的 key
+              const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn || !activeConnectionId) return
+              const activeSess = getActiveSessionInPane(conn.rootPane)
+              if (!activeSess) return
+              const key = `${activeConnectionId}_${activeSess.id}`
+              enqueueWrite(key, cmd)
+            }}
+          />
+        )}
+        {portForwardVisible && portForwardEnabled && activeConnectionId && (
+          <PortForwardPanel
+            connectionId={activeConnectionId}
+            onClose={() => setPortForwardVisible(false)}
+          />
+        )}
       </div>
 
       <RightSidebar
@@ -2287,6 +2330,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         monitorVisible={monitorVisible}
         fileManagerVisible={activeConnectionId ? !!fileManagerVisible[activeConnectionId] : false}
         apiLogVisible={apiLogVisible}
+        snippetsVisible={snippetsVisible}
+        snippetsEnabled={snippetsEnabled}
+        portForwardVisible={portForwardVisible}
+        portForwardEnabled={portForwardEnabled}
         mcpEnabled={mcpEnabled}
         isFullscreen={isFullscreen}
         showFullscreen={singleConnectionMode}
@@ -2322,8 +2369,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
               setFileManagerVisible(activeConnectionId, false)
             }
-}
+          }
         }}
+        onSnippetsToggle={() => setSnippetsVisible(!snippetsVisible)}
+        onPortForwardToggle={() => setPortForwardVisible(!portForwardVisible)}
         />
 
       {contextMenu.visible && createPortal(
@@ -2376,6 +2425,16 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           >
             <SearchOutlined /> 查找
           </div>
+          {aiEnabled && (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={handleAiAnalyze}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <BulbOutlined /> AI 分析{contextMenu.sessionKey && terminalInstances.current[contextMenu.sessionKey]?.hasSelection() ? '选中内容' : ''}
+            </div>
+          )}
           <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
           {isContextMenuOnSplitPanel() ? (
             <div
@@ -2440,6 +2499,21 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       ) : null}
       
       <DragToNewWindowOverlay visible={!singleConnectionMode && isDragToNewWindow} />
+
+      {aiModalVisible && (
+        <AiAssistantModal
+          visible={aiModalVisible}
+          initialText={aiInitialText}
+          onClose={() => setAiModalVisible(false)}
+          onInsertCommand={(cmd) => {
+            const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+            if (!conn || !activeConnectionId) return
+            const activeSess = getActiveSessionInPane(conn.rootPane)
+            if (!activeSess) return
+            enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+          }}
+        />
+      )}
 
       {historyModalVisible && historyModalKey && (
         <Modal

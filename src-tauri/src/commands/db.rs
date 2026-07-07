@@ -188,6 +188,28 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
 
     cleanup_orphaned_command_history(&conn)?;
 
+    // 命令片段库（Pro 功能）：用户保存常用命令，一键插入或执行
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS snippets (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            command TEXT NOT NULL,
+            description TEXT,
+            category TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            sort_order INTEGER DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_snippets_category ON snippets(category, sort_order)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
     migrate_passwords_if_needed(&conn)?;
 
     DB_INITIALIZED.store(true, Ordering::SeqCst);
@@ -902,6 +924,111 @@ pub fn cleanup_command_history() -> Result<CleanupResult, String> {
     let orphaned = cleanup_orphaned_command_history(&conn)?;
 
     Ok(CleanupResult { expired, orphaned })
+}
+
+// ============ 命令片段库（Pro 功能）============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Snippet {
+    pub id: String,
+    pub title: String,
+    pub command: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub sort_order: i64,
+}
+
+/// 生成 snippet id
+fn generate_snippet_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("snippet-{}", ts)
+}
+
+#[tauri::command]
+pub fn list_snippets(category: Option<String>) -> Result<Vec<Snippet>, String> {
+    let conn = get_db()?;
+    let mut stmt = if category.is_some() {
+        conn.prepare(
+            "SELECT id, title, command, description, category, created_at, updated_at, sort_order
+             FROM snippets WHERE category = ? ORDER BY sort_order ASC, updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        conn.prepare(
+            "SELECT id, title, command, description, category, created_at, updated_at, sort_order
+             FROM snippets ORDER BY sort_order ASC, updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let map_row = |row: &rusqlite::Row| -> rusqlite::Result<Snippet> {
+        Ok(Snippet {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            command: row.get(2)?,
+            description: row.get(3)?,
+            category: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+            sort_order: row.get(7)?,
+        })
+    };
+
+    let snippets = if let Some(cat) = category {
+        stmt.query_map([&cat], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    } else {
+        stmt.query_map([], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    Ok(snippets)
+}
+
+#[tauri::command]
+pub fn save_snippet(
+    id: Option<String>,
+    title: String,
+    command: String,
+    description: Option<String>,
+    category: Option<String>,
+) -> Result<String, String> {
+    let conn = get_db()?;
+    let now = chrono::Utc::now().timestamp();
+    let snippet_id = id.unwrap_or_else(generate_snippet_id);
+
+    conn.execute(
+        "INSERT INTO snippets (id, title, command, description, category, created_at, updated_at, sort_order)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)
+         ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            command = excluded.command,
+            description = excluded.description,
+            category = excluded.category,
+            updated_at = excluded.updated_at",
+        rusqlite::params![snippet_id, title, command, description, category, now, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(snippet_id)
+}
+
+#[tauri::command]
+pub fn delete_snippet(id: String) -> Result<bool, String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM snippets WHERE id = ?", [&id])
+        .map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[cfg(test)]

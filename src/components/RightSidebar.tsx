@@ -5,6 +5,8 @@ import {
   ApiOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
+  ThunderboltOutlined,
+  LinkOutlined,
 } from '@ant-design/icons'
 
 interface RightSidebarProps {
@@ -12,12 +14,18 @@ interface RightSidebarProps {
   monitorVisible: boolean
   fileManagerVisible: boolean
   apiLogVisible: boolean
+  snippetsVisible: boolean
+  snippetsEnabled: boolean
+  portForwardVisible: boolean
+  portForwardEnabled: boolean
   mcpEnabled: boolean
   isFullscreen?: boolean
   showFullscreen?: boolean
   onMonitorToggle: () => void
   onFileManagerToggle: () => void
   onApiLogToggle: () => void
+  onSnippetsToggle: () => void
+  onPortForwardToggle: () => void
   onFullscreenToggle?: () => void
 }
 
@@ -26,12 +34,18 @@ export function RightSidebar({
   monitorVisible,
   fileManagerVisible,
   apiLogVisible,
+  snippetsVisible,
+  snippetsEnabled,
+  portForwardVisible,
+  portForwardEnabled,
   mcpEnabled,
   isFullscreen,
   showFullscreen,
   onMonitorToggle,
   onFileManagerToggle,
   onApiLogToggle,
+  onSnippetsToggle,
+  onPortForwardToggle,
   onFullscreenToggle,
 }: RightSidebarProps) {
   return (
@@ -111,6 +125,26 @@ export function RightSidebar({
                   size="small"
                   icon={<ApiOutlined />}
                   onClick={onApiLogToggle}
+                />
+              </Tooltip>
+            )}
+            {snippetsEnabled && (
+              <Tooltip title="命令片段库（Pro）" placement="left">
+                <Button
+                  type={snippetsVisible ? 'primary' : 'text'}
+                  size="small"
+                  icon={<ThunderboltOutlined />}
+                  onClick={onSnippetsToggle}
+                />
+              </Tooltip>
+            )}
+            {portForwardEnabled && (
+              <Tooltip title="端口转发（Pro）" placement="left">
+                <Button
+                  type={portForwardVisible ? 'primary' : 'text'}
+                  size="small"
+                  icon={<LinkOutlined />}
+                  onClick={onPortForwardToggle}
                 />
               </Tooltip>
             )}
