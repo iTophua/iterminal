@@ -232,6 +232,38 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // AI 对话（Pro 功能）：多轮对话历史持久化
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ai_conversations (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            connection_id TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS ai_messages (
+            id TEXT PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            context TEXT,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ai_messages_conv ON ai_messages(conversation_id, created_at)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
     migrate_passwords_if_needed(&conn)?;
 
     DB_INITIALIZED.store(true, Ordering::SeqCst);
@@ -1051,6 +1083,204 @@ pub fn delete_snippet(id: String) -> Result<bool, String> {
     conn.execute("DELETE FROM snippets WHERE id = ?", [&id])
         .map_err(|e| e.to_string())?;
     Ok(true)
+}
+
+// ============ AI 对话历史（Pro 功能 ai_assistant）============
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiConversation {
+    pub id: String,
+    pub title: String,
+    pub connection_id: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiMessage {
+    pub id: String,
+    pub conversation_id: String,
+    /// user | assistant | system
+    pub role: String,
+    pub content: String,
+    /// JSON：本轮附带的终端上下文快照（仅 user 消息可能有）
+    pub context: Option<String>,
+    pub created_at: i64,
+}
+
+fn generate_ai_id(prefix: &str) -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}", prefix, ts)
+}
+
+/// 列出对话（按 updated_at 倒序）。可按 connection_id 筛选。
+#[tauri::command]
+pub fn list_ai_conversations(connection_id: Option<String>) -> Result<Vec<AiConversation>, String> {
+    let conn = get_db()?;
+    let mut stmt = if connection_id.is_some() {
+        conn.prepare(
+            "SELECT id, title, connection_id, created_at, updated_at
+             FROM ai_conversations WHERE connection_id = ?1
+             ORDER BY updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?
+    } else {
+        conn.prepare(
+            "SELECT id, title, connection_id, created_at, updated_at
+             FROM ai_conversations ORDER BY updated_at DESC",
+        )
+        .map_err(|e| e.to_string())?
+    };
+
+    let map_row = |row: &rusqlite::Row| -> rusqlite::Result<AiConversation> {
+        Ok(AiConversation {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            connection_id: row.get(2)?,
+            created_at: row.get(3)?,
+            updated_at: row.get(4)?,
+        })
+    };
+
+    let convs = if let Some(cid) = connection_id {
+        stmt.query_map([&cid], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    } else {
+        stmt.query_map([], map_row)
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?
+    };
+
+    Ok(convs)
+}
+
+/// 创建新对话
+#[tauri::command]
+pub fn create_ai_conversation(
+    title: String,
+    connection_id: Option<String>,
+) -> Result<AiConversation, String> {
+    let conn = get_db()?;
+    let now = chrono::Utc::now().timestamp();
+    let id = generate_ai_id("aiconv");
+
+    conn.execute(
+        "INSERT INTO ai_conversations (id, title, connection_id, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        rusqlite::params![id, title, connection_id, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(AiConversation {
+        id,
+        title,
+        connection_id,
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+/// 重命名对话
+#[tauri::command]
+pub fn rename_ai_conversation(id: String, title: String) -> Result<bool, String> {
+    let conn = get_db()?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "UPDATE ai_conversations SET title = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![title, now, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 删除对话（级联删其所有消息）
+#[tauri::command]
+pub fn delete_ai_conversation(id: String) -> Result<bool, String> {
+    let conn = get_db()?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM ai_messages WHERE conversation_id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM ai_conversations WHERE id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// 读取对话的所有消息（按时间正序）
+#[tauri::command]
+pub fn get_ai_messages(conversation_id: String) -> Result<Vec<AiMessage>, String> {
+    let conn = get_db()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, conversation_id, role, content, context, created_at
+             FROM ai_messages WHERE conversation_id = ?1 ORDER BY created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let messages = stmt
+        .query_map(
+            [&conversation_id],
+            |row| {
+                Ok(AiMessage {
+                    id: row.get(0)?,
+                    conversation_id: row.get(1)?,
+                    role: row.get(2)?,
+                    content: row.get(3)?,
+                    context: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            },
+        )
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(messages)
+}
+
+/// 追加一条消息到对话，并更新对话的 updated_at
+#[tauri::command]
+pub fn save_ai_message(
+    conversation_id: String,
+    role: String,
+    content: String,
+    context: Option<String>,
+) -> Result<AiMessage, String> {
+    let conn = get_db()?;
+    let now = chrono::Utc::now().timestamp();
+    let id = generate_ai_id("aimsg");
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO ai_messages (id, conversation_id, role, content, context, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![id, conversation_id, role, content, context, now],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE ai_conversations SET updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, conversation_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    Ok(AiMessage {
+        id,
+        conversation_id,
+        role,
+        content,
+        context,
+        created_at: now,
+    })
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ import {
   FullscreenExitOutlined,
   ThunderboltOutlined,
   LinkOutlined,
+  MessageOutlined,
 } from '@ant-design/icons'
 
 interface RightSidebarProps {
@@ -18,6 +19,8 @@ interface RightSidebarProps {
   snippetsEnabled: boolean
   portForwardVisible: boolean
   portForwardEnabled: boolean
+  aiChatVisible: boolean
+  aiChatEnabled: boolean
   mcpEnabled: boolean
   isFullscreen?: boolean
   showFullscreen?: boolean
@@ -26,6 +29,7 @@ interface RightSidebarProps {
   onApiLogToggle: () => void
   onSnippetsToggle: () => void
   onPortForwardToggle: () => void
+  onAiChatToggle: () => void
   onFullscreenToggle?: () => void
 }
 
@@ -38,6 +42,8 @@ export function RightSidebar({
   snippetsEnabled,
   portForwardVisible,
   portForwardEnabled,
+  aiChatVisible,
+  aiChatEnabled,
   mcpEnabled,
   isFullscreen,
   showFullscreen,
@@ -46,6 +52,7 @@ export function RightSidebar({
   onApiLogToggle,
   onSnippetsToggle,
   onPortForwardToggle,
+  onAiChatToggle,
   onFullscreenToggle,
 }: RightSidebarProps) {
   return (
@@ -145,6 +152,16 @@ export function RightSidebar({
                   size="small"
                   icon={<LinkOutlined />}
                   onClick={onPortForwardToggle}
+                />
+              </Tooltip>
+            )}
+            {aiChatEnabled && (
+              <Tooltip title="AI 对话（Pro）" placement="left">
+                <Button
+                  type={aiChatVisible ? 'primary' : 'text'}
+                  size="small"
+                  icon={<MessageOutlined />}
+                  onClick={onAiChatToggle}
                 />
               </Tooltip>
             )}

@@ -9,22 +9,25 @@ export function useRightPanels(
   const [apiLogVisible, setApiLogVisible] = useState(false)
   const [snippetsVisible, setSnippetsVisible] = useState(false)
   const [portForwardVisible, setPortForwardVisible] = useState(false)
+  const [aiChatVisible, setAiChatVisible] = useState(false)
 
   const hasAnyPanelOpen =
     monitorVisible ||
     (activeConnectionId && fileManagerVisible[activeConnectionId]) ||
     apiLogVisible ||
     snippetsVisible ||
-    portForwardVisible
+    portForwardVisible ||
+    aiChatVisible
   const rightPanelWidth = hasAnyPanelOpen ? 392 : 32
 
   // 关闭除指定面板外的其它面板（保证同时只开一个）
   const closeOthers = useCallback(
-    (keep: 'monitor' | 'fileManager' | 'apiLog' | 'snippets' | 'portForward' | null) => {
+    (keep: 'monitor' | 'fileManager' | 'apiLog' | 'snippets' | 'portForward' | 'aiChat' | null) => {
       if (keep !== 'monitor') setMonitorVisible(false)
       if (keep !== 'apiLog') setApiLogVisible(false)
       if (keep !== 'snippets') setSnippetsVisible(false)
       if (keep !== 'portForward') setPortForwardVisible(false)
+      if (keep !== 'aiChat') setAiChatVisible(false)
       if (keep !== 'fileManager' && activeConnectionId && fileManagerVisible[activeConnectionId]) {
         setFileManagerVisible(activeConnectionId, false)
       }
@@ -75,6 +78,15 @@ export function useRightPanels(
     }
   }, [portForwardVisible, closeOthers])
 
+  const toggleAiChat = useCallback(() => {
+    if (aiChatVisible) {
+      setAiChatVisible(false)
+    } else {
+      closeOthers('aiChat')
+      setAiChatVisible(true)
+    }
+  }, [aiChatVisible, closeOthers])
+
   return {
     monitorVisible,
     setMonitorVisible,
@@ -84,11 +96,14 @@ export function useRightPanels(
     setSnippetsVisible,
     portForwardVisible,
     setPortForwardVisible,
+    aiChatVisible,
+    setAiChatVisible,
     rightPanelWidth,
     openMonitor,
     openFileManager,
     toggleApiLog,
     toggleSnippets,
     togglePortForward,
+    toggleAiChat,
   }
 }

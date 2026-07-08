@@ -44,6 +44,8 @@ import McpLogPanel from '../components/McpLogPanel'
 import SnippetsPanel from '../components/SnippetsPanel'
 import AiAssistantModal from '../components/AiAssistantModal'
 import PortForwardPanel from '../components/PortForwardPanel'
+import AiChatPanel from '../components/AiChatPanel'
+import type { TerminalContext } from '../services/ai'
 import { STORAGE_KEYS } from '../config/constants'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
 import { SortableTab, LeafPane } from './terminal/components'
@@ -478,6 +480,9 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     setSnippetsVisible,
     portForwardVisible,
     setPortForwardVisible,
+    aiChatVisible,
+    setAiChatVisible,
+    toggleAiChat,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
 
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -2284,7 +2289,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       </div>
 
       <div style={{
-        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible) ? 360 : 0,
+        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible || snippetsVisible || portForwardVisible || aiChatVisible) ? 360 : 0,
         height: '100%',
         flexShrink: 0,
         overflow: 'hidden',
@@ -2323,6 +2328,53 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             onClose={() => setPortForwardVisible(false)}
           />
         )}
+        {aiChatVisible && aiEnabled && (
+          <AiChatPanel
+            connectionId={activeConnectionId}
+            onClose={() => setAiChatVisible(false)}
+            onInsertCommand={(cmd) => {
+              const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn || !activeConnectionId) return
+              const activeSess = getActiveSessionInPane(conn.rootPane)
+              if (!activeSess) return
+              enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+            }}
+            onRunCommand={(cmd) => {
+              const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn || !activeConnectionId) return
+              const activeSess = getActiveSessionInPane(conn.rootPane)
+              if (!activeSess) return
+              enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd + '\r')
+            }}
+            getTerminalContext={() => {
+              const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn || !activeConnectionId) return null
+              const activeSess = getActiveSessionInPane(conn.rootPane)
+              if (!activeSess) return null
+              const key = `${activeConnectionId}_${activeSess.id}`
+              const term = terminalInstances.current[key]
+              if (!term) return null
+              // 最近 200 行输出
+              const N = 200
+              const buf = term.buffer.active
+              const start = Math.max(0, buf.length - N)
+              const lines: string[] = []
+              for (let i = start; i < buf.length; i++) {
+                lines.push(buf.getLine(i)?.translateToString(true) || '')
+              }
+              const recentOutput = lines.join('\n')
+              const selection = term.getSelection() || ''
+              const cwd = useTerminalStore.getState().currentPaths[activeConnectionId]
+              // 体积控制：整体过大时只保留选中内容，避免 token 爆炸
+              const ctx: TerminalContext = {}
+              if (selection.trim()) ctx.selection = selection
+              const totalSize = recentOutput.length + selection.length
+              if (totalSize < 8000 && recentOutput.trim()) ctx.recentOutput = recentOutput
+              if (cwd) ctx.cwd = cwd
+              return ctx
+            }}
+          />
+        )}
       </div>
 
       <RightSidebar
@@ -2334,6 +2386,8 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         snippetsEnabled={snippetsEnabled}
         portForwardVisible={portForwardVisible}
         portForwardEnabled={portForwardEnabled}
+        aiChatVisible={aiChatVisible}
+        aiChatEnabled={aiEnabled}
         mcpEnabled={mcpEnabled}
         isFullscreen={isFullscreen}
         showFullscreen={singleConnectionMode}
@@ -2373,6 +2427,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         }}
         onSnippetsToggle={() => setSnippetsVisible(!snippetsVisible)}
         onPortForwardToggle={() => setPortForwardVisible(!portForwardVisible)}
+        onAiChatToggle={toggleAiChat}
         />
 
       {contextMenu.visible && createPortal(

@@ -69,3 +69,81 @@ export const AI_BASE_URL_PRESETS: Array<{ name: string; url: string; hint: strin
   { name: 'Ollama 本地', url: 'http://localhost:11434', hint: '本地推理引擎，无需密钥' },
   { name: 'LM Studio 本地', url: 'http://localhost:1234', hint: '本地推理引擎，无需密钥' },
 ]
+
+// ============ 多轮对话 ============
+
+/** 终端上下文快照（随对话消息发送，让 AI 感知当前终端） */
+export interface TerminalContext {
+  recentOutput?: string
+  selection?: string
+  cwd?: string
+}
+
+/** AI 对话 */
+export interface AiConversation {
+  id: string
+  title: string
+  connectionId: string | null
+  createdAt: number
+  updatedAt: number
+}
+
+/** 对话中的一条消息 */
+export interface AiMessage {
+  id: string
+  conversationId: string
+  /** user | assistant | system */
+  role: string
+  content: string
+  /** JSON 字符串：本轮附带的 TerminalContext（仅 user 消息可能有） */
+  context: string | null
+  createdAt: number
+}
+
+/** 列出对话（按 updatedAt 倒序），可按 connection 筛选 */
+export async function listConversations(connectionId?: string): Promise<AiConversation[]> {
+  return invoke<AiConversation[]>('list_ai_conversations', { connectionId })
+}
+
+/** 新建对话 */
+export async function createConversation(
+  title: string,
+  connectionId?: string
+): Promise<AiConversation> {
+  return invoke<AiConversation>('create_ai_conversation', { title, connectionId })
+}
+
+/** 重命名对话 */
+export async function renameConversation(id: string, title: string): Promise<boolean> {
+  return invoke<boolean>('rename_ai_conversation', { id, title })
+}
+
+/** 删除对话（级联删其消息） */
+export async function deleteConversation(id: string): Promise<boolean> {
+  return invoke<boolean>('delete_ai_conversation', { id })
+}
+
+/** 读取对话的所有消息（按时间正序） */
+export async function getMessages(conversationId: string): Promise<AiMessage[]> {
+  return invoke<AiMessage[]>('get_ai_messages', { conversationId })
+}
+
+/** 发送一条用户消息并拿回 assistant 回复（多轮对话） */
+export async function chatSend(
+  conversationId: string,
+  userText: string,
+  context?: TerminalContext
+): Promise<AiMessage> {
+  return invoke<AiMessage>('ai_chat', { conversationId, userText, context })
+}
+
+/** 解析消息的 context 字段为 TerminalContext（失败返回 null） */
+export function parseContext(context: string | null): TerminalContext | null {
+  if (!context) return null
+  try {
+    return JSON.parse(context) as TerminalContext
+  } catch {
+    return null
+  }
+}
+

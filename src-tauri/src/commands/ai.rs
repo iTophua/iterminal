@@ -159,13 +159,31 @@ fn system_prompt(kind: &AiKind) -> &'static str {
 
 // ============ LLM 调用 ============
 
+/// 一条 chat 消息（OpenAI 格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChatMessage {
+    role: String,    // system | user | assistant
+    content: String,
+}
+
+impl ChatMessage {
+    fn system(content: impl Into<String>) -> Self {
+        Self { role: "system".into(), content: content.into() }
+    }
+    fn user(content: impl Into<String>) -> Self {
+        Self { role: "user".into(), content: content.into() }
+    }
+    fn assistant(content: impl Into<String>) -> Self {
+        Self { role: "assistant".into(), content: content.into() }
+    }
+}
+
 /// 调用 OpenAI 兼容的 /v1/chat/completions
 async fn call_chat(
     base_url: &str,
     api_key: Option<&str>,
     model: &str,
-    system: &str,
-    user: &str,
+    messages: &[ChatMessage],
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
@@ -179,10 +197,7 @@ async fn call_chat(
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({
             "model": model,
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user }
-            ],
+            "messages": messages,
             "temperature": 0.2,
             "stream": false
         }));
@@ -253,7 +268,11 @@ pub async fn ai_analyze(text: String, kind: AiKind) -> Result<AiResult, String> 
         return Err("待分析内容为空".into());
     }
 
-    let content = match call_chat(&base_url, api_key.as_deref(), &model, system, user).await {
+    let messages = vec![
+        ChatMessage::system(system),
+        ChatMessage::user(user),
+    ];
+    let content = match call_chat(&base_url, api_key.as_deref(), &model, &messages).await {
         Ok(c) => c,
         Err(e) => {
             return Ok(AiResult {
@@ -409,9 +428,11 @@ pub async fn test_ai_connection(
     }
     let resolved_key = resolve_api_key(api_key.as_deref())?;
     // 用最短请求探测
-    match call_chat(&base, resolved_key.as_deref(), &model, "You are a helper.", "ping")
-        .await
-    {
+    let messages = vec![
+        ChatMessage::system("You are a helper."),
+        ChatMessage::user("ping"),
+    ];
+    match call_chat(&base, resolved_key.as_deref(), &model, &messages).await {
         Ok(content) => {
             // 截断显示
             let preview = if content.len() > 80 {
@@ -423,6 +444,169 @@ pub async fn test_ai_connection(
         }
         Err(e) => Err(e),
     }
+}
+
+// ============ 多轮对话 ============
+
+/// 终端上下文快照（前端采集，随对话消息发送）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalContext {
+    /// 活动终端最近 N 行输出（已截断）
+    pub recent_output: Option<String>,
+    /// 当前选中的文本
+    pub selection: Option<String>,
+    /// 当前工作目录（来自 SFTP 文件管理，可能为空）
+    pub cwd: Option<String>,
+}
+
+/// chat 系统提示词：强调运维助手 + 善用上下文
+fn chat_system_prompt() -> &'static str {
+    "你是一位资深 Linux/Unix 运维助手，正在协助用户管理 SSH 服务器。\n\
+     用户消息可能附带当前终端的上下文（最近输出、选中的文本、当前目录），\n\
+     请基于这些上下文回答。要求：\n\
+     - 回答简洁，用中文；\n\
+     - 给出的 shell 命令放在一个 ```bash 代码块里；\n\
+     - 不要臆测缺失的信息，必要时先问用户；\n\
+     - 涉及危险操作（rm、kill、重启服务、改权限）时提醒风险。"
+}
+
+/// 把终端上下文拼成模型易识别的文本（XML 标签包裹）
+fn format_context_text(ctx: &TerminalContext) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(s) = ctx.selection.as_deref() {
+        if !s.trim().is_empty() {
+            parts.push(format!("<selected_text>\n{}\n</selected_text>", s.trim()));
+        }
+    }
+    if let Some(o) = ctx.recent_output.as_deref() {
+        if !o.trim().is_empty() {
+            // 后端兜底再截一次（前端应已截断），防止前端漏截导致 token 爆炸
+            let truncated = truncate_lines(o.trim(), 200);
+            parts.push(format!("<recent_terminal_output>\n{}\n</recent_terminal_output>", truncated));
+        }
+    }
+    if let Some(c) = ctx.cwd.as_deref() {
+        if !c.trim().is_empty() {
+            parts.push(format!("<current_directory>{}</current_directory>", c.trim()));
+        }
+    }
+    parts.join("\n\n")
+}
+
+/// 截断终端输出到最多 max_lines 行，避免 token 爆炸
+fn truncate_lines(s: &str, max_lines: usize) -> String {
+    let lines: Vec<&str> = s.lines().collect();
+    if lines.len() <= max_lines {
+        return s.to_string();
+    }
+    let start = lines.len() - max_lines;
+    let mut out = format!("...（已省略前 {} 行）...\n", start);
+    out.push_str(&lines[start..].join("\n"));
+    out
+}
+
+/// 多轮对话返回的消息，直接复用 db 模块的 AiMessage
+pub use super::db::AiMessage;
+
+/// 多轮对话发送一条用户消息，返回 assistant 回复。
+///
+/// Pro 功能（ai_assistant）。流程：
+/// 1. 读取对话历史 → 构造 messages
+/// 2. 把终端上下文拼进本轮 user 消息前部
+/// 3. 存 user 消息 → 调 LLM → 存 assistant 消息 → 返回
+/// 4. 首条消息时自动用 user_text 前 20 字作对话标题
+#[tauri::command]
+pub async fn ai_chat(
+    conversation_id: String,
+    user_text: String,
+    context: Option<TerminalContext>,
+) -> Result<AiMessage, String> {
+    // Pro 功能校验
+    if !check_feature("ai_assistant").await {
+        return Err("AI 助手是专业版功能，请激活 Pro License 后使用".into());
+    }
+
+    // 读配置
+    let (base_url_raw, api_key, model) = match load_config()? {
+        Some(c) => c,
+        None => {
+            return Err("尚未配置 AI 服务。请到「设置 → AI 助手」填写 Base URL、API Key 和模型。".into());
+        }
+    };
+    let base_url = normalize_base_url(&base_url_raw);
+
+    let user_text = user_text.trim();
+    if user_text.is_empty() {
+        return Err("消息内容为空".into());
+    }
+
+    // 构造发给模型的 user 内容（上下文 + 原文）
+    let context_text = match context.as_ref().map(format_context_text) {
+        Some(t) if !t.is_empty() => format!(
+            "以下是当前终端的上下文，供你参考：\n\n{}\n\n---\n\n我的问题：\n{}",
+            t, user_text
+        ),
+        _ => user_text.to_string(),
+    };
+
+    // 读取历史消息
+    let history = super::db::get_ai_messages(conversation_id.clone())
+        .map_err(|e| format!("读取对话历史失败: {}", e))?;
+
+    // 是否首条消息（用于自动生成标题）
+    let is_first = history.is_empty();
+
+    // 存 user 消息（存原文 user_text，上下文快照存 context JSON 字段）
+    let context_json = match &context {
+        Some(ctx) => serde_json::to_string(ctx).ok(),
+        None => None,
+    };
+    super::db::save_ai_message(
+        conversation_id.clone(),
+        "user".into(),
+        user_text.to_string(),
+        context_json,
+    )
+    .map_err(|e| format!("保存消息失败: {}", e))?;
+
+    // 构造完整 messages：system + 历史 + 本轮
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(chat_system_prompt())];
+    for m in &history {
+        match m.role.as_str() {
+            "user" => messages.push(ChatMessage::user(&m.content)),
+            "assistant" => messages.push(ChatMessage::assistant(&m.content)),
+            _ => {} // 跳过系统消息（由 chat_system_prompt 统一注入）
+        }
+    }
+    messages.push(ChatMessage::user(&context_text));
+
+    // 调 LLM
+    let reply = call_chat(&base_url, api_key.as_deref(), &model, &messages)
+        .await
+        .map_err(|e| format!("调用 LLM 失败: {}", e))?;
+
+    // 存 assistant 回复
+    let assistant_msg = super::db::save_ai_message(
+        conversation_id.clone(),
+        "assistant".into(),
+        reply.clone(),
+        None,
+    )
+    .map_err(|e| format!("保存回复失败: {}", e))?;
+
+    // 首条消息：自动生成标题（取 user_text 前 20 字）
+    if is_first {
+        let title: String = user_text.chars().take(20).collect();
+        let title = if user_text.chars().count() > 20 {
+            format!("{}…", title)
+        } else {
+            title
+        };
+        let _ = super::db::rename_ai_conversation(conversation_id, title);
+    }
+
+    Ok(assistant_msg)
 }
 
 // ============ 测试 ============
@@ -500,5 +684,81 @@ mod tests {
     fn test_system_prompt_not_empty() {
         assert!(!system_prompt(&AiKind::ExplainError).is_empty());
         assert!(!system_prompt(&AiKind::NatLangToCommand).is_empty());
+    }
+
+    #[test]
+    fn test_chat_message_serialization() {
+        // 验证序列化结果符合 OpenAI 格式 { role, content }
+        let m = ChatMessage::user("hello");
+        let v: serde_json::Value = serde_json::to_value(&m).unwrap();
+        assert_eq!(v["role"], "user");
+        assert_eq!(v["content"], "hello");
+    }
+
+    #[test]
+    fn test_chat_message_constructors() {
+        assert_eq!(ChatMessage::system("s").role, "system");
+        assert_eq!(ChatMessage::user("u").role, "user");
+        assert_eq!(ChatMessage::assistant("a").role, "assistant");
+    }
+
+    #[test]
+    fn test_format_context_text_all_fields() {
+        let ctx = TerminalContext {
+            recent_output: Some("line1\nline2".into()),
+            selection: Some("err text".into()),
+            cwd: Some("/var/log".into()),
+        };
+        let text = format_context_text(&ctx);
+        assert!(text.contains("<selected_text>"));
+        assert!(text.contains("err text"));
+        assert!(text.contains("<recent_terminal_output>"));
+        assert!(text.contains("<current_directory>/var/log</current_directory>"));
+    }
+
+    #[test]
+    fn test_format_context_text_empty_omitted() {
+        let ctx = TerminalContext {
+            recent_output: Some("   \n  ".into()), // 仅空白
+            selection: None,
+            cwd: None,
+        };
+        let text = format_context_text(&ctx);
+        assert!(text.is_empty(), "纯空白字段应被省略");
+    }
+
+    #[test]
+    fn test_format_context_text_none() {
+        let ctx = TerminalContext {
+            recent_output: None,
+            selection: None,
+            cwd: None,
+        };
+        assert!(format_context_text(&ctx).is_empty());
+    }
+
+    #[test]
+    fn test_truncate_lines_short() {
+        assert_eq!(truncate_lines("a\nb", 5), "a\nb");
+    }
+
+    #[test]
+    fn test_truncate_lines_long() {
+        let input: String = (0..10).map(|i| format!("line{}", i)).collect::<Vec<_>>().join("\n");
+        let out = truncate_lines(&input, 3);
+        assert!(out.contains("已省略前 7 行"));
+        assert!(out.contains("line7"));
+        assert!(out.contains("line9"));
+        assert!(!out.contains("line0"));
+    }
+
+    #[test]
+    fn test_truncate_lines_empty() {
+        assert_eq!(truncate_lines("", 5), "");
+    }
+
+    #[test]
+    fn test_chat_system_prompt_not_empty() {
+        assert!(!chat_system_prompt().is_empty());
     }
 }
