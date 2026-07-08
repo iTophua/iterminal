@@ -274,6 +274,7 @@ pub async fn execute_command(id: String, command: String) -> Result<CommandResul
 
     let mut output = Vec::new();
     let mut error_output = Vec::new();
+    let mut exit_code: Option<u32> = None;
     while let Some(msg) = channel.wait().await {
         match msg {
             ChannelMsg::Data { data } => output.extend_from_slice(&data),
@@ -283,19 +284,23 @@ pub async fn execute_command(id: String, command: String) -> Result<CommandResul
                 }
             }
             ChannelMsg::ExitStatus { exit_status } => {
-                return Ok(CommandResult {
-                    success: exit_status == 0,
-                    output: String::from_utf8_lossy(&output).to_string(),
-                    error: if error_output.is_empty() { None } else { Some(String::from_utf8_lossy(&error_output).to_string()) },
-                });
+                exit_code = Some(exit_status);
+                // 不直接 return：继续等 EOF，确保 channel 完整关闭
             }
             ChannelMsg::Eof => break,
+            ChannelMsg::Close => break,
             _ => {}
         }
     }
 
+    // 显式关闭 channel，确保远程 sshd 侧资源释放
+    // （Docker 轮询等高频 exec 场景下，不关闭会累积半关闭 channel 导致泄漏）
+    let _ = channel.eof();
+    let _ = channel.close().await;
+
+    let success = exit_code.map(|c| c == 0).unwrap_or(true);
     Ok(CommandResult {
-        success: true,
+        success,
         output: String::from_utf8_lossy(&output).to_string(),
         error: if error_output.is_empty() { None } else { Some(String::from_utf8_lossy(&error_output).to_string()) },
     })

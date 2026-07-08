@@ -33,9 +33,17 @@ export type ContainerAction = 'start' | 'stop' | 'restart' | 'kill' | 'remove'
  * 免费版功能。前提：远程服务器已装 docker 且当前用户有权限。
  */
 
-/** 列出容器 */
+/** 列出容器（不含资源占用，轻量快速） */
 export async function listContainers(connectionId: string, all = false): Promise<ContainerInfo[]> {
   return invoke<ContainerInfo[]>('list_containers', { connectionId, all })
+}
+
+/** 容器资源占用 map（容器名 → 指标）。独立拉取，避免每次列表轮询都跑昂贵的 stats */
+export type ContainerStatsMap = Record<string, Partial<Pick<ContainerInfo, 'cpuPercent' | 'memUsage' | 'memPercent' | 'netIo' | 'blockIo'>>>
+
+export async function listContainerStats(connectionId: string): Promise<ContainerStatsMap> {
+  const json = await invoke<string>('list_container_stats', { connectionId })
+  return JSON.parse(json) as ContainerStatsMap
 }
 
 /** 容器操作 */

@@ -55,37 +55,43 @@ pub struct ImageInfo {
 
 /// 列出容器。
 /// `all=false` 仅运行中，`true` 含已停止。
-/// 同时拉取 docker stats（仅运行中容器有资源占用数据）。
 #[tauri::command]
 pub async fn list_containers(connection_id: String, all: bool) -> Result<Vec<ContainerInfo>, String> {
     let flag = if all { "--all" } else { "" };
     // --format '{{json .}}' 每行一个 JSON
     let cmd = format!("docker ps --format '{{{{json .}}}}' {}", flag);
-    let result = execute_command(connection_id.clone(), cmd).await?;
+    let result = execute_command(connection_id, cmd).await?;
     if !result.success {
         return Err(format_docker_error(&result));
     }
-    let mut containers = parse_container_lines(&result.output);
+    Ok(parse_container_lines(&result.output))
+}
 
-    // 拉取资源占用（--no-stream 一次性返回，不阻塞）。失败不致命（旧 docker 无 stats）。
+/// 单独拉取容器资源占用（docker stats --no-stream）。
+/// 返回 容器名 → 各项指标的 map（JSON 字符串）。
+/// 前端独立轮询（频率低于容器列表轮询），避免每次都跑昂贵的 stats。
+#[tauri::command]
+pub async fn list_container_stats(connection_id: String) -> Result<String, String> {
     let stats_cmd = "docker stats --no-stream --format '{{json .}}'";
-    if let Ok(stats_result) = execute_command(connection_id.clone(), stats_cmd.into()).await {
-        if stats_result.success {
-            let stats = parse_stats_lines(&stats_result.output);
-            // 按容器名 merge（docker stats 的 Name 去掉前导 /，与 docker ps 的 Names 一致）
-            for c in containers.iter_mut() {
-                if let Some(s) = stats.get(&c.name) {
-                    c.cpu_percent = s.cpu_percent.clone();
-                    c.mem_usage = s.mem_usage.clone();
-                    c.mem_percent = s.mem_percent.clone();
-                    c.net_io = s.net_io.clone();
-                    c.block_io = s.block_io.clone();
-                }
-            }
-        }
+    let result = execute_command(connection_id, stats_cmd.into()).await?;
+    if !result.success {
+        return Err(format_docker_error(&result));
     }
-
-    Ok(containers)
+    let stats = parse_stats_lines(&result.output);
+    // 序列化为 { "容器名": { "cpuPercent": "...", ... } } 给前端 merge
+    let map: std::collections::HashMap<&str, serde_json::Value> = stats
+        .iter()
+        .map(|(name, s)| {
+            (name.as_str(), serde_json::json!({
+                "cpuPercent": s.cpu_percent,
+                "memUsage": s.mem_usage,
+                "memPercent": s.mem_percent,
+                "netIo": s.net_io,
+                "blockIo": s.block_io,
+            }))
+        })
+        .collect();
+    serde_json::to_string(&map).map_err(|e| format!("序列化 stats 失败: {}", e))
 }
 
 /// 解析 docker stats --no-stream --format '{{json .}}' 的输出。

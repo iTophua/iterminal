@@ -17,12 +17,14 @@ import {
 } from '@ant-design/icons'
 import {
   listContainers,
+  listContainerStats,
   containerAction,
   listImages,
   removeImage,
   type ContainerInfo,
   type ImageInfo,
   type ContainerAction as DockerAction,
+  type ContainerStatsMap,
 } from '../services/docker'
 
 interface DockerPanelProps {
@@ -55,24 +57,54 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
   const [paused, setPaused] = useState(false)
   const [sortBy, setSortBy] = useState<SortBy>('default')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // stats 轮询（独立，频率低于列表轮询。docker stats --no-stream 较昂贵）
+  const statsIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // 缓存最新 stats，列表轮询时 merge 进去（避免每次列表轮询都跑 stats）
+  const statsCacheRef = useRef<ContainerStatsMap>({})
 
   // 镜像
   const [images, setImages] = useState<ImageInfo[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
 
-  // ---- 加载容器 ----
+  // 把缓存的 stats merge 进容器列表
+  const mergeStats = useCallback((list: ContainerInfo[]): ContainerInfo[] => {
+    const cache = statsCacheRef.current
+    if (Object.keys(cache).length === 0) return list
+    return list.map(c => {
+      const s = cache[c.name]
+      return s ? { ...c, ...s } : c
+    })
+  }, [])
+
+  // ---- 加载容器列表（轻量，只跑 docker ps）----
   const fetchContainers = useCallback(async () => {
     if (!connectionId) return
     setLoadingContainers(true)
     try {
       const list = await listContainers(connectionId, showAll)
-      setContainers(list)
+      setContainers(mergeStats(list))
     } catch (err) {
       message.error(`加载容器失败: ${err}`)
     } finally {
       setLoadingContainers(false)
     }
-  }, [connectionId, showAll, message])
+  }, [connectionId, showAll, message, mergeStats])
+
+  // ---- 加载资源占用（昂贵，独立轮询）----
+  const fetchStats = useCallback(async () => {
+    if (!connectionId) return
+    try {
+      const stats = await listContainerStats(connectionId)
+      statsCacheRef.current = stats
+      // merge 到现有容器列表
+      setContainers(prev => prev.map(c => {
+        const s = stats[c.name]
+        return s ? { ...c, ...s } : c
+      }))
+    } catch {
+      // stats 失败不报错（不影响列表）
+    }
+  }, [connectionId])
 
   const fetchImages = useCallback(async () => {
     if (!connectionId) return
@@ -113,6 +145,31 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
       }
     }
   }, [activeTab, connectionId, paused, refreshInterval])
+
+  // stats 独立轮询（15秒，比列表轮询低频。docker stats --no-stream 较昂贵）
+  const fetchStatsRef = useRef(fetchStats)
+  fetchStatsRef.current = fetchStats
+  useEffect(() => {
+    if (activeTab !== 'containers' || !connectionId || paused) {
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current)
+        statsIntervalRef.current = null
+      }
+      return
+    }
+    const fetchS = () => fetchStatsRef.current()
+    const initialTimer = setTimeout(() => {
+      fetchS()
+      statsIntervalRef.current = setInterval(fetchS, 15000)
+    }, 500)
+    return () => {
+      clearTimeout(initialTimer)
+      if (statsIntervalRef.current) {
+        clearInterval(statsIntervalRef.current)
+        statsIntervalRef.current = null
+      }
+    }
+  }, [activeTab, connectionId, paused])
 
   // 切到镜像 tab 时加载
   useEffect(() => {

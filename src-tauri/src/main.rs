@@ -84,6 +84,7 @@ fn main() {
             iterminal::commands::port_forward::stop_port_forward,
             iterminal::commands::port_forward::list_port_forwards,
             iterminal::commands::docker::list_containers,
+            iterminal::commands::docker::list_container_stats,
             iterminal::commands::docker::container_action,
             iterminal::commands::docker::container_logs,
             iterminal::commands::docker::list_images,
