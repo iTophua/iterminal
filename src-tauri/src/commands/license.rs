@@ -58,8 +58,9 @@ pub struct LicenseInfo {
 
 /// 免费版的功能列表
 ///
-/// 仅基础功能；所有 Pro/Enterprise feature key（snippets、ai_assistant、
-/// port_forward、cloud_sync、docker_mgmt、audit_log、team_collab）均不可用。
+/// 基础功能 + Docker 管理（2026-07 下沉到免费版）。
+/// Pro/Enterprise 专属 feature（snippets、ai_assistant、port_forward、
+/// cloud_sync、audit_log、team_collab）在免费版不可用。
 fn free_features() -> Vec<String> {
     vec![
         "basic_ssh".into(),
@@ -71,6 +72,7 @@ fn free_features() -> Vec<String> {
         "broadcast_input".into(),
         "proxy_jump".into(),
         "themes".into(),
+        "docker_mgmt".into(),
     ]
 }
 

@@ -1218,9 +1218,9 @@ ${claudeConfig}`}
     }
 
     const licenseFeatures = {
-      Free: ['SSH 连接管理', 'SFTP 文件传输', '系统监控', '最多 3 个连接'],
-      Pro: ['无限连接', 'AI 日志分析', '命令片段库', '端口转发', '配置云同步', '终端主题', '优先支持'],
-      Enterprise: ['所有功能', 'Docker 管理', '审计日志', '团队协作', '专属客服', '定制开发'],
+      Free: ['SSH 连接管理', 'SFTP 文件传输', '系统监控', 'Docker 管理', '最多 3 个连接'],
+      Pro: ['无限连接', 'AI 对话助手', '命令片段库', '端口转发', '配置云同步', '终端主题', '优先支持'],
+      Enterprise: ['所有功能', '审计日志', '团队协作', '专属客服', '定制开发'],
     }
 
     const handleActivate = async () => {
@@ -1317,7 +1317,7 @@ ${claudeConfig}`}
                   </div>
                   <div style={{ fontSize: 13, color: 'var(--color-text-secondary)', marginBottom: 8, lineHeight: 1.6 }}>
                     全部 Pro 功能<br />
-                    Docker 管理 · 审计日志 · 团队协作
+                    审计日志 · 团队协作 · 专属支持
                   </div>
                   <div style={{ fontSize: 24, fontWeight: 'bold', color: 'var(--color-text)', marginBottom: 8 }}>
                     定制<span style={{ fontSize: 14, color: 'var(--color-text-tertiary)' }}> / 联系销售</span>

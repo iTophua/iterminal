@@ -46,6 +46,7 @@ import SnippetsPanel from '../components/SnippetsPanel'
 import AiAssistantModal from '../components/AiAssistantModal'
 import PortForwardPanel from '../components/PortForwardPanel'
 import AiChatPanel from '../components/AiChatPanel'
+import DockerPanel from '../components/DockerPanel'
 import type { TerminalContext } from '../services/ai'
 import { STORAGE_KEYS } from '../config/constants'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
@@ -486,6 +487,9 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     aiChatVisible,
     setAiChatVisible,
     toggleAiChat,
+    dockerVisible,
+    setDockerVisible,
+    toggleDocker,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
 
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -2302,7 +2306,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       </div>
 
       <div style={{
-        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible || snippetsVisible || portForwardVisible || aiChatVisible) ? 360 : 0,
+        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible || snippetsVisible || portForwardVisible || aiChatVisible || dockerVisible) ? 360 : 0,
         height: '100%',
         flexShrink: 0,
         overflow: 'hidden',
@@ -2389,6 +2393,12 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             }}
           />
         )}
+        {dockerVisible && activeConnectionId && (
+          <DockerPanel
+            connectionId={activeConnectionId}
+            onClose={() => setDockerVisible(false)}
+          />
+        )}
       </div>
 
       <RightSidebar
@@ -2402,6 +2412,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         portForwardEnabled={portForwardEnabled}
         aiChatVisible={aiChatVisible}
         aiChatEnabled={aiEnabled}
+        dockerVisible={dockerVisible}
         mcpEnabled={mcpEnabled}
         isFullscreen={isFullscreen}
         showFullscreen={singleConnectionMode}
@@ -2442,6 +2453,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         onSnippetsToggle={() => setSnippetsVisible(!snippetsVisible)}
         onPortForwardToggle={() => setPortForwardVisible(!portForwardVisible)}
         onAiChatToggle={toggleAiChat}
+        onDockerToggle={toggleDocker}
         />
 
       {contextMenu.visible && createPortal(

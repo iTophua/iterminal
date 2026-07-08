@@ -10,6 +10,7 @@ export function useRightPanels(
   const [snippetsVisible, setSnippetsVisible] = useState(false)
   const [portForwardVisible, setPortForwardVisible] = useState(false)
   const [aiChatVisible, setAiChatVisible] = useState(false)
+  const [dockerVisible, setDockerVisible] = useState(false)
 
   const hasAnyPanelOpen =
     monitorVisible ||
@@ -17,17 +18,19 @@ export function useRightPanels(
     apiLogVisible ||
     snippetsVisible ||
     portForwardVisible ||
-    aiChatVisible
+    aiChatVisible ||
+    dockerVisible
   const rightPanelWidth = hasAnyPanelOpen ? 392 : 32
 
   // 关闭除指定面板外的其它面板（保证同时只开一个）
   const closeOthers = useCallback(
-    (keep: 'monitor' | 'fileManager' | 'apiLog' | 'snippets' | 'portForward' | 'aiChat' | null) => {
+    (keep: 'monitor' | 'fileManager' | 'apiLog' | 'snippets' | 'portForward' | 'aiChat' | 'docker' | null) => {
       if (keep !== 'monitor') setMonitorVisible(false)
       if (keep !== 'apiLog') setApiLogVisible(false)
       if (keep !== 'snippets') setSnippetsVisible(false)
       if (keep !== 'portForward') setPortForwardVisible(false)
       if (keep !== 'aiChat') setAiChatVisible(false)
+      if (keep !== 'docker') setDockerVisible(false)
       if (keep !== 'fileManager' && activeConnectionId && fileManagerVisible[activeConnectionId]) {
         setFileManagerVisible(activeConnectionId, false)
       }
@@ -87,6 +90,15 @@ export function useRightPanels(
     }
   }, [aiChatVisible, closeOthers])
 
+  const toggleDocker = useCallback(() => {
+    if (dockerVisible) {
+      setDockerVisible(false)
+    } else {
+      closeOthers('docker')
+      setDockerVisible(true)
+    }
+  }, [dockerVisible, closeOthers])
+
   return {
     monitorVisible,
     setMonitorVisible,
@@ -98,6 +110,8 @@ export function useRightPanels(
     setPortForwardVisible,
     aiChatVisible,
     setAiChatVisible,
+    dockerVisible,
+    setDockerVisible,
     rightPanelWidth,
     openMonitor,
     openFileManager,
@@ -105,5 +119,6 @@ export function useRightPanels(
     toggleSnippets,
     togglePortForward,
     toggleAiChat,
+    toggleDocker,
   }
 }

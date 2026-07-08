@@ -470,6 +470,104 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
     Ok(shell_id)
 }
 
+/// 打开容器交互终端（docker exec -it）。
+///
+/// 复用 get_shell 的 PTY + reader 机制，唯一区别：用 exec 执行
+/// `docker exec -it {container} {shell}` 而非 request_shell。
+/// shell_id 用同样的 `{connectionId}-shell-{ts}` 前缀，保证 cleanup_connection
+/// 能正常 reap；注册进同一个 SHELLS，write_shell/resize_shell/close_shell 零改动复用。
+#[tauri::command]
+pub async fn get_docker_shell(
+    id: String,
+    container_id: String,
+    app: AppHandle,
+) -> Result<String, String> {
+    let sessions = SESSIONS.read().await;
+    let session = sessions.get(&id).ok_or("Session not found")?;
+    let mut channel = session
+        .handle
+        .channel_open_session()
+        .await
+        .map_err(|e| e.to_string())?;
+    drop(sessions);
+
+    channel
+        .request_pty(true, "xterm", 80, 24, 0, 0, &[])
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // docker exec -it：进入容器交互。优先 bash，容器若无 bash 会报错（前端提示）
+    let exec_cmd = format!("docker exec -it {} bash", container_id);
+    channel.exec(true, exec_cmd.as_str()).await.map_err(|e| e.to_string())?;
+
+    let (cancel_tx, mut cancel_rx) = oneshot::channel();
+    let (resize_tx, mut resize_rx) = mpsc::channel::<(u32, u32)>(10);
+    let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(100);
+
+    let shell_id = format!("{}-shell-{}", id, chrono::Utc::now().timestamp_millis());
+
+    let shell_id_clone = shell_id.clone();
+    let app_handle = app.clone();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = &mut cancel_rx => break,
+
+                Some((cols, rows)) = resize_rx.recv() => {
+                    if let Err(e) = channel.window_change(cols, rows, 0, 0).await {
+                        eprintln!("Resize error for docker shell {}: {}", shell_id_clone, e);
+                    }
+                }
+
+                Some(data) = write_rx.recv() => {
+                    if let Err(e) = channel.data(&data[..]).await {
+                        eprintln!("Write error for docker shell {}: {}", shell_id_clone, e);
+                        let _ = app_handle.emit(
+                            &format!("shell-output-{}", shell_id_clone),
+                            serde_json::json!({"eof": true}),
+                        );
+                        break;
+                    }
+                }
+
+                msg = channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            let data_str = String::from_utf8_lossy(&data).to_string();
+                            let event_name = format!("shell-output-{}", shell_id_clone);
+                            let _ = app_handle.emit(&event_name, &data_str);
+                        }
+                        Some(ChannelMsg::Eof) => {
+                            let event_name = format!("shell-output-{}", shell_id_clone);
+                            let _ = app_handle.emit(&event_name, serde_json::json!({"eof": true}));
+                            break;
+                        }
+                        None | Some(ChannelMsg::Close) => {
+                            // docker exec 退出（exit/容器停止）不清理整个连接，
+                            // 只通知前端 shell 结束
+                            let event_name = format!("shell-output-{}", shell_id_clone);
+                            let _ = app_handle.emit(&event_name, serde_json::json!({"eof": true}));
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    });
+
+    SHELLS.write().await.insert(
+        shell_id.clone(),
+        ShellSession {
+            cancel_tx,
+            resize_tx,
+            write_tx,
+        },
+    );
+    Ok(shell_id)
+}
+
 #[tauri::command]
 pub async fn write_shell(id: String, data: String) -> Result<bool, String> {
     let shells = SHELLS.read().await;

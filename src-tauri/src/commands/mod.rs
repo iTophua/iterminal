@@ -1,6 +1,7 @@
 pub mod ai;
 pub mod api;
 pub mod db;
+pub mod docker;
 pub mod license;
 pub mod port_forward;
 pub mod sftp;

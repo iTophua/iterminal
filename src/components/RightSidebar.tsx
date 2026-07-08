@@ -8,6 +8,7 @@ import {
   ThunderboltOutlined,
   LinkOutlined,
   MessageOutlined,
+  DeploymentUnitOutlined,
 } from '@ant-design/icons'
 
 interface RightSidebarProps {
@@ -21,6 +22,7 @@ interface RightSidebarProps {
   portForwardEnabled: boolean
   aiChatVisible: boolean
   aiChatEnabled: boolean
+  dockerVisible: boolean
   mcpEnabled: boolean
   isFullscreen?: boolean
   showFullscreen?: boolean
@@ -30,6 +32,7 @@ interface RightSidebarProps {
   onSnippetsToggle: () => void
   onPortForwardToggle: () => void
   onAiChatToggle: () => void
+  onDockerToggle: () => void
   onFullscreenToggle?: () => void
 }
 
@@ -44,6 +47,7 @@ export function RightSidebar({
   portForwardEnabled,
   aiChatVisible,
   aiChatEnabled,
+  dockerVisible,
   mcpEnabled,
   isFullscreen,
   showFullscreen,
@@ -53,6 +57,7 @@ export function RightSidebar({
   onSnippetsToggle,
   onPortForwardToggle,
   onAiChatToggle,
+  onDockerToggle,
   onFullscreenToggle,
 }: RightSidebarProps) {
   return (
@@ -123,6 +128,14 @@ export function RightSidebar({
                 size="small"
                 icon={<FolderOutlined />}
                 onClick={onFileManagerToggle}
+              />
+            </Tooltip>
+            <Tooltip title="Docker 管理" placement="left">
+              <Button
+                type={dockerVisible ? 'primary' : 'text'}
+                size="small"
+                icon={<DeploymentUnitOutlined />}
+                onClick={onDockerToggle}
               />
             </Tooltip>
             {mcpEnabled && (
