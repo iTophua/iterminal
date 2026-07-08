@@ -728,6 +728,10 @@ echo "<<D>>";df -h 2>/dev/null|grep '^/dev'||true
         }
     }
 
+    // 显式关闭 channel，避免半关闭状态泄漏（监控面板高频轮询场景）
+    let _ = channel.eof();
+    let _ = channel.close().await;
+
     let output_str = String::from_utf8_lossy(&output).to_string();
     let mut section = "";
     let (mut hostname, mut os, mut kernel, mut uptime) = (
@@ -924,6 +928,10 @@ pub async fn get_network_stats(id: String) -> Result<NetworkStats, String> {
         }
     }
 
+    // 显式关闭 channel，避免半关闭状态泄漏（监控面板高频轮询场景）
+    let _ = channel.eof();
+    let _ = channel.close().await;
+
     let output_str = String::from_utf8_lossy(&output).to_string();
     let mut interfaces: Vec<NetworkInterface> = Vec::new();
 
@@ -998,6 +1006,10 @@ pub async fn list_processes(id: String) -> Result<Vec<ProcessInfo>, String> {
             output.extend_from_slice(&data);
         }
     }
+
+    // 显式关闭 channel，避免半关闭状态泄漏（监控面板高频轮询场景）
+    let _ = channel.eof();
+    let _ = channel.close().await;
 
     let output_str = String::from_utf8_lossy(&output).to_string();
     let mut processes: Vec<ProcessInfo> = Vec::new();
