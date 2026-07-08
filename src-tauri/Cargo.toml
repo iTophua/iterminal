@@ -30,6 +30,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-opener = "2"
 rand = "0.8"
+# AI 助手流式输出：迭代 reqwest 的 bytes_stream()
+tokio-stream = "0.1"
 urlencoding = "2.1"
 
 # 数据库和加密
@@ -45,7 +47,8 @@ hex = "0.4"
 dirs = "5"
 hostname = "0.4"
 # AI 助手：调用 OpenAI 兼容的 /v1/chat/completions（rustls 避免 macOS OpenSSL 链接问题）
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# stream: 支持 SSE 流式响应（bytes_stream）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 
 [features]
 default = ["custom-protocol"]

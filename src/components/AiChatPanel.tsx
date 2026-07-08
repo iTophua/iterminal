@@ -11,15 +11,22 @@ import {
   ReloadOutlined,
   MoreOutlined,
   PaperClipOutlined,
+  StopOutlined,
+  BulbOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
+import 'highlight.js/styles/github-dark.css'
 import {
   listConversations,
   createConversation,
   renameConversation,
   deleteConversation,
   getMessages,
-  chatSend,
+  chatSendStream,
   parseContext,
   type AiConversation,
   type AiMessage,
@@ -36,50 +43,15 @@ interface AiChatPanelProps {
   onRunCommand?: (command: string) => void
   /** 采集当前活动终端的上下文 */
   getTerminalContext?: () => TerminalContext | null
+  /** 外部预填输入框（如终端右键「发送到 AI 对话」）。变化时填入输入框并聚焦。 */
+  initialText?: string
 }
 
-// 简单的文本 → 段落/代码块分段。不依赖 markdown 库。
-// 识别 ``` 代码块；其余作为普通文本（保留换行）。
-interface Block {
-  type: 'code' | 'text'
-  content: string
-  lang?: string
-}
-
-function splitBlocks(content: string): Block[] {
-  const blocks: Block[] = []
-  const lines = content.split('\n')
-  let i = 0
-  let buf: string[] = []
-  while (i < lines.length) {
-    const line = lines[i]
-    const fence = line.match(/^\s*```(\w*)/)
-    if (fence) {
-      // 先把累积的文本入栈
-      if (buf.length) {
-        blocks.push({ type: 'text', content: buf.join('\n') })
-        buf = []
-      }
-      const lang = fence[1] || undefined
-      const code: string[] = []
-      i++
-      while (i < lines.length && !/^\s*```/.test(lines[i])) {
-        code.push(lines[i])
-        i++
-      }
-      // 跳过结束 ```
-      i++
-      blocks.push({ type: 'code', content: code.join('\n'), lang })
-    } else {
-      buf.push(line)
-      i++
-    }
-  }
-  if (buf.length) {
-    blocks.push({ type: 'text', content: buf.join('\n') })
-  }
-  // 去掉首尾空文本块
-  return blocks.filter(b => b.content.trim() !== '')
+/** 当前选中内容（快捷提问据此拼接），由 getTerminalContext 间接获得 */
+function getSelectionFromContext(getTerminalContext?: () => TerminalContext | null): string {
+  if (!getTerminalContext) return ''
+  const ctx = getTerminalContext()
+  return ctx?.selection || ''
 }
 
 export default function AiChatPanel({
@@ -88,6 +60,7 @@ export default function AiChatPanel({
   onInsertCommand,
   onRunCommand,
   getTerminalContext,
+  initialText,
 }: AiChatPanelProps) {
   const { message, modal } = App.useApp()
   const [conversations, setConversations] = useState<AiConversation[]>([])
@@ -99,6 +72,10 @@ export default function AiChatPanel({
   const [loadingMsgs, setLoadingMsgs] = useState(false)
   const [attachContext, setAttachContext] = useState(true)
 
+  // 流式：正在生成的消息 id（用于显示打字光标 + 允许停止）
+  const [streamingId, setStreamingId] = useState<string | null>(null)
+  const cancelRef = useRef<(() => void) | null>(null)
+
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<any>(null)
 
@@ -108,7 +85,6 @@ export default function AiChatPanel({
     try {
       const list = await listConversations(connectionId || undefined)
       setConversations(list)
-      // 如果当前没有选中对话，选第一个
       setActiveId(prev => prev && list.some(c => c.id === prev) ? prev : (list[0]?.id ?? null))
     } catch (err) {
       message.error(`加载对话失败: ${err}`)
@@ -130,15 +106,9 @@ export default function AiChatPanel({
     let cancelled = false
     setLoadingMsgs(true)
     getMessages(activeId)
-      .then(msgs => {
-        if (!cancelled) setMessages(msgs)
-      })
-      .catch(err => {
-        if (!cancelled) message.error(`加载消息失败: ${err}`)
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingMsgs(false)
-      })
+      .then(msgs => { if (!cancelled) setMessages(msgs) })
+      .catch(err => { if (!cancelled) message.error(`加载消息失败: ${err}`) })
+      .finally(() => { if (!cancelled) setLoadingMsgs(false) })
     return () => { cancelled = true }
   }, [activeId, message])
 
@@ -146,6 +116,15 @@ export default function AiChatPanel({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // ---- 外部预填输入框（终端右键「发送到 AI 对话」）----
+  useEffect(() => {
+    if (initialText !== undefined && initialText !== '') {
+      setInput(initialText)
+      // 延迟聚焦，确保面板已渲染
+      setTimeout(() => inputRef.current?.focus(), 50)
+    }
+  }, [initialText])
 
   // ---- 新建对话 ----
   const handleNewConversation = useCallback(async () => {
@@ -210,10 +189,10 @@ export default function AiChatPanel({
     })
   }, [conversations, message, modal])
 
-  // ---- 发送消息 ----
+  // ---- 发送消息（流式）----
   const handleSend = useCallback(async () => {
     const text = input.trim()
-    if (!text) return
+    if (!text || sending) return
     // 必须有活动对话；没有则自动建一个
     let convId = activeId
     if (!convId) {
@@ -228,10 +207,10 @@ export default function AiChatPanel({
       }
     }
 
-    // 采集上下文一次，复用给乐观消息和真实发送（避免两次采集不一致）
+    // 采集上下文一次，复用给乐观消息和真实发送
     const ctx = attachContext ? (getTerminalContext?.() ?? undefined) : undefined
 
-    // 乐观插入 user 消息（提升响应感）
+    // 乐观插入 user 消息
     const optimisticUser: AiMessage = {
       id: `tmp-user-${Date.now()}`,
       conversationId: convId,
@@ -240,24 +219,61 @@ export default function AiChatPanel({
       context: ctx ? JSON.stringify(ctx) : null,
       createdAt: Date.now(),
     }
-    setMessages(prev => [...prev, optimisticUser])
+    // 占位 assistant 消息（流式填充）
+    const placeholderId = `tmp-assistant-${Date.now()}`
+    const placeholder: AiMessage = {
+      id: placeholderId,
+      conversationId: convId,
+      role: 'assistant',
+      content: '',
+      context: null,
+      createdAt: Date.now() + 1,
+    }
+    setMessages(prev => [...prev, optimisticUser, placeholder])
     setInput('')
     setSending(true)
+    setStreamingId(placeholderId)
 
     try {
-      const assistantMsg = await chatSend(convId, text, ctx)
-      // 保留乐观 user 消息（内容与后端存的一致）+ 追加 assistant 回复
-      setMessages(prev => [...prev, assistantMsg])
-      // 刷新对话列表（标题可能被后端自动更新了）
-      refreshConversations()
+      const { cancel } = await chatSendStream(convId, text, ctx, (chunk) => {
+        if (chunk.error) {
+          // 出错：把占位消息内容设为错误提示
+          setMessages(prev => prev.map(m => m.id === placeholderId
+            ? { ...m, content: `⚠️ ${chunk.error}` }
+            : m))
+          setStreamingId(null)
+          cancelRef.current = null
+        } else if (chunk.done) {
+          // 完成：后端已持久化 assistant 消息。保留占位消息（内容已完整），
+          // 下次加载对话时会自动替换为真实 id。仅刷新对话列表（标题可能更新）。
+          refreshConversations()
+          setStreamingId(null)
+          cancelRef.current = null
+        } else if (chunk.delta) {
+          // 增量拼接
+          setMessages(prev => prev.map(m => m.id === placeholderId
+            ? { ...m, content: m.content + chunk.delta }
+            : m))
+        }
+      })
+      cancelRef.current = cancel
     } catch (err) {
-      // 回滚乐观消息
-      setMessages(prev => prev.filter(m => m.id !== optimisticUser.id))
+      setMessages(prev => prev.filter(m => m.id !== optimisticUser.id && m.id !== placeholderId))
       message.error(`发送失败: ${err}`)
+      setStreamingId(null)
+      cancelRef.current = null
     } finally {
       setSending(false)
     }
-  }, [input, activeId, connectionId, attachContext, getTerminalContext, message, refreshConversations])
+  }, [input, sending, activeId, connectionId, attachContext, getTerminalContext, message, refreshConversations])
+
+  // ---- 停止生成 ----
+  const handleStop = useCallback(() => {
+    cancelRef.current?.()
+    cancelRef.current = null
+    setStreamingId(null)
+    setSending(false)
+  }, [])
 
   // ---- 复制命令 ----
   const handleCopy = useCallback(async (cmd: string) => {
@@ -269,7 +285,31 @@ export default function AiChatPanel({
     }
   }, [message])
 
+  // ---- 快捷提问填充 ----
+  const handleQuickPrompt = useCallback((prompt: string) => {
+    setInput(prompt)
+    setTimeout(() => inputRef.current?.focus(), 30)
+  }, [])
+
   const activeConv = conversations.find(c => c.id === activeId)
+
+  // 快捷提问预设（含选中内容时动态拼接）
+  const selection = getSelectionFromContext(getTerminalContext)
+  const quickPrompts: Array<{ label: string; icon: React.ReactNode; prompt: string }> = [
+    {
+      label: '解释报错',
+      icon: <BulbOutlined />,
+      prompt: selection ? `解释这段终端输出的报错原因并给出修复建议：\n\n${selection}` : '解释这段输出的报错原因并给出修复建议',
+    },
+    {
+      label: '优化命令',
+      icon: <ThunderboltOutlined />,
+      prompt: selection ? `优化这条命令：\n\n\`\`\`bash\n${selection}\n\`\`\`` : '优化我接下来要粘贴的命令',
+    },
+    { label: '查高占用进程', icon: <ThunderboltOutlined />, prompt: '怎么查看 CPU 占用最高的 10 个进程？' },
+    { label: '查磁盘空间', icon: <ThunderboltOutlined />, prompt: '怎么查看磁盘空间使用情况？' },
+    { label: '查端口占用', icon: <ThunderboltOutlined />, prompt: '怎么查看哪个进程占用了某个端口？' },
+  ]
 
   return (
     <div style={{
@@ -302,7 +342,6 @@ export default function AiChatPanel({
           notFoundContent={loadingConvs ? null : '暂无对话'}
           allowClear
         />
-        {/* 对话操作菜单（重命名/删除） */}
         {activeConv && (
           <Dropdown
             trigger={['click']}
@@ -331,7 +370,7 @@ export default function AiChatPanel({
       </div>
 
       {/* 消息区 */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px 10px' }}>
+      <div style={{ flex: 1, overflow: 'auto', padding: '12px 10px' }} className="ai-chat-messages">
         {loadingMsgs ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
         ) : messages.length === 0 ? (
@@ -346,16 +385,12 @@ export default function AiChatPanel({
               <MessageBubble
                 key={m.id}
                 message={m}
+                streaming={m.id === streamingId}
                 onCopy={handleCopy}
                 onInsert={onInsertCommand}
                 onRun={onRunCommand}
               />
             ))}
-            {sending && (
-              <div style={{ textAlign: 'center', padding: 8 }}>
-                <Spin size="small" />
-              </div>
-            )}
             <div ref={messagesEndRef} />
           </>
         )}
@@ -367,6 +402,24 @@ export default function AiChatPanel({
         padding: '8px 10px',
         flexShrink: 0,
       }}>
+        {/* 快捷提问 */}
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 4,
+          marginBottom: 6,
+        }}>
+          {quickPrompts.map(p => (
+            <Tag
+              key={p.label}
+              style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
+              onClick={() => handleQuickPrompt(p.prompt)}
+            >
+              {p.icon} {p.label}
+            </Tag>
+          ))}
+        </div>
+
         <Input.TextArea
           ref={inputRef}
           value={input}
@@ -396,38 +449,51 @@ export default function AiChatPanel({
               <Switch size="small" checked={attachContext} onChange={setAttachContext} />
             </div>
           </Tooltip>
-          <Button
-            type="primary"
-            size="small"
-            icon={<SendOutlined />}
-            loading={sending}
-            disabled={!input.trim()}
-            onClick={handleSend}
-          >
-            发送
-          </Button>
+          {sending ? (
+            <Button
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              onClick={handleStop}
+            >
+              停止
+            </Button>
+          ) : (
+            <Button
+              type="primary"
+              size="small"
+              icon={<SendOutlined />}
+              disabled={!input.trim()}
+              onClick={handleSend}
+            >
+              发送
+            </Button>
+          )}
         </div>
       </div>
     </div>
   )
 }
 
-// ============ 消息气泡 ============
+// ============ 消息气泡（Markdown 渲染）============
 
 function MessageBubble({
   message: msg,
+  streaming,
   onCopy,
   onInsert,
   onRun,
 }: {
   message: AiMessage
+  streaming: boolean
   onCopy: (cmd: string) => void
   onInsert?: (cmd: string) => void
   onRun?: (cmd: string) => void
 }) {
   const isUser = msg.role === 'user'
   const ctx = parseContext(msg.context)
-  const blocks = splitBlocks(msg.content)
+  // 流式且内容为空时显示加载态
+  const isEmpty = streaming && msg.content === ''
 
   return (
     <div style={{
@@ -435,15 +501,18 @@ function MessageBubble({
       justifyContent: isUser ? 'flex-end' : 'flex-start',
       marginBottom: 12,
     }}>
-      <div style={{
-        maxWidth: '88%',
-        padding: '8px 10px',
-        borderRadius: 8,
-        background: isUser
-          ? 'color-mix(in srgb, var(--color-primary) 12%, transparent)'
-          : 'var(--color-fill-quaternary, var(--color-fill))',
-        border: '1px solid var(--color-border-secondary, var(--color-border))',
-      }}>
+      <div
+        className="ai-chat-bubble"
+        style={{
+          maxWidth: '88%',
+          padding: '8px 10px',
+          borderRadius: 8,
+          background: isUser
+            ? 'color-mix(in srgb, var(--color-primary) 12%, transparent)'
+            : 'var(--color-fill-quaternary, var(--color-fill))',
+          border: '1px solid var(--color-border-secondary, var(--color-border))',
+        }}
+      >
         {/* 附带的上下文标签 */}
         {ctx && (ctx.recentOutput || ctx.selection || ctx.cwd) && (
           <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -459,90 +528,128 @@ function MessageBubble({
               </Tag>
             )}
             {ctx.cwd && (
-              <Tag style={{ margin: 0, fontSize: 11 }}>
-                📁 {ctx.cwd}
-              </Tag>
+              <Tag style={{ margin: 0, fontSize: 11 }}>📁 {ctx.cwd}</Tag>
             )}
           </div>
         )}
 
-        {/* 内容块 */}
-        {blocks.map((b, i) => {
-          if (b.type === 'code') {
-            return (
-              <div key={i} style={{ marginTop: i === 0 ? 0 : 8 }}>
-                <div style={{
-                  background: 'var(--color-bg-elevated)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                }}>
-                  {b.lang && (
-                    <div style={{
-                      fontSize: 10,
-                      color: 'var(--color-text-tertiary)',
-                      padding: '2px 8px',
-                      borderBottom: '1px solid var(--color-border)',
-                      background: 'var(--color-fill, transparent)',
-                      textTransform: 'uppercase',
-                    }}>
-                      {b.lang}
-                    </div>
-                  )}
-                  <pre style={{
-                    margin: 0,
-                    padding: '6px 8px',
-                    fontFamily: 'Menlo, Monaco, monospace',
-                    fontSize: 12,
-                    color: 'var(--color-primary)',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    overflowX: 'auto',
-                  }}>
-                    {b.content}
-                  </pre>
-                  {/* 代码块操作 */}
-                  <div style={{
-                    display: 'flex',
-                    gap: 4,
-                    padding: '4px 6px',
-                    borderTop: '1px solid var(--color-border)',
-                    background: 'var(--color-fill, transparent)',
-                    justifyContent: 'flex-end',
-                  }}>
-                    <Button size="small" type="text" icon={<CopyOutlined />}
-                      onClick={() => onCopy(b.content)}
-                      style={{ fontSize: 11 }}
-                    >复制</Button>
-                    {onInsert && (
-                      <Button size="small" type="text" icon={<PlayCircleOutlined />}
-                        onClick={() => onInsert(b.content)}
-                        style={{ fontSize: 11 }}
-                      >插入终端</Button>
-                    )}
-                    {onRun && (
-                      <Button size="small" type="text" danger icon={<SendOutlined />}
-                        onClick={() => onRun(b.content)}
-                        style={{ fontSize: 11 }}
-                      >运行</Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          }
-          return (
-            <div key={i} style={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
-              fontSize: 13,
-              lineHeight: 1.6,
-              color: 'var(--color-text)',
-            }}>
-              {b.content}
-            </div>
-          )
-        })}
+        {/* 内容 */}
+        {isEmpty ? (
+          <div style={{ padding: 4 }}><Spin size="small" /></div>
+        ) : (
+          <div className="ai-chat-content" style={{ position: 'relative' }}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={{
+                code: (props) => <CodeBlock {...props} onCopy={onCopy} onInsert={onInsert} onRun={onRun} />,
+              }}
+            >
+              {msg.content + (streaming ? ' ▍' : '')}
+            </ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ============ 代码块（带复制/插入/运行按钮）============
+
+function CodeBlock({
+  className,
+  children,
+  onCopy,
+  onInsert,
+  onRun,
+}: {
+  className?: string
+  children?: React.ReactNode
+  onCopy: (cmd: string) => void
+  onInsert?: (cmd: string) => void
+  onRun?: (cmd: string) => void
+}) {
+  // react-markdown v10: inline code 无 className（language-xxx），block code 有
+  const match = /language-(\w+)/.exec(className || '')
+  const lang = match ? match[1] : ''
+  // 判断是否 inline（无 className 且 children 是单行短文本）
+  const text = String(children ?? '').replace(/\n$/, '')
+  const isInline = !className && !text.includes('\n')
+
+  if (isInline) {
+    return (
+      <code style={{
+        padding: '1px 4px',
+        borderRadius: 3,
+        background: 'var(--color-fill, rgba(128,128,128,0.15))',
+        fontFamily: 'Menlo, Monaco, monospace',
+        fontSize: '0.9em',
+      }}>
+        {children}
+      </code>
+    )
+  }
+
+  return (
+    <div style={{ margin: '6px 0' }}>
+      <div style={{
+        background: 'var(--color-bg-elevated)',
+        border: '1px solid var(--color-border)',
+        borderRadius: 4,
+        overflow: 'hidden',
+      }}>
+        {lang && (
+          <div style={{
+            fontSize: 10,
+            color: 'var(--color-text-tertiary)',
+            padding: '2px 8px',
+            borderBottom: '1px solid var(--color-border)',
+            background: 'var(--color-fill, transparent)',
+            textTransform: 'uppercase',
+          }}>
+            {lang}
+          </div>
+        )}
+        <pre
+          className={className}
+          style={{
+            margin: 0,
+            padding: '6px 8px',
+            fontFamily: 'Menlo, Monaco, monospace',
+            fontSize: 12,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            overflowX: 'auto',
+          }}
+        >
+          {children}
+        </pre>
+        {/* 代码块操作 */}
+        <div style={{
+          display: 'flex',
+          gap: 4,
+          padding: '4px 6px',
+          borderTop: '1px solid var(--color-border)',
+          background: 'var(--color-fill, transparent)',
+          justifyContent: 'flex-end',
+        }}>
+          <Button size="small" type="text" icon={<CopyOutlined />}
+            onClick={() => onCopy(text)}
+            style={{ fontSize: 11 }}
+          >复制</Button>
+          {onInsert && (
+            <Button size="small" type="text" icon={<PlayCircleOutlined />}
+              onClick={() => onInsert(text)}
+              style={{ fontSize: 11 }}
+            >插入终端</Button>
+          )}
+          {onRun && (
+            <Button size="small" type="text" danger icon={<SendOutlined />}
+              onClick={() => onRun(text)}
+              style={{ fontSize: 11 }}
+            >运行</Button>
+          )}
+        </div>
       </div>
     </div>
   )

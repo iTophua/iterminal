@@ -14,6 +14,14 @@ use super::db::{get_setting_inner, save_setting_inner};
 use super::license::check_feature;
 use crate::db::crypto::{decrypt_password, encrypt_password};
 
+// 流式输出所需
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use tauri::{AppHandle, Emitter};
+use tokio::sync::{oneshot, RwLock};
+use tokio::task::JoinHandle;
+use tokio_stream::StreamExt;
+
 /// settings 表中的 key
 const AI_CONFIG_KEY: &str = "ai_config";
 
@@ -609,6 +617,300 @@ pub async fn ai_chat(
     Ok(assistant_msg)
 }
 
+// ============ 流式输出 ============
+
+/// SSE 解析：从一行 SSE 数据中提取 delta.content（若无则返回 None）。
+///
+/// 输入是单个 SSE 事件的数据部分（已去掉 `data: ` 前缀的 JSON 串）。
+/// 返回 (delta_content, is_done)。`[DONE]` 时 is_done=true。
+fn parse_sse_delta(data: &str) -> (Option<String>, bool) {
+    let trimmed = data.trim();
+    if trimmed == "[DONE]" {
+        return (None, true);
+    }
+    if trimmed.is_empty() {
+        return (None, false);
+    }
+    let json: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(_) => return (None, false), // 忽略非 JSON 行（如注释/心跳）
+    };
+    let delta = json["choices"][0]["delta"]["content"]
+        .as_str()
+        .map(|s| s.to_string());
+    (delta, false)
+}
+
+/// 把 SSE 原始字节缓冲按事件拆分。
+///
+/// SSE 事件以空行（`\n\n`）分隔。返回 (完整事件列表, 剩余未完成的缓冲)。
+/// 每个事件可能含多行 `data:`，这里按行返回所有 `data:` 内容。
+fn split_sse_events(buf: &str) -> (Vec<Vec<String>>, String) {
+    let mut events: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut remainder = String::new();
+
+    for line in buf.split_inclusive('\n') {
+        if line.ends_with('\n') {
+            let line_content = line.trim_end_matches('\n');
+            if line_content.is_empty() {
+                // 事件结束
+                if !current.is_empty() {
+                    events.push(std::mem::take(&mut current));
+                }
+            } else if let Some(data) = line_content.strip_prefix("data:") {
+                current.push(data.trim_start_matches(' ').to_string());
+            }
+            // 其它行（如 `event:`/`id:`/注释）忽略
+        } else {
+            // 末尾不完整行
+            remainder = line.to_string();
+        }
+    }
+    (events, remainder)
+}
+
+/// 活跃的流式对话任务
+struct ActiveChat {
+    task: JoinHandle<()>,
+    cancel: oneshot::Sender<()>,
+}
+
+static CHATS: Lazy<RwLock<HashMap<String, ActiveChat>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// 流式 chat 事件 payload
+#[derive(Debug, Clone, Serialize)]
+struct ChatChunk {
+    delta: Option<String>,
+    done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+/// 流式调用 OpenAI 兼容 /v1/chat/completions。
+///
+/// 每个 token 通过 `on_delta` 回调返回。返回完整的拼接内容。
+async fn call_chat_stream<F>(
+    base_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    messages: &[ChatMessage],
+    mut on_delta: F,
+) -> Result<String, String>
+where
+    F: FnMut(&str),
+{
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+        .map_err(|e| format!("HTTP 客户端创建失败: {}", e))?;
+
+    let url = format!("{}/chat/completions", base_url);
+    let mut req = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "stream": true
+        }));
+    if let Some(key) = api_key {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req.send().await.map_err(|e| format!("请求失败: {}", e))?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        let snippet = if body.len() > 500 { format!("{}...", &body[..500]) } else { body };
+        return Err(format!("LLM 服务返回 {} : {}", status.as_u16(), snippet));
+    }
+
+    let mut stream = resp.bytes_stream();
+    let mut buf = String::new();
+    let mut full = String::new();
+
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("读取流失败: {}", e))?;
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        let (events, remainder) = split_sse_events(&buf);
+        buf = remainder;
+
+        for data_lines in events {
+            for data in data_lines {
+                let (delta, is_done) = parse_sse_delta(&data);
+                if is_done {
+                    return Ok(full);
+                }
+                if let Some(d) = delta {
+                    on_delta(&d);
+                    full.push_str(&d);
+                }
+            }
+        }
+    }
+
+    // 流自然结束（无 [DONE]）：处理剩余缓冲
+    if !buf.trim().is_empty() {
+        let (events, _) = split_sse_events(&format!("{}\n\n", buf));
+        for data_lines in events {
+            for data in data_lines {
+                let (delta, is_done) = parse_sse_delta(&data);
+                if is_done {
+                    return Ok(full);
+                }
+                if let Some(d) = delta {
+                    on_delta(&d);
+                    full.push_str(&d);
+                }
+            }
+        }
+    }
+
+    Ok(full)
+}
+
+/// 流式多轮对话。立即返回 request_id，结果通过事件 ai-chat-chunk-{requestId} 推送。
+///
+/// 事件 payload 为 ChatChunk：`{delta}` 增量 / `{done:true}` 结束 / `{error}` 出错。
+#[tauri::command]
+pub async fn ai_chat_stream(
+    conversation_id: String,
+    user_text: String,
+    context: Option<TerminalContext>,
+    request_id: String,
+    app: AppHandle,
+) -> Result<(), String> {
+    if !check_feature("ai_assistant").await {
+        return Err("AI 助手是专业版功能，请激活 Pro License 后使用".into());
+    }
+
+    let (base_url_raw, api_key, model) = match load_config()? {
+        Some(c) => c,
+        None => {
+            return Err("尚未配置 AI 服务。请到「设置 → AI 助手」填写 Base URL、API Key 和模型。".into());
+        }
+    };
+    let base_url = normalize_base_url(&base_url_raw);
+
+    let user_text = user_text.trim().to_string();
+    if user_text.is_empty() {
+        return Err("消息内容为空".into());
+    }
+
+    let context_text = match context.as_ref().map(format_context_text) {
+        Some(t) if !t.is_empty() => format!(
+            "以下是当前终端的上下文，供你参考：\n\n{}\n\n---\n\n我的问题：\n{}",
+            t, user_text
+        ),
+        _ => user_text.clone(),
+    };
+
+    // 读历史 + 存 user 消息 + 构造 messages（与非流式 ai_chat 一致）
+    let history = super::db::get_ai_messages(conversation_id.clone())
+        .map_err(|e| format!("读取对话历史失败: {}", e))?;
+    let is_first = history.is_empty();
+
+    let context_json = match &context {
+        Some(ctx) => serde_json::to_string(ctx).ok(),
+        None => None,
+    };
+    super::db::save_ai_message(
+        conversation_id.clone(),
+        "user".into(),
+        user_text.clone(),
+        context_json,
+    )
+    .map_err(|e| format!("保存消息失败: {}", e))?;
+
+    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(chat_system_prompt())];
+    for m in &history {
+        match m.role.as_str() {
+            "user" => messages.push(ChatMessage::user(&m.content)),
+            "assistant" => messages.push(ChatMessage::assistant(&m.content)),
+            _ => {}
+        }
+    }
+    messages.push(ChatMessage::user(&context_text));
+
+    let event_name = format!("ai-chat-chunk-{}", request_id);
+
+    let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
+    let app_for_task = app.clone();
+    let conv_id = conversation_id.clone();
+    let evt = event_name.clone();
+
+    let task: JoinHandle<()> = tokio::spawn(async move {
+        let result = tokio::select! {
+            _ = &mut cancel_rx => {
+                let _ = app_for_task.emit(&evt, ChatChunk {
+                    delta: None, done: true, error: Some("已停止".into()),
+                });
+                return;
+            }
+            r = call_chat_stream(&base_url, api_key.as_deref(), &model, &messages, |d| {
+                let _ = app_for_task.emit(&evt, ChatChunk {
+                    delta: Some(d.to_string()), done: false, error: None,
+                });
+            }) => r
+        };
+
+        match result {
+            Ok(full) => {
+                // 存 assistant 回复
+                let _ = super::db::save_ai_message(
+                    conv_id.clone(),
+                    "assistant".into(),
+                    full,
+                    None,
+                );
+                let _ = app_for_task.emit(&evt, ChatChunk {
+                    delta: None, done: true, error: None,
+                });
+            }
+            Err(e) => {
+                let _ = app_for_task.emit(&evt, ChatChunk {
+                    delta: None, done: true, error: Some(e),
+                });
+            }
+        }
+    });
+
+    CHATS.write().await.insert(
+        request_id.clone(),
+        ActiveChat { task, cancel: cancel_tx },
+    );
+
+    // 首条消息自动生成标题
+    if is_first {
+        let title: String = user_text.chars().take(20).collect();
+        let title = if user_text.chars().count() > 20 {
+            format!("{}…", title)
+        } else {
+            title
+        };
+        let _ = super::db::rename_ai_conversation(conversation_id, title);
+    }
+
+    Ok(())
+}
+
+/// 停止正在进行的流式对话
+#[tauri::command]
+pub async fn stop_ai_chat(request_id: String) -> Result<bool, String> {
+    let mut chats = CHATS.write().await;
+    if let Some(chat) = chats.remove(&request_id) {
+        let _ = chat.cancel.send(()); // 协作式取消（让 task 发 done 事件）
+        chat.task.abort(); // 硬取消兜底
+        Ok(true)
+    } else {
+        Ok(false) // 不存在视为已结束
+    }
+}
+
 // ============ 测试 ============
 
 #[cfg(test)]
@@ -760,5 +1062,72 @@ mod tests {
     #[test]
     fn test_chat_system_prompt_not_empty() {
         assert!(!chat_system_prompt().is_empty());
+    }
+
+    #[test]
+    fn test_parse_sse_delta_content() {
+        let data = r#"{"choices":[{"delta":{"content":"hello"}}]}"#;
+        let (delta, done) = parse_sse_delta(data);
+        assert_eq!(delta, Some("hello".to_string()));
+        assert!(!done);
+    }
+
+    #[test]
+    fn test_parse_sse_delta_done() {
+        let (delta, done) = parse_sse_delta("[DONE]");
+        assert_eq!(delta, None);
+        assert!(done);
+    }
+
+    #[test]
+    fn test_parse_sse_delta_empty() {
+        let (delta, done) = parse_sse_delta("");
+        assert_eq!(delta, None);
+        assert!(!done);
+    }
+
+    #[test]
+    fn test_parse_sse_delta_no_content_field() {
+        // role-only delta（首个 chunk 常见，只有 role 没有 content）
+        let data = r#"{"choices":[{"delta":{"role":"assistant"}}]}"#;
+        let (delta, done) = parse_sse_delta(data);
+        assert_eq!(delta, None);
+        assert!(!done);
+    }
+
+    #[test]
+    fn test_parse_sse_delta_invalid_json() {
+        let (delta, done) = parse_sse_delta("not json");
+        assert_eq!(delta, None);
+        assert!(!done);
+    }
+
+    #[test]
+    fn test_split_sse_events_basic() {
+        let input = "data: {\"a\":1}\n\ndata: {\"b\":2}\n\n";
+        let (events, remainder) = split_sse_events(input);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0], vec![r#"{"a":1}"#.to_string()]);
+        assert_eq!(events[1], vec![r#"{"b":2}"#.to_string()]);
+        assert!(remainder.is_empty());
+    }
+
+    #[test]
+    fn test_split_sse_events_partial_remainder() {
+        // 末尾不完整事件应留在 remainder
+        let input = "data: {\"a\":1}\n\ndata: {\"b\":2";
+        let (events, remainder) = split_sse_events(input);
+        assert_eq!(events.len(), 1);
+        assert!(remainder.contains(r#"{"b":2"#));
+    }
+
+    #[test]
+    fn test_split_sse_events_multiline_data() {
+        // 一个事件内多行 data:（OpenAI 实际不用，但要能容错）
+        let input = "data: line1\ndata: line2\n\n";
+        let (events, remainder) = split_sse_events(input);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0], vec!["line1".to_string(), "line2".to_string()]);
+        assert!(remainder.is_empty());
     }
 }

@@ -68,6 +68,8 @@ fn main() {
             iterminal::commands::license::clear_license,
             iterminal::commands::ai::ai_analyze,
             iterminal::commands::ai::ai_chat,
+            iterminal::commands::ai::ai_chat_stream,
+            iterminal::commands::ai::stop_ai_chat,
             iterminal::commands::ai::get_ai_config,
             iterminal::commands::ai::save_ai_config,
             iterminal::commands::ai::list_ai_models,

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 
 export type AiKind = 'explainError' | 'natLangToCommand'
 
@@ -146,4 +147,52 @@ export function parseContext(context: string | null): TerminalContext | null {
     return null
   }
 }
+
+// ============ 流式输出 ============
+
+/** 流式对话的增量事件（后端 emit 的 payload） */
+export interface AiChatChunk {
+  delta?: string
+  done?: boolean
+  error?: string
+}
+
+/**
+ * 流式发送对话消息。
+ *
+ * 返回一个带 cancel() 的句柄。每个 token 经 onChunk 回调；
+ * 结束/出错时 onChunk 收到 {done:true} 或 {error}。
+ *
+ * 实现说明：前端先生成 requestId 并 listen 对应事件，再 invoke。
+ * 这样彻底避免「invoke 返回 reqId 后才 listen 导致漏掉开头 chunk」的竞态。
+ */
+export async function chatSendStream(
+  conversationId: string,
+  userText: string,
+  context: TerminalContext | undefined,
+  onChunk: (chunk: AiChatChunk) => void
+): Promise<{ cancel: () => void }> {
+  const requestId = `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+  const eventName = `ai-chat-chunk-${requestId}`
+
+  // 先建立监听，再 invoke（避免竞态）
+  await listen<AiChatChunk>(eventName, (event) => {
+    onChunk(event.payload)
+  })
+
+  // invoke 在后台执行，不在此 await（调用方通过 onChunk 感知完成）
+  invoke('ai_chat_stream', { conversationId, userText, context, requestId })
+    .catch((e) => {
+      // invoke 失败（如 license 未激活/配置缺失）→ 通过 chunk 通知
+      onChunk({ done: true, error: typeof e === 'string' ? e : String(e) })
+    })
+
+  return {
+    cancel: () => {
+      invoke('stop_ai_chat', { requestId }).catch(() => {})
+    },
+  }
+}
+
+
 

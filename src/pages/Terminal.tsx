@@ -17,6 +17,7 @@ import {
   FullscreenExitOutlined,
   HistoryOutlined,
   BulbOutlined,
+  MessageOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -86,6 +87,8 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const portForwardEnabled = isFeatureAvailable('port_forward')
   const [aiModalVisible, setAiModalVisible] = useState(false)
   const [aiInitialText, setAiInitialText] = useState('')
+  // AI 对话面板预填文本（终端右键「发送到 AI 对话」）
+  const [aiChatInitialText, setAiChatInitialText] = useState('')
   const closeSession = useTerminalStore(state => state.closeSession)
   const closeConnection = useTerminalStore(state => state.closeConnection)
   const removeConnectionFromStore = useTerminalStore(state => state.removeConnectionFromStore)
@@ -1638,6 +1641,16 @@ const handlePointerUp = () => {
     hideContextMenu()
   }, [contextMenu.sessionKey])
 
+  // 终端右键「发送到 AI 对话」：取选中内容填入对话面板输入框
+  const handleSendToChat = useCallback(() => {
+    const term = terminalInstances.current[contextMenu.sessionKey]
+    const selection = term ? (term.getSelection() || '') : ''
+    // 每次都更新（即使为空也覆盖），用时间戳前缀强制触发 useEffect
+    setAiChatInitialText(selection ? `解释这段终端输出：\n\n${selection}` : '')
+    setAiChatVisible(true)
+    hideContextMenu()
+  }, [contextMenu.sessionKey, setAiChatVisible])
+
   const handleSplitHorizontalFromContextMenu = useCallback(async () => {
     const [connId, sessId] = contextMenu.sessionKey.split('_')
     const conn = connectedConnections.find(c => c.connectionId === connId)
@@ -2332,6 +2345,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           <AiChatPanel
             connectionId={activeConnectionId}
             onClose={() => setAiChatVisible(false)}
+            initialText={aiChatInitialText}
             onInsertCommand={(cmd) => {
               const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
               if (!conn || !activeConnectionId) return
@@ -2488,6 +2502,16 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
               <BulbOutlined /> AI 分析{contextMenu.sessionKey && terminalInstances.current[contextMenu.sessionKey]?.hasSelection() ? '选中内容' : ''}
+            </div>
+          )}
+          {aiEnabled && (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={handleSendToChat}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <MessageOutlined /> 发送到 AI 对话
             </div>
           )}
           <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
