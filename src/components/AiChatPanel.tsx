@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react'
 import { Button, Tooltip, Empty, Input, Select, App, Tag, Spin, Switch, Dropdown } from 'antd'
 import {
   CloseOutlined,
@@ -96,6 +96,14 @@ export default function AiChatPanel({
   useEffect(() => {
     refreshConversations()
   }, [refreshConversations])
+
+  // ---- 卸载时取消进行中的流式生成（防止监听器泄漏 + 后端 task 残留）----
+  useEffect(() => {
+    return () => {
+      cancelRef.current?.()
+      cancelRef.current = null
+    }
+  }, [])
 
   // ---- 加载选中对话的消息 ----
   useEffect(() => {
@@ -293,23 +301,27 @@ export default function AiChatPanel({
 
   const activeConv = conversations.find(c => c.id === activeId)
 
-  // 快捷提问预设（含选中内容时动态拼接）
-  const selection = getSelectionFromContext(getTerminalContext)
-  const quickPrompts: Array<{ label: string; icon: React.ReactNode; prompt: string }> = [
-    {
-      label: '解释报错',
-      icon: <BulbOutlined />,
-      prompt: selection ? `解释这段终端输出的报错原因并给出修复建议：\n\n${selection}` : '解释这段输出的报错原因并给出修复建议',
-    },
-    {
-      label: '优化命令',
-      icon: <ThunderboltOutlined />,
-      prompt: selection ? `优化这条命令：\n\n\`\`\`bash\n${selection}\n\`\`\`` : '优化我接下来要粘贴的命令',
-    },
+  // 快捷提问预设。前两项含选中内容时动态拼接——但不在 render 里取 selection
+  //（取 selection 要遍历终端 buffer 200 行，开销大）。改为点击时懒取。
+  // 其它预设是固定文案，用 useMemo 缓存。
+  const fixedQuickPrompts = useMemo(() => ([
     { label: '查高占用进程', icon: <ThunderboltOutlined />, prompt: '怎么查看 CPU 占用最高的 10 个进程？' },
     { label: '查磁盘空间', icon: <ThunderboltOutlined />, prompt: '怎么查看磁盘空间使用情况？' },
     { label: '查端口占用', icon: <ThunderboltOutlined />, prompt: '怎么查看哪个进程占用了某个端口？' },
-  ]
+  ]), [])
+
+  // 点击「解释报错/优化命令」时才取 selection（避免每次 render 都遍历 buffer）
+  const handleQuickExplain = useCallback(() => {
+    const sel = getSelectionFromContext(getTerminalContext)
+    setInput(sel ? `解释这段终端输出的报错原因并给出修复建议：\n\n${sel}` : '解释这段输出的报错原因并给出修复建议')
+    setTimeout(() => inputRef.current?.focus(), 30)
+  }, [getTerminalContext])
+
+  const handleQuickOptimize = useCallback(() => {
+    const sel = getSelectionFromContext(getTerminalContext)
+    setInput(sel ? `优化这条命令：\n\n\`\`\`bash\n${sel}\n\`\`\`` : '优化我接下来要粘贴的命令')
+    setTimeout(() => inputRef.current?.focus(), 30)
+  }, [getTerminalContext])
 
   return (
     <div style={{
@@ -409,7 +421,19 @@ export default function AiChatPanel({
           gap: 4,
           marginBottom: 6,
         }}>
-          {quickPrompts.map(p => (
+          <Tag
+            style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
+            onClick={handleQuickExplain}
+          >
+            <BulbOutlined /> 解释报错
+          </Tag>
+          <Tag
+            style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
+            onClick={handleQuickOptimize}
+          >
+            <ThunderboltOutlined /> 优化命令
+          </Tag>
+          {fixedQuickPrompts.map(p => (
             <Tag
               key={p.label}
               style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
@@ -477,7 +501,7 @@ export default function AiChatPanel({
 
 // ============ 消息气泡（Markdown 渲染）============
 
-function MessageBubble({
+const MessageBubble = memo(function MessageBubble({
   message: msg,
   streaming,
   onCopy,
@@ -552,7 +576,16 @@ function MessageBubble({
       </div>
     </div>
   )
-}
+}, (prev, next) => {
+  // 自定义比较：只看消息内容/角色/上下文 + streaming 状态。
+  // 忽略 onCopy/onInsert/onRun 引用变化（它们语义稳定，引用变化不应触发重渲）。
+  // 这样流式拼接当前消息时，历史消息不会重渲（markdown 解析是 CPU 大头）。
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.streaming === next.streaming
+  )
+})
 
 // ============ 代码块（带复制/插入/运行按钮）============
 

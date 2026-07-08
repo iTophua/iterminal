@@ -283,7 +283,21 @@ export class CommandTracker {
       promptDetected: false,
       shellIntegration: undefined as ReturnType<typeof detectShellIntegration> | undefined,
     }
-    
+
+    // 性能短路：绝大多数输出 chunk 是命令的普通输出文本（非提示符、无 OSC 序列）。
+    // 只有当 chunk 可能包含提示符时才需要跑全套正则：
+    //   - 含 OSC 133 序列（shell integration 标记）
+    //   - 含换行（提示符通常在行尾，多行输出末行可能是提示符）
+    //   - 较短且含 $ # ❯ > 等提示符特征字符
+    // 这样对高频刷屏输出（top/tail -f/日志）几乎零开销。
+    const mayContainPrompt =
+      output.includes('\x1b]133;') ||   // OSC 133 shell integration
+      output.includes('\n') ||           // 含换行
+      (output.length < 64 && /[$#❯>]/.test(output))  // 短文本含提示符特征
+    if (!mayContainPrompt) {
+      return result
+    }
+
     const integration = detectShellIntegration(output)
     result.shellIntegration = integration
     

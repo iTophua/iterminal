@@ -162,6 +162,7 @@ export interface AiChatChunk {
  *
  * 返回一个带 cancel() 的句柄。每个 token 经 onChunk 回调；
  * 结束/出错时 onChunk 收到 {done:true} 或 {error}。
+ * cancel() 会停止生成并清理监听器（防止泄漏）。
  *
  * 实现说明：前端先生成 requestId 并 listen 对应事件，再 invoke。
  * 这样彻底避免「invoke 返回 reqId 后才 listen 导致漏掉开头 chunk」的竞态。
@@ -174,10 +175,18 @@ export async function chatSendStream(
 ): Promise<{ cancel: () => void }> {
   const requestId = `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
   const eventName = `ai-chat-chunk-${requestId}`
+  let finished = false
 
   // 先建立监听，再 invoke（避免竞态）
-  await listen<AiChatChunk>(eventName, (event) => {
+  const unlisten = await listen<AiChatChunk>(eventName, (event) => {
     onChunk(event.payload)
+    // done/error 后立即 unlisten，避免监听器残留
+    if (event.payload.done || event.payload.error) {
+      if (!finished) {
+        finished = true
+        unlisten()
+      }
+    }
   })
 
   // invoke 在后台执行，不在此 await（调用方通过 onChunk 感知完成）
@@ -185,11 +194,19 @@ export async function chatSendStream(
     .catch((e) => {
       // invoke 失败（如 license 未激活/配置缺失）→ 通过 chunk 通知
       onChunk({ done: true, error: typeof e === 'string' ? e : String(e) })
+      if (!finished) {
+        finished = true
+        unlisten()
+      }
     })
 
   return {
     cancel: () => {
       invoke('stop_ai_chat', { requestId }).catch(() => {})
+      if (!finished) {
+        finished = true
+        unlisten()
+      }
     },
   }
 }
