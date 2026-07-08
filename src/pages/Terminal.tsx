@@ -2403,6 +2403,14 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           <DockerPanel
             connectionId={activeConnectionId}
             onClose={() => setDockerVisible(false)}
+            onRunCommand={(cmd) => {
+              // 在左侧活动终端执行命令（追加回车自动运行）
+              const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn || !activeConnectionId) return
+              const activeSess = getActiveSessionInPane(conn.rootPane)
+              if (!activeSess) return
+              enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd + '\r')
+            }}
           />
         )}
       </div>
