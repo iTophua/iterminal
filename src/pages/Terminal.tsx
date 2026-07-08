@@ -23,6 +23,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { invoke } from '@tauri-apps/api/core'
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -925,6 +926,15 @@ const handlePointerUp = () => {
           
           container.innerHTML = ''
           terminal.open(container)
+
+          // 加载 WebGL 渲染器：GPU 加速，大幅降低光标闪烁/高频输出时的 CPU。
+          // 必须在 open 之后加载。某些环境（远程桌面/旧 GPU）可能不支持 WebGL，
+          // 失败时静默降级到默认 DOM 渲染器（不影响功能）。
+          try {
+            terminal.loadAddon(new WebglAddon())
+          } catch (e) {
+            console.warn('[Terminal] WebGL renderer unavailable, fallback to DOM renderer:', e)
+          }
 
           // 应用 xterm IME keyCode=229 丢字符补丁（必须在 open 后，_core 已初始化）
           applyXtermImePatch(terminal)

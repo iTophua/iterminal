@@ -3,6 +3,7 @@ import { Modal, Spin, App } from 'antd'
 import { CodeOutlined } from '@ant-design/icons'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/core'
 import '@xterm/xterm/css/xterm.css'
@@ -80,6 +81,10 @@ export default function ContainerTerminalModal({ connectionId, container, onClos
         term.loadAddon(fitAddon)
         el.innerHTML = ''
         term.open(el)
+        // WebGL 渲染器（GPU 加速，降 CPU）。失败静默降级 DOM 渲染器。
+        try { term.loadAddon(new WebglAddon()) } catch (e) {
+          console.warn('[DockerTerminal] WebGL unavailable:', e)
+        }
         termRef.current = term
         fitRef.current = fitAddon
         try { fitAddon.fit() } catch {}
