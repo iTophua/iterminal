@@ -32,6 +32,14 @@ interface DockerPanelProps {
   onRunCommand?: (command: string) => void
 }
 
+// 静态 CSS（让 antd Tabs 内容区撑满高度），提取到组件外避免每次渲染重建
+const DOCKER_TABS_CSS = `
+  .docker-tabs-wrap .ant-tabs { height: 100%; display: flex; flex-direction: column; }
+  .docker-tabs-wrap .ant-tabs-content-holder { flex: 1; overflow: hidden; }
+  .docker-tabs-wrap .ant-tabs-content { height: 100%; }
+  .docker-tabs-wrap .ant-tabs-tabpane { height: 100%; }
+`
+
 export default function DockerPanel({ connectionId, onClose, onRunCommand }: DockerPanelProps) {
   const { message, modal } = App.useApp()
   const [activeTab, setActiveTab] = useState<'containers' | 'images'>('containers')
@@ -78,7 +86,13 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
     }
   }, [connectionId, message])
 
-  // 容器自动刷新
+  // 用 ref 持有最新的 fetchContainers，避免轮询 effect 依赖函数引用
+  // （若 fetchContainers 因 message 等依赖变化而重建，会导致 effect 反复
+  //   清旧 interval 建新 interval，形成高频重渲染死循环）
+  const fetchContainersRef = useRef(fetchContainers)
+  fetchContainersRef.current = fetchContainers
+
+  // 容器自动刷新：只依赖真正的控制变量，不依赖 fetch 函数
   useEffect(() => {
     if (activeTab !== 'containers' || !connectionId || paused) {
       if (intervalRef.current) {
@@ -87,9 +101,10 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
       }
       return
     }
+    const fetch = () => fetchContainersRef.current()
     const initialTimer = setTimeout(() => {
-      fetchContainers()
-      intervalRef.current = setInterval(fetchContainers, refreshInterval)
+      fetch()
+      intervalRef.current = setInterval(fetch, refreshInterval)
     }, 200)
     return () => {
       clearTimeout(initialTimer)
@@ -98,7 +113,7 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
         intervalRef.current = null
       }
     }
-  }, [activeTab, connectionId, paused, refreshInterval, fetchContainers])
+  }, [activeTab, connectionId, paused, refreshInterval])
 
   // 切到镜像 tab 时加载
   useEffect(() => {
@@ -245,12 +260,7 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
           destroyInactiveTabPane={false}
         />
         {/* 让 antd Tabs 内容区撑满高度 */}
-        <style>{`
-          .docker-tabs-wrap .ant-tabs { height: 100%; display: flex; flex-direction: column; }
-          .docker-tabs-wrap .ant-tabs-content-holder { flex: 1; overflow: hidden; }
-          .docker-tabs-wrap .ant-tabs-content { height: 100%; }
-          .docker-tabs-wrap .ant-tabs-tabpane { height: 100%; }
-        `}</style>
+        <style>{DOCKER_TABS_CSS}</style>
       </div>
 
       {/* 容器终端 Modal */}
