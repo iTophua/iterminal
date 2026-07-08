@@ -766,7 +766,6 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
         width: 360,
         height: '100%',
         background: 'var(--color-bg-container)',
-        borderLeft: '1px solid var(--color-border)',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',

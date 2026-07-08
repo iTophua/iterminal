@@ -10,6 +10,12 @@ export interface ContainerInfo {
   /** 端口映射，可能为空 */
   ports: string | null
   createdAt: string | null
+  // 资源占用（仅运行中容器有值）
+  cpuPercent: string | null
+  memUsage: string | null
+  memPercent: string | null
+  netIo: string | null
+  blockIo: string | null
 }
 
 export interface ImageInfo {

@@ -43,6 +43,15 @@ export function useRightPanels(
     setMonitorVisible(true)
   }, [closeOthers])
 
+  const toggleMonitor = useCallback(() => {
+    if (monitorVisible) {
+      setMonitorVisible(false)
+    } else {
+      closeOthers('monitor')
+      setMonitorVisible(true)
+    }
+  }, [monitorVisible, closeOthers])
+
   const openFileManager = useCallback(() => {
     if (!activeConnectionId) return
     const isVisible = fileManagerVisible[activeConnectionId]
@@ -114,6 +123,7 @@ export function useRightPanels(
     setDockerVisible,
     rightPanelWidth,
     openMonitor,
+    toggleMonitor,
     openFileManager,
     toggleApiLog,
     toggleSnippets,

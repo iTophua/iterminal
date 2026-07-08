@@ -24,6 +24,17 @@ pub struct ContainerInfo {
     /// 端口映射，如 "0.0.0.0:8080->80/tcp"；可能为空
     pub ports: Option<String>,
     pub created: Option<String>,
+    // ============ 资源占用（来自 docker stats，仅运行中容器有值）============
+    /// CPU 占用百分比，如 "1.23%"
+    pub cpu_percent: Option<String>,
+    /// 内存用量，如 "128.5MiB / 2GiB"
+    pub mem_usage: Option<String>,
+    /// 内存占用百分比，如 "6.30%"
+    pub mem_percent: Option<String>,
+    /// 网络 IO，如 "1.2kB / 3.4kB"
+    pub net_io: Option<String>,
+    /// 磁盘 IO，如 "5.6MB / 0B"
+    pub block_io: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,16 +55,74 @@ pub struct ImageInfo {
 
 /// 列出容器。
 /// `all=false` 仅运行中，`true` 含已停止。
+/// 同时拉取 docker stats（仅运行中容器有资源占用数据）。
 #[tauri::command]
 pub async fn list_containers(connection_id: String, all: bool) -> Result<Vec<ContainerInfo>, String> {
     let flag = if all { "--all" } else { "" };
     // --format '{{json .}}' 每行一个 JSON
     let cmd = format!("docker ps --format '{{{{json .}}}}' {}", flag);
-    let result = execute_command(connection_id, cmd).await?;
+    let result = execute_command(connection_id.clone(), cmd).await?;
     if !result.success {
         return Err(format_docker_error(&result));
     }
-    Ok(parse_container_lines(&result.output))
+    let mut containers = parse_container_lines(&result.output);
+
+    // 拉取资源占用（--no-stream 一次性返回，不阻塞）。失败不致命（旧 docker 无 stats）。
+    let stats_cmd = "docker stats --no-stream --format '{{json .}}'";
+    if let Ok(stats_result) = execute_command(connection_id.clone(), stats_cmd.into()).await {
+        if stats_result.success {
+            let stats = parse_stats_lines(&stats_result.output);
+            // 按容器名 merge（docker stats 的 Name 去掉前导 /，与 docker ps 的 Names 一致）
+            for c in containers.iter_mut() {
+                if let Some(s) = stats.get(&c.name) {
+                    c.cpu_percent = s.cpu_percent.clone();
+                    c.mem_usage = s.mem_usage.clone();
+                    c.mem_percent = s.mem_percent.clone();
+                    c.net_io = s.net_io.clone();
+                    c.block_io = s.block_io.clone();
+                }
+            }
+        }
+    }
+
+    Ok(containers)
+}
+
+/// 解析 docker stats --no-stream --format '{{json .}}' 的输出。
+/// 返回 容器名 → 资源占用 的映射。
+fn parse_stats_lines(output: &str) -> std::collections::HashMap<String, ContainerStats> {
+    let mut map = std::collections::HashMap::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let name = v["Name"].as_str().unwrap_or("").trim_start_matches('/').to_string();
+        if name.is_empty() {
+            continue;
+        }
+        map.insert(name, ContainerStats {
+            cpu_percent: v["CPUPerc"].as_str().map(|s| s.to_string()),
+            mem_usage: v["MemUsage"].as_str().map(|s| s.to_string()),
+            mem_percent: v["MemPerc"].as_str().map(|s| s.to_string()),
+            net_io: v["NetIO"].as_str().map(|s| s.to_string()),
+            block_io: v["BlockIO"].as_str().map(|s| s.to_string()),
+        });
+    }
+    map
+}
+
+/// docker stats 解析结果
+struct ContainerStats {
+    cpu_percent: Option<String>,
+    mem_usage: Option<String>,
+    mem_percent: Option<String>,
+    net_io: Option<String>,
+    block_io: Option<String>,
 }
 
 /// 解析 `docker ps --format '{{json .}}'` 的输出（每行一个 JSON）。
@@ -86,6 +155,11 @@ fn parse_container_lines(output: &str) -> Vec<ContainerInfo> {
                 let c = v["CreatedAt"].as_str();
                 c.map(|s| s.to_string())
             },
+            cpu_percent: None,
+            mem_usage: None,
+            mem_percent: None,
+            net_io: None,
+            block_io: None,
         });
     }
     containers
@@ -273,5 +347,36 @@ mod tests {
     #[test]
     fn test_parse_image_lines_empty() {
         assert!(parse_image_lines("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_stats_lines_basic() {
+        // docker stats --no-stream --format '{{json .}}' 典型输出
+        let output = r#"{"BlockIO":"0B / 0B","CPUPerc":"0.12%","ID":"a1b2c3d4","MemPerc":"1.23%","MemUsage":"50MiB / 4GiB","Name":"web","NetIO":"1.2kB / 3.4kB","PIDs":"12"}
+{"BlockIO":"5.6MB / 0B","CPUPerc":"5.67%","ID":"e5f6g7h8","MemPerc":"6.30%","MemUsage":"128MiB / 2GiB","Name":"/worker","NetIO":"10kB / 20kB","PIDs":"5"}"#;
+        let stats = parse_stats_lines(output);
+        assert_eq!(stats.len(), 2);
+        // 第二个 Name 带 / 前缀，应被去掉
+        let web = stats.get("web").expect("web 容器应存在");
+        assert_eq!(web.cpu_percent.as_deref(), Some("0.12%"));
+        assert_eq!(web.mem_usage.as_deref(), Some("50MiB / 4GiB"));
+        assert_eq!(web.mem_percent.as_deref(), Some("1.23%"));
+        assert_eq!(web.net_io.as_deref(), Some("1.2kB / 3.4kB"));
+        assert_eq!(web.block_io.as_deref(), Some("0B / 0B"));
+        let worker = stats.get("worker").expect("worker 容器（去 / 后）应存在");
+        assert_eq!(worker.cpu_percent.as_deref(), Some("5.67%"));
+    }
+
+    #[test]
+    fn test_parse_stats_lines_empty() {
+        assert!(parse_stats_lines("").is_empty());
+    }
+
+    #[test]
+    fn test_parse_stats_lines_invalid_skipped() {
+        let output = "not json\n{\"Name\":\"x\",\"CPUPerc\":\"1%\"}\nalso bad";
+        let stats = parse_stats_lines(output);
+        assert_eq!(stats.len(), 1);
+        assert_eq!(stats.get("x").unwrap().cpu_percent.as_deref(), Some("1%"));
     }
 }

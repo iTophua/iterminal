@@ -490,6 +490,11 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     dockerVisible,
     setDockerVisible,
     toggleDocker,
+    toggleMonitor,
+    openFileManager,
+    toggleApiLog,
+    toggleSnippets,
+    togglePortForward,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
 
   const [mcpEnabled, setMcpEnabled] = useState(() => {
@@ -2311,6 +2316,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         flexShrink: 0,
         overflow: 'hidden',
         transition: 'width 0.2s ease',
+        borderLeft: '1px solid var(--color-border)',
       }}>
         {monitorVisible && (
           <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
@@ -2417,41 +2423,11 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         isFullscreen={isFullscreen}
         showFullscreen={singleConnectionMode}
         onFullscreenToggle={() => handleToggleFullscreen('')}
-        onMonitorToggle={() => {
-          if (monitorVisible) {
-            setMonitorVisible(false)
-          } else {
-            setMonitorVisible(true)
-            if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
-              setFileManagerVisible(activeConnectionId, false)
-            }
-            setApiLogVisible(false)
-          }
-        }}
-        onFileManagerToggle={() => {
-          if (!activeConnectionId) return
-          const isVisible = fileManagerVisible[activeConnectionId]
-          if (isVisible) {
-            setFileManagerVisible(activeConnectionId, false)
-          } else {
-            setFileManagerVisible(activeConnectionId, true)
-            setMonitorVisible(false)
-            setApiLogVisible(false)
-          }
-        }}
-        onApiLogToggle={() => {
-          if (apiLogVisible) {
-            setApiLogVisible(false)
-          } else {
-            setApiLogVisible(true)
-            setMonitorVisible(false)
-            if (activeConnectionId && fileManagerVisible[activeConnectionId]) {
-              setFileManagerVisible(activeConnectionId, false)
-            }
-          }
-        }}
-        onSnippetsToggle={() => setSnippetsVisible(!snippetsVisible)}
-        onPortForwardToggle={() => setPortForwardVisible(!portForwardVisible)}
+        onMonitorToggle={toggleMonitor}
+        onFileManagerToggle={openFileManager}
+        onApiLogToggle={toggleApiLog}
+        onSnippetsToggle={toggleSnippets}
+        onPortForwardToggle={togglePortForward}
         onAiChatToggle={toggleAiChat}
         onDockerToggle={toggleDocker}
         />

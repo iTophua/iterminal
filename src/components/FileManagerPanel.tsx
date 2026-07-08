@@ -222,7 +222,7 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
         width: 360,
         height: '100%',
         background: dragDrop.isDragOver ? 'rgba(0, 185, 107, 0.05)' : 'var(--color-bg-container)',
-        borderLeft: dragDrop.isDragOver ? '3px solid var(--color-primary)' : '1px solid var(--color-border)',
+        borderLeft: dragDrop.isDragOver ? '3px solid var(--color-primary)' : 'none',
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',

@@ -109,7 +109,6 @@ function McpLogPanel({ onClose }: McpLogPanelProps) {
         width: 360,
         height: '100%',
         background: 'var(--color-bg-container)',
-        borderLeft: '1px solid var(--color-border)',
         overflow: 'hidden',
         display: 'flex',
         flexDirection: 'column',

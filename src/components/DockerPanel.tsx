@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Button, Tooltip, Empty, Select, App, Tag, Spin, Tabs, Switch } from 'antd'
+import { Button, Tooltip, Empty, Select, App, Tag, Spin, Tabs, Switch, Modal } from 'antd'
 import type { TabsProps } from 'antd'
 import {
   CloseOutlined,
@@ -14,6 +14,7 @@ import {
   CodeOutlined,
   CopyOutlined,
   AppstoreOutlined,
+  FullscreenOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import {
@@ -57,6 +58,8 @@ export default function DockerPanel({ connectionId, onClose }: DockerPanelProps)
 
   // 容器终端
   const [terminalContainer, setTerminalContainer] = useState<ContainerInfo | null>(null)
+  // 日志全屏查看
+  const [logFullscreen, setLogFullscreen] = useState(false)
 
   // ---- 加载容器 ----
   const fetchContainers = useCallback(async () => {
@@ -258,6 +261,7 @@ export default function DockerPanel({ connectionId, onClose }: DockerPanelProps)
           setTail={setLogTail}
           onRefresh={() => logContainer && fetchLogs(logContainer.id, logTail)}
           onCopy={handleCopyLogs}
+          onFullscreen={() => setLogFullscreen(true)}
         />
       ),
     },
@@ -282,7 +286,7 @@ export default function DockerPanel({ connectionId, onClose }: DockerPanelProps)
         </Tooltip>
       </div>
 
-      <div style={{ flex: 1, overflow: 'hidden' }}>
+      <div style={{ flex: 1, overflow: 'hidden' }} className="docker-tabs-wrap">
         <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
@@ -292,6 +296,13 @@ export default function DockerPanel({ connectionId, onClose }: DockerPanelProps)
           tabBarStyle={{ padding: '0 10px', margin: 0 }}
           destroyInactiveTabPane={false}
         />
+        {/* 让 antd Tabs 内容区撑满高度（默认不撑满，导致日志区被压扁） */}
+        <style>{`
+          .docker-tabs-wrap .ant-tabs { height: 100%; display: flex; flex-direction: column; }
+          .docker-tabs-wrap .ant-tabs-content-holder { flex: 1; overflow: hidden; }
+          .docker-tabs-wrap .ant-tabs-content { height: 100%; }
+          .docker-tabs-wrap .ant-tabs-tabpane { height: 100%; }
+        `}</style>
       </div>
 
       {/* 容器终端 Modal */}
@@ -300,6 +311,24 @@ export default function DockerPanel({ connectionId, onClose }: DockerPanelProps)
         container={terminalContainer}
         onClose={() => setTerminalContainer(null)}
       />
+
+      {/* 日志全屏 Modal */}
+      <Modal
+        title={logContainer ? `日志 - ${logContainer.name}` : '日志'}
+        open={logFullscreen}
+        onCancel={() => setLogFullscreen(false)}
+        footer={null}
+        width={900}
+        styles={{ body: { padding: 0, background: '#1e1e1e', height: 600, overflow: 'auto' } }}
+      >
+        <pre style={{
+          margin: 0, padding: 12,
+          fontFamily: 'Menlo, Monaco, monospace', fontSize: 13, lineHeight: 1.6,
+          color: '#d4d4d4', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        }}>
+          {logs || '(空)'}
+        </pre>
+      </Modal>
     </div>
   )
 }
@@ -380,6 +409,16 @@ function ContainersTab({
   )
 }
 
+/// CPU 占用百分比 → Tag 颜色（高占用显红）
+function cpuColor(cpuPercent: string): string {
+  const num = parseFloat(cpuPercent)
+  if (isNaN(num)) return 'default'
+  if (num >= 90) return 'red'
+  if (num >= 50) return 'orange'
+  if (num >= 20) return 'gold'
+  return 'green'
+}
+
 function ContainerCard({
   c, onAction, onViewLogs, onOpenTerminal,
 }: {
@@ -390,6 +429,7 @@ function ContainerCard({
 }) {
   const isRunning = c.state === 'running'
   const stateColor = isRunning ? 'success' : c.state === 'exited' ? 'default' : 'warning'
+  const cpuTagColor = c.cpuPercent ? cpuColor(c.cpuPercent) : undefined
 
   return (
     <div style={{
@@ -413,6 +453,31 @@ function ContainerCard({
         {c.status}
         {c.ports && <span style={{ marginLeft: 8 }}>🔌 {c.ports}</span>}
       </div>
+      {/* 资源占用（仅运行中容器有数据） */}
+      {isRunning && (c.cpuPercent || c.memUsage || c.netIo) && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6,
+          fontSize: 11, color: 'var(--color-text-tertiary)',
+        }}>
+          {c.cpuPercent && (
+            <Tag style={{ margin: 0, fontSize: 11 }} color={cpuTagColor}>
+              CPU {c.cpuPercent}
+            </Tag>
+          )}
+          {c.memUsage && (
+            <Tag style={{ margin: 0, fontSize: 11 }}>
+              内存 {c.memUsage}
+              {c.memPercent && <span style={{ color: 'var(--color-text-tertiary)' }}> ({c.memPercent})</span>}
+            </Tag>
+          )}
+          {c.netIo && (
+            <span title="网络 上行/下行">🌐 {c.netIo}</span>
+          )}
+          {c.blockIo && (
+            <span title="磁盘 读/写">💾 {c.blockIo}</span>
+          )}
+        </div>
+      )}
       {/* 操作按钮 */}
       <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
         {isRunning ? (
@@ -488,7 +553,7 @@ function ImagesTab({
 // ============ 日志 Tab ============
 
 function LogsTab({
-  container, logs, loading, tail, setTail, onRefresh, onCopy,
+  container, logs, loading, tail, setTail, onRefresh, onCopy, onFullscreen,
 }: {
   container: ContainerInfo | null
   logs: string
@@ -497,6 +562,7 @@ function LogsTab({
   setTail: (v: number) => void
   onRefresh: () => void
   onCopy: () => void
+  onFullscreen: () => void
 }) {
   if (!container) {
     return <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="在「容器」tab 点「日志」按钮查看日志" style={{ marginTop: 60 }} />
@@ -508,7 +574,7 @@ function LogsTab({
         display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
         borderBottom: '1px solid var(--color-border)', flexShrink: 0,
       }}>
-        <span style={{ fontSize: 12 }}>{container.name}</span>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>{container.name}</span>
         <Select size="small" value={tail} onChange={setTail} style={{ width: 90 }}
           options={[
             { label: '100行', value: 100 },
@@ -519,13 +585,16 @@ function LogsTab({
         <Tooltip title="刷新">
           <Button size="small" type="text" icon={<ReloadOutlined />} onClick={onRefresh} loading={loading} />
         </Tooltip>
-        <Button size="small" type="text" icon={<CopyOutlined />} onClick={onCopy} style={{ marginLeft: 'auto' }}>复制</Button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 4 }}>
+          <Button size="small" type="text" icon={<FullscreenOutlined />} onClick={onFullscreen}>全屏</Button>
+          <Button size="small" type="text" icon={<CopyOutlined />} onClick={onCopy}>复制</Button>
+        </div>
       </div>
       <pre style={{
-        flex: 1, overflow: 'auto', margin: 0, padding: '8px 10px',
-        fontFamily: 'Menlo, Monaco, monospace', fontSize: 12, lineHeight: 1.5,
-        color: 'var(--color-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-        background: 'var(--color-bg-elevated)',
+        flex: 1, overflow: 'auto', margin: 0, padding: '10px 12px',
+        fontFamily: 'Menlo, Monaco, monospace', fontSize: 13, lineHeight: 1.6,
+        color: '#d4d4d4', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        background: '#1e1e1e',
       }}>
         {loading ? '加载中...' : (logs || '(空)')}
       </pre>
