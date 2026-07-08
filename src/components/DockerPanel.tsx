@@ -1,10 +1,9 @@
-import { useEffect, useState, useCallback, useRef } from 'react'
-import { Button, Tooltip, Empty, Select, App, Tag, Spin, Tabs, Switch } from 'antd'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
+import { Button, Tooltip, Empty, Select, App, Tag, Spin, Tabs, Switch, Segmented } from 'antd'
 import type { TabsProps } from 'antd'
 import {
   CloseOutlined,
   ReloadOutlined,
-  DeploymentUnitOutlined,
   PlayCircleOutlined,
   PauseCircleOutlined,
   CaretRightOutlined,
@@ -13,6 +12,7 @@ import {
   ReloadOutlined as RestartIcon,
   CodeOutlined,
   AppstoreOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons'
 import {
   listContainers,
@@ -23,7 +23,6 @@ import {
   type ImageInfo,
   type ContainerAction as DockerAction,
 } from '../services/docker'
-import ContainerTerminalModal from './ContainerTerminalModal'
 
 interface DockerPanelProps {
   connectionId: string | null
@@ -31,6 +30,9 @@ interface DockerPanelProps {
   /** 在左侧活动终端执行命令（追加回车自动运行） */
   onRunCommand?: (command: string) => void
 }
+
+/** 容器排序方式 */
+type SortBy = 'default' | 'cpu' | 'mem'
 
 // 静态 CSS（让 antd Tabs 内容区撑满高度），提取到组件外避免每次渲染重建
 const DOCKER_TABS_CSS = `
@@ -50,14 +52,12 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
   const [showAll, setShowAll] = useState(false)
   const [refreshInterval, setRefreshInterval] = useState(5000)
   const [paused, setPaused] = useState(false)
+  const [sortBy, setSortBy] = useState<SortBy>('default')
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // 镜像
   const [images, setImages] = useState<ImageInfo[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
-
-  // 容器终端
-  const [terminalContainer, setTerminalContainer] = useState<ContainerInfo | null>(null)
 
   // ---- 加载容器 ----
   const fetchContainers = useCallback(async () => {
@@ -87,8 +87,6 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
   }, [connectionId, message])
 
   // 用 ref 持有最新的 fetchContainers，避免轮询 effect 依赖函数引用
-  // （若 fetchContainers 因 message 等依赖变化而重建，会导致 effect 反复
-  //   清旧 interval 建新 interval，形成高频重渲染死循环）
   const fetchContainersRef = useRef(fetchContainers)
   fetchContainersRef.current = fetchContainers
 
@@ -172,7 +170,7 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
     })
   }, [connectionId, message, modal, fetchImages])
 
-  // 点「日志」按钮：直接在左侧活动终端执行 docker logs（不在面板内显示）
+  // 点「日志」按钮：直接在左侧活动终端执行 docker logs
   const handleViewLogs = useCallback((c: ContainerInfo) => {
     if (!onRunCommand) {
       message.warning('无法连接到终端')
@@ -181,9 +179,29 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
     onRunCommand(`docker logs --tail 200 ${c.id}`)
   }, [onRunCommand, message])
 
+  // 点「终端」按钮：直接在左侧活动终端执行 docker exec -it
   const handleOpenTerminal = useCallback((c: ContainerInfo) => {
-    setTerminalContainer(c)
-  }, [])
+    if (!onRunCommand) {
+      message.warning('无法连接到终端')
+      return
+    }
+    onRunCommand(`docker exec -it ${c.id} bash`)
+  }, [onRunCommand, message])
+
+  // ---- 排序后的容器列表 ----
+  const sortedContainers = useMemo(() => {
+    if (sortBy === 'default') return containers
+    const parsePercent = (s: string | null | undefined): number => {
+      if (!s) return -1
+      const n = parseFloat(s)
+      return isNaN(n) ? -1 : n
+    }
+    return [...containers].sort((a, b) => {
+      if (sortBy === 'cpu') return parsePercent(b.cpuPercent) - parsePercent(a.cpuPercent)
+      if (sortBy === 'mem') return parsePercent(b.memPercent) - parsePercent(a.memPercent)
+      return 0
+    })
+  }, [containers, sortBy])
 
   // ---- Tabs 配置 ----
   const tabs: TabsProps['items'] = [
@@ -191,12 +209,12 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
       key: 'containers',
       label: (
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <DeploymentUnitOutlined /> 容器
+          🐳 容器
         </span>
       ),
       children: (
         <ContainersTab
-          containers={containers}
+          containers={sortedContainers}
           loading={loadingContainers}
           connectionId={connectionId}
           showAll={showAll}
@@ -205,6 +223,8 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
           setRefreshInterval={setRefreshInterval}
           paused={paused}
           setPaused={setPaused}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
           onRefresh={fetchContainers}
           onAction={handleAction}
           onViewLogs={handleViewLogs}
@@ -240,9 +260,8 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '8px 10px', borderBottom: '1px solid var(--color-border)', flexShrink: 0,
       }}>
-        <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <DeploymentUnitOutlined style={{ color: 'var(--color-primary)' }} />
-          Docker 管理
+        <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
+          🐳 Docker 管理
         </span>
         <Tooltip title="关闭">
           <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
@@ -259,16 +278,8 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
           tabBarStyle={{ padding: '0 10px', margin: 0 }}
           destroyInactiveTabPane={false}
         />
-        {/* 让 antd Tabs 内容区撑满高度 */}
         <style>{DOCKER_TABS_CSS}</style>
       </div>
-
-      {/* 容器终端 Modal */}
-      <ContainerTerminalModal
-        connectionId={connectionId}
-        container={terminalContainer}
-        onClose={() => setTerminalContainer(null)}
-      />
     </div>
   )
 }
@@ -278,6 +289,7 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
 function ContainersTab({
   containers, loading, connectionId, showAll, setShowAll,
   refreshInterval, setRefreshInterval, paused, setPaused,
+  sortBy, setSortBy,
   onRefresh, onAction, onViewLogs, onOpenTerminal,
 }: {
   containers: ContainerInfo[]
@@ -289,6 +301,8 @@ function ContainersTab({
   setRefreshInterval: (v: number) => void
   paused: boolean
   setPaused: (v: boolean) => void
+  sortBy: SortBy
+  setSortBy: (v: SortBy) => void
   onRefresh: () => void
   onAction: (c: ContainerInfo, action: DockerAction) => void
   onViewLogs: (c: ContainerInfo) => void
@@ -318,12 +332,23 @@ function ContainersTab({
           size="small"
           value={refreshInterval}
           onChange={setRefreshInterval}
-          style={{ width: 90 }}
+          style={{ width: 80 }}
           options={[
             { label: '3秒', value: 3000 },
             { label: '5秒', value: 5000 },
             { label: '10秒', value: 10000 },
             { label: '关', value: 0 },
+          ]}
+        />
+        {/* 排序 */}
+        <Segmented
+          size="small"
+          value={sortBy}
+          onChange={(v) => setSortBy(v as SortBy)}
+          options={[
+            { label: '默认', value: 'default' },
+            { label: 'CPU', value: 'cpu' },
+            { label: '内存', value: 'mem' },
           ]}
         />
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, marginLeft: 'auto' }}>
@@ -376,7 +401,8 @@ function ContainerCard({
       border: '1px solid var(--color-border)', borderRadius: 4, padding: '8px 10px',
       marginBottom: 8, background: 'var(--color-bg-elevated)',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+      {/* 第一行：状态+名称+镜像 | 删除按钮（右上角） */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <Tag color={stateColor} style={{ margin: 0 }}>{c.state}</Tag>
@@ -388,7 +414,19 @@ function ContainerCard({
             {c.image}
           </div>
         </div>
+        {/* 删除按钮移到右上角 */}
+        <Tooltip title="删除容器">
+          <Button
+            size="small"
+            type="text"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => onAction(c, 'remove')}
+            style={{ flexShrink: 0 }}
+          />
+        </Tooltip>
       </div>
+      {/* 状态行 */}
       <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginTop: 4 }}>
         {c.status}
         {c.ports && <span style={{ marginLeft: 8 }}>🔌 {c.ports}</span>}
@@ -418,7 +456,7 @@ function ContainerCard({
           )}
         </div>
       )}
-      {/* 操作按钮 */}
+      {/* 操作按钮（无删除，删除在右上角） */}
       <div style={{ display: 'flex', gap: 4, marginTop: 6, flexWrap: 'wrap' }}>
         {isRunning ? (
           <Button size="small" type="text" icon={<StopOutlined />} onClick={() => onAction(c, 'stop')}>停止</Button>
@@ -429,8 +467,7 @@ function ContainerCard({
         {isRunning && (
           <Button size="small" type="text" icon={<CodeOutlined />} onClick={() => onOpenTerminal(c)}>终端</Button>
         )}
-        <Button size="small" type="text" icon={<CodeOutlined />} onClick={() => onViewLogs(c)}>日志</Button>
-        <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => onAction(c, 'remove')}>删除</Button>
+        <Button size="small" type="text" icon={<FileTextOutlined />} onClick={() => onViewLogs(c)}>日志</Button>
       </div>
     </div>
   )
