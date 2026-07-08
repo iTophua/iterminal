@@ -8,7 +8,7 @@ import {
   ThunderboltOutlined,
   LinkOutlined,
   MessageOutlined,
-  DeploymentUnitOutlined,
+  DockerOutlined,
 } from '@ant-design/icons'
 
 interface RightSidebarProps {
@@ -134,7 +134,7 @@ export function RightSidebar({
               <Button
                 type={dockerVisible ? 'primary' : 'text'}
                 size="small"
-                icon={<DeploymentUnitOutlined />}
+                icon={<DockerOutlined />}
                 onClick={onDockerToggle}
               />
             </Tooltip>

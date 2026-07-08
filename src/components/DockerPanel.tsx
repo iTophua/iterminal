@@ -13,6 +13,7 @@ import {
   CodeOutlined,
   AppstoreOutlined,
   FileTextOutlined,
+  DockerOutlined,
 } from '@ant-design/icons'
 import {
   listContainers,
@@ -209,7 +210,7 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
       key: 'containers',
       label: (
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          🐳 容器
+          <DockerOutlined /> 容器
         </span>
       ),
       children: (
@@ -261,7 +262,7 @@ export default function DockerPanel({ connectionId, onClose, onRunCommand }: Doc
         padding: '8px 10px', borderBottom: '1px solid var(--color-border)', flexShrink: 0,
       }}>
         <span style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
-          🐳 Docker 管理
+          <DockerOutlined style={{ color: 'var(--color-primary)' }} /> Docker 管理
         </span>
         <Tooltip title="关闭">
           <Button size="small" type="text" icon={<CloseOutlined />} onClick={onClose} />
