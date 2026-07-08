@@ -55,13 +55,35 @@ lazy_static::lazy_static! {
     static ref DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 }
 
-fn get_db() -> Result<Connection, String> {
+pub(crate) fn get_db() -> Result<Connection, String> {
     if !DB_INITIALIZED.load(Ordering::SeqCst) {
         return Err("Database not initialized. Call init_database() first.".to_string());
     }
     let guard = DB_PATH.lock().map_err(|e| e.to_string())?;
     let path = guard.as_ref().ok_or("Database path not set")?;
     Connection::open(path).map_err(|e| e.to_string())
+}
+
+/// 读取一条 setting（供其它模块内部复用，不经 Tauri 命令层）
+pub(crate) fn get_setting_inner(key: &str) -> Result<Option<String>, String> {
+    let conn = get_db()?;
+    let result: Option<String> = conn
+        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
+        .ok();
+    Ok(result)
+}
+
+/// 写入一条 setting（供其它模块内部复用）
+pub(crate) fn save_setting_inner(key: &str, value: &str) -> Result<(), String> {
+    let conn = get_db()?;
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+        [key, value],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

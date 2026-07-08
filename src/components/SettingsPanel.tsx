@@ -4,13 +4,14 @@ import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
 
 import { useState, useEffect, useCallback } from 'react'
-import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined } from '@ant-design/icons'
+import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined, RobotOutlined, CloudDownloadOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { themeList } from '../styles/themes/app-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-shell'
 import { STORAGE_KEYS, API_CONFIG } from '../config/constants'
+import { getAiConfig, saveAiConfig, listAiModels, testAiConnection, AI_BASE_URL_PRESETS, type AiConfig } from '../services/ai'
 
 const { Text } = Typography
 
@@ -27,12 +28,13 @@ drwxr-xr-x  12 user  staff   384 Mar 14 10:00 .
 user@server:~$ echo "Hello, Terminal!"
 Hello, Terminal!`
 
-type SettingCategory = 'appearance' | 'terminal' | 'mcp' | 'license' | 'shortcuts' | 'about'
+type SettingCategory = 'appearance' | 'terminal' | 'mcp' | 'ai' | 'license' | 'shortcuts' | 'about'
 
 const SETTING_CATEGORIES = [
   { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
   { key: 'terminal', label: '终端', icon: <CodeOutlined /> },
   { key: 'mcp', label: 'MCP', icon: <ApiOutlined /> },
+  { key: 'ai', label: 'AI 助手', icon: <RobotOutlined /> },
   { key: 'license', label: 'License', icon: <CrownOutlined /> },
   { key: 'shortcuts', label: '快捷键', icon: <KeyOutlined /> },
   { key: 'about', label: '关于', icon: <InfoCircleOutlined /> },
@@ -82,6 +84,17 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const [licenseKey, setLicenseKey] = useState('')
   const [editingShortcutKey, setEditingShortcutKey] = useState<string | null>(null)
   const [tempShortcutKey, setTempShortcutKey] = useState<string>('')
+
+  // ============ AI 助手配置状态 ============
+  const aiFeatureAvailable = useLicenseStore(state => state.isFeatureAvailable('ai_assistant'))
+  const [aiConfig, setAiConfig] = useState<AiConfig | null>(null)
+  const [aiBaseUrl, setAiBaseUrl] = useState('')
+  const [aiApiKey, setAiApiKey] = useState('')
+  const [aiModel, setAiModel] = useState('')
+  const [aiModels, setAiModels] = useState<string[]>([])
+  const [aiSaving, setAiSaving] = useState(false)
+  const [aiFetchingModels, setAiFetchingModels] = useState(false)
+  const [aiTesting, setAiTesting] = useState(false)
 
   useEffect(() => {
     if (!editingShortcutKey) return
@@ -232,6 +245,21 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       invoke<boolean>('is_api_server_running')
         .then(setApiServerRunning)
         .catch(() => setApiServerRunning(false))
+    }
+  }, [visible, activeCategory])
+
+  // 进入 AI 助手分类时加载已存配置（apiKey 脱敏：只回 hasApiKey）
+  useEffect(() => {
+    if (visible && activeCategory === 'ai') {
+      getAiConfig()
+        .then(cfg => {
+          setAiConfig(cfg)
+          setAiBaseUrl(cfg.baseUrl || '')
+          setAiModel(cfg.model || '')
+          // apiKey 输入框留空；后端保存时空字符串/undefined 表示不变
+          setAiApiKey('')
+        })
+        .catch(err => message.error(`加载 AI 配置失败: ${err}`))
     }
   }, [visible, activeCategory])
 
@@ -961,6 +989,222 @@ ${claudeConfig}`}
     )
   }
 
+  // ============ AI 助手设置 ============
+
+  const handleSaveAi = useCallback(async () => {
+    if (!aiBaseUrl.trim()) {
+      message.error('请填写 Base URL')
+      return
+    }
+    if (!aiModel.trim()) {
+      message.error('请填写或选择模型')
+      return
+    }
+    setAiSaving(true)
+    try {
+      // 输入框为空 → undefined → 后端保持原密钥不变
+      const cfg = await saveAiConfig(aiBaseUrl.trim(), aiApiKey.trim() || undefined, aiModel.trim())
+      setAiConfig(cfg)
+      setAiApiKey('')
+      message.success('AI 配置已保存')
+    } catch (err) {
+      message.error(`保存失败: ${err}`)
+    } finally {
+      setAiSaving(false)
+    }
+  }, [aiBaseUrl, aiApiKey, aiModel, message])
+
+  const handleFetchModels = useCallback(async () => {
+    if (!aiBaseUrl.trim()) {
+      message.error('请先填写 Base URL')
+      return
+    }
+    setAiFetchingModels(true)
+    try {
+      // 优先用输入框里的密钥，空则后端回退到已存的
+      const models = await listAiModels(aiBaseUrl.trim(), aiApiKey.trim() || undefined)
+      setAiModels(models)
+      if (models.length === 0) {
+        message.warning('该服务未返回任何模型')
+      } else {
+        message.success(`拉取到 ${models.length} 个模型`)
+        // 若当前模型不在列表里，自动选第一个
+        if (!aiModel || !models.includes(aiModel)) {
+          setAiModel(models[0])
+        }
+      }
+    } catch (err) {
+      message.error(`拉取模型失败: ${err}`)
+    } finally {
+      setAiFetchingModels(false)
+    }
+  }, [aiBaseUrl, aiApiKey, aiModel, message])
+
+  const handleTestAi = useCallback(async () => {
+    if (!aiBaseUrl.trim()) {
+      message.error('请先填写 Base URL')
+      return
+    }
+    if (!aiModel.trim()) {
+      message.error('请先填写或选择模型')
+      return
+    }
+    setAiTesting(true)
+    try {
+      const result = await testAiConnection(aiBaseUrl.trim(), aiApiKey.trim() || undefined, aiModel.trim())
+      message.success(result)
+    } catch (err) {
+      message.error(`连接失败: ${err}`)
+    } finally {
+      setAiTesting(false)
+    }
+  }, [aiBaseUrl, aiApiKey, aiModel, message])
+
+  const renderAiSettings = () => {
+    // 未激活 Pro：提示升级
+    if (!aiFeatureAvailable) {
+      return (
+        <div style={{ padding: '0 16px' }}>
+          <div style={{
+            padding: 24,
+            textAlign: 'center',
+            border: '1px dashed var(--color-border)',
+            borderRadius: 8,
+          }}>
+            <RobotOutlined style={{ fontSize: 40, color: 'var(--color-text-tertiary)' }} />
+            <div style={{ marginTop: 12, marginBottom: 8 }}>
+              <Text strong style={{ fontSize: 16 }}>AI 助手是专业版功能</Text>
+            </div>
+            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+              激活 Pro License 后，可在终端里右键分析报错、自然语言转命令。
+              <br />
+              兼容 OpenAI / DeepSeek / Ollama / LM Studio 等所有 OpenAI API 格式的服务。
+            </Text>
+            <Button
+              type="primary"
+              icon={<CrownOutlined />}
+              onClick={() => setActiveCategory('license')}
+            >
+              去激活
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div style={{ padding: '0 16px' }}>
+        <div style={{ marginBottom: 20 }}>
+          <Text strong style={{ fontSize: 16, color: 'var(--color-text)' }}>
+            <RobotOutlined style={{ marginRight: 8, color: 'var(--color-primary)' }} />
+            AI 助手配置
+          </Text>
+          <Text type="secondary" style={{ display: 'block', marginTop: 6, fontSize: 12, lineHeight: 1.6 }}>
+            采用通用 OpenAI 兼容协议，填 Base URL + API Key 即可。
+            支持 DeepSeek、OpenAI、Ollama、LM Studio、阿里百炼、智谱等。
+          </Text>
+        </div>
+
+        {/* 快捷预设 */}
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary" style={{ fontSize: 12 }}>快捷预设</Text>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+            {AI_BASE_URL_PRESETS.map(p => (
+              <Tooltip key={p.name} title={p.hint}>
+                <Tag
+                  style={{ cursor: 'pointer', margin: 0 }}
+                  color={aiBaseUrl === p.url ? 'blue' : undefined}
+                  onClick={() => setAiBaseUrl(p.url)}
+                >
+                  {p.name}
+                </Tag>
+              </Tooltip>
+            ))}
+          </div>
+        </div>
+
+        {/* Base URL */}
+        <div style={{ marginBottom: 16 }}>
+          <Text style={{ display: 'block', marginBottom: 6 }}>
+            Base URL <Text type="secondary" style={{ fontSize: 12 }}>（自动补 /v1）</Text>
+          </Text>
+          <Input
+            value={aiBaseUrl}
+            onChange={e => setAiBaseUrl(e.target.value)}
+            placeholder="https://api.deepseek.com  或  http://localhost:11434"
+            spellCheck={false}
+          />
+        </div>
+
+        {/* API Key */}
+        <div style={{ marginBottom: 16 }}>
+          <Text style={{ display: 'block', marginBottom: 6 }}>
+            API Key <Text type="secondary" style={{ fontSize: 12 }}>（本地推理可留空）</Text>
+          </Text>
+          <Input.Password
+            value={aiApiKey}
+            onChange={e => setAiApiKey(e.target.value)}
+            placeholder={aiConfig?.hasApiKey ? '••••已配置，留空表示不修改' : 'sk-...'}
+            spellCheck={false}
+          />
+        </div>
+
+        {/* 模型 */}
+        <div style={{ marginBottom: 16 }}>
+          <Text style={{ display: 'block', marginBottom: 6 }}>模型</Text>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Select
+              showSearch
+              style={{ flex: 1 }}
+              value={aiModel || undefined}
+              onChange={v => setAiModel(v)}
+              placeholder={aiModels.length ? '选择或搜索模型' : '点"拉取模型"获取列表，或直接手填'}
+              options={aiModels.map(m => ({ label: m, value: m }))}
+              notFoundContent={null}
+              allowClear
+            />
+            {/* Select 未列出手填项时，用户也能直接输入：用 mode 的 tags 太激进，
+                所以提供一个普通 Input 作为后备——但为了紧凑，这里允许在 Select 框搜索不到时回填 */}
+            <Button
+              icon={<CloudDownloadOutlined />}
+              loading={aiFetchingModels}
+              onClick={handleFetchModels}
+            >
+              拉取模型
+            </Button>
+          </div>
+          {aiModels.length === 0 && (
+            <Input
+              style={{ marginTop: 8 }}
+              size="small"
+              value={aiModel}
+              onChange={e => setAiModel(e.target.value)}
+              placeholder="也可在此手填模型名，如 deepseek-chat / llama3"
+              spellCheck={false}
+            />
+          )}
+        </div>
+
+        {/* 操作按钮 */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          <Button type="primary" loading={aiSaving} onClick={handleSaveAi}>
+            保存配置
+          </Button>
+          <Button loading={aiTesting} onClick={handleTestAi}>
+            测试连接
+          </Button>
+        </div>
+
+        <Divider style={{ margin: '8px 0' }} />
+
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', lineHeight: 1.7 }}>
+          <div>💡 用法：终端里选中报错文本 → 右键「AI 分析选中内容」，或在工具栏打开 AI 助手。</div>
+          <div>🔒 API Key 经 AES-GCM 加密后存在本地数据库，不会上传。</div>
+        </div>
+      </div>
+    )
+  }
+
   const renderLicenseSettings = () => {
     // 标注为字符串，避免 TS 基于后续 === 'Enterprise' 判断做控制流收窄
     const currentType: string = licenseInfo?.license_type ?? 'Free'
@@ -1230,6 +1474,8 @@ ${claudeConfig}`}
         return renderTerminalSettings()
       case 'mcp':
         return renderMcpSettings()
+      case 'ai':
+        return renderAiSettings()
       case 'license':
         return renderLicenseSettings()
       case 'shortcuts':

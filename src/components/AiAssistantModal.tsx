@@ -7,7 +7,7 @@ import {
   ReloadOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
-import { aiAnalyze, type AiKind } from '../services/ai'
+import { aiAnalyze, getAiConfig, type AiKind, type AiConfig } from '../services/ai'
 
 interface AiAssistantModalProps {
   visible: boolean
@@ -30,12 +30,21 @@ export default function AiAssistantModal({
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<string>('')
   const [suggested, setSuggested] = useState<string | null>(null)
+  const [aiConfig, setAiConfig] = useState<AiConfig | null>(null)
 
   // 每次打开时同步 initialText（destroyOnClose 下会重挂载，
   // 但 initialText 变化时也需同步，用 useEffect 保险）
   useEffect(() => {
     setText(initialText)
   }, [initialText])
+
+  // 打开时加载当前 AI 配置（用于标题显示模型名 + 未配置提示）
+  useEffect(() => {
+    if (!visible) return
+    getAiConfig().then(setAiConfig).catch(() => setAiConfig(null))
+  }, [visible])
+
+  const configured = !!(aiConfig?.baseUrl && aiConfig?.model)
 
   const handleAnalyze = useCallback(async () => {
     const t = text.trim()
@@ -88,6 +97,9 @@ export default function AiAssistantModal({
           <BulbOutlined style={{ color: 'var(--color-primary)' }} />
           AI 助手
           <Tag color="gold" style={{ marginLeft: 8 }}>Pro</Tag>
+          {configured && (
+            <Tag color="blue" style={{ margin: 0 }}>{aiConfig?.model}</Tag>
+          )}
         </span>
       }
       open={visible}
@@ -118,6 +130,20 @@ export default function AiAssistantModal({
           </Button>
         </Tooltip>
       </div>
+
+      {!configured && (
+        <div style={{
+          marginBottom: 12,
+          padding: '6px 10px',
+          fontSize: 12,
+          color: 'var(--color-warning, #d48806)',
+          background: 'color-mix(in srgb, var(--color-warning, #d48806) 8%, transparent)',
+          border: '1px solid color-mix(in srgb, var(--color-warning, #d48806) 30%, transparent)',
+          borderRadius: 4,
+        }}>
+          ⚠️ 尚未配置 AI 服务，请先到「设置 → AI 助手」填写 Base URL、API Key 和模型。
+        </div>
+      )}
 
       <Input.TextArea
         value={text}
