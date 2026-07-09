@@ -1,6 +1,6 @@
 import { Layout, Menu, Badge } from 'antd'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined, SettingOutlined, GithubOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { CloudServerOutlined, DesktopOutlined, CodeOutlined, SwapOutlined, SettingOutlined, GithubOutlined, ThunderboltOutlined, FileTextOutlined } from '@ant-design/icons'
 import { useState, useEffect, useMemo } from 'react'
 import { open } from '@tauri-apps/plugin-shell'
 import { useTerminalStore } from '../stores/terminalStore'
@@ -96,6 +96,11 @@ function Sidebar() {
           )}
         </span>
       ),
+    },
+    {
+      key: '/logs',
+      icon: <FileTextOutlined />,
+      label: 'MCP 日志',
     },
   ], [groups, groupCounts, connectedCount, transferringCount])
 

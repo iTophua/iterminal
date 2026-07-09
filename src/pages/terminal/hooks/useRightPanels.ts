@@ -6,7 +6,6 @@ export function useRightPanels(
   setFileManagerVisible: (connectionId: string, visible: boolean) => void
 ) {
   const [monitorVisible, setMonitorVisible] = useState(false)
-  const [apiLogVisible, setApiLogVisible] = useState(false)
   const [snippetsVisible, setSnippetsVisible] = useState(false)
   const [portForwardVisible, setPortForwardVisible] = useState(false)
   const [aiChatVisible, setAiChatVisible] = useState(false)
@@ -15,7 +14,6 @@ export function useRightPanels(
   const hasAnyPanelOpen =
     monitorVisible ||
     (activeConnectionId && fileManagerVisible[activeConnectionId]) ||
-    apiLogVisible ||
     snippetsVisible ||
     portForwardVisible ||
     aiChatVisible ||
@@ -24,9 +22,8 @@ export function useRightPanels(
 
   // 关闭除指定面板外的其它面板（保证同时只开一个）
   const closeOthers = useCallback(
-    (keep: 'monitor' | 'fileManager' | 'apiLog' | 'snippets' | 'portForward' | 'aiChat' | 'docker' | null) => {
+    (keep: 'monitor' | 'fileManager' | 'snippets' | 'portForward' | 'aiChat' | 'docker' | null) => {
       if (keep !== 'monitor') setMonitorVisible(false)
-      if (keep !== 'apiLog') setApiLogVisible(false)
       if (keep !== 'snippets') setSnippetsVisible(false)
       if (keep !== 'portForward') setPortForwardVisible(false)
       if (keep !== 'aiChat') setAiChatVisible(false)
@@ -62,15 +59,6 @@ export function useRightPanels(
       setFileManagerVisible(activeConnectionId, true)
     }
   }, [activeConnectionId, fileManagerVisible, setFileManagerVisible, closeOthers])
-
-  const toggleApiLog = useCallback(() => {
-    if (apiLogVisible) {
-      setApiLogVisible(false)
-    } else {
-      closeOthers('apiLog')
-      setApiLogVisible(true)
-    }
-  }, [apiLogVisible, closeOthers])
 
   const toggleSnippets = useCallback(() => {
     if (snippetsVisible) {
@@ -111,8 +99,6 @@ export function useRightPanels(
   return {
     monitorVisible,
     setMonitorVisible,
-    apiLogVisible,
-    setApiLogVisible,
     snippetsVisible,
     setSnippetsVisible,
     portForwardVisible,
@@ -125,7 +111,6 @@ export function useRightPanels(
     openMonitor,
     toggleMonitor,
     openFileManager,
-    toggleApiLog,
     toggleSnippets,
     togglePortForward,
     toggleAiChat,

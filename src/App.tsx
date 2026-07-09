@@ -6,6 +6,7 @@ import Connections from './pages/Connections'
 import Terminal from './pages/Terminal'
 import TerminalWindowPage from './pages/TerminalWindow'
 import Transfers from './pages/Transfers'
+import McpLogs from './pages/McpLogs'
 import { useTerminalStore, type SplitPane } from './stores/terminalStore'
 import { invoke } from '@tauri-apps/api/core'
 import { useEffect, useState, useRef } from 'react'
@@ -355,12 +356,17 @@ function MainContent() {
       <AnimatedPage show={location.pathname === '/transfers'} padding>
         <Transfers />
       </AnimatedPage>
-      
+
+      <AnimatedPage show={location.pathname === '/logs'} padding>
+        <McpLogs />
+      </AnimatedPage>
+
       {/* 路由仅用于 URL 导航 */}
       <Routes>
         <Route path="/" element={<Navigate to="/connections" replace />} />
         <Route path="/connections" element={null} />
         <Route path="/transfers" element={null} />
+        <Route path="/logs" element={null} />
         <Route path="/terminal" element={null} />
       </Routes>
     

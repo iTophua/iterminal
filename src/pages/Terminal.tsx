@@ -42,7 +42,6 @@ import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 import { RightSidebar } from '../components/RightSidebar'
 import MonitorPanel from '../components/MonitorPanel'
 import FileManagerPanel from '../components/FileManagerPanel'
-import McpLogPanel from '../components/McpLogPanel'
 import SnippetsPanel from '../components/SnippetsPanel'
 import AiAssistantModal from '../components/AiAssistantModal'
 import PortForwardPanel from '../components/PortForwardPanel'
@@ -150,7 +149,6 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const writeDrainingRef = useRef<{ [key: string]: boolean }>({})
   // 用 ref 暴露 enqueueWrite，使定义在 enqueueWrite 之前的回调（如 selectHistoryCommand）也能使用
   const enqueueWriteRef = useRef<(key: string, data: string) => void>(() => {})
-  const apiLogVisibleRef = useRef(false)
   const shortcutSettingsRef = useRef(shortcutSettings)
   const terminalSettingsRef = useRef(terminalSettings)
   const connectedConnectionsRef = useRef(connectedConnections)
@@ -479,8 +477,6 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
   const {
     monitorVisible,
     setMonitorVisible,
-    apiLogVisible,
-    setApiLogVisible,
     snippetsVisible,
     setSnippetsVisible,
     portForwardVisible,
@@ -493,7 +489,6 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     toggleDocker,
     toggleMonitor,
     openFileManager,
-    toggleApiLog,
     toggleSnippets,
     togglePortForward,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
@@ -524,10 +519,6 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
   useEffect(() => {
     dropTargetRef.current = dropTarget
   }, [dropTarget])
-
-  useEffect(() => {
-    apiLogVisibleRef.current = apiLogVisible
-  }, [apiLogVisible])
 
 useEffect(() => {
     
@@ -636,9 +627,6 @@ const handlePointerUp = () => {
   useEffect(() => {
     const handleMcpStatusChange = (e: CustomEvent<boolean>) => {
       setMcpEnabled(e.detail)
-      if (!e.detail && apiLogVisibleRef.current) {
-        setApiLogVisible(false)
-      }
     }
 
     const handleStorageChange = (e: StorageEvent) => {
@@ -2352,7 +2340,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       </div>
 
       <div style={{
-        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || apiLogVisible || snippetsVisible || portForwardVisible || aiChatVisible || dockerVisible) ? 360 : 0,
+        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || snippetsVisible || portForwardVisible || aiChatVisible || dockerVisible) ? 360 : 0,
         height: '100%',
         flexShrink: 0,
         overflow: 'hidden',
@@ -2368,9 +2356,6 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             visible={true}
             onClose={() => setFileManagerVisible(activeConnectionId, false)}
           />
-        )}
-        {apiLogVisible && (
-          <McpLogPanel onClose={() => setApiLogVisible(false)} />
         )}
         {snippetsVisible && snippetsEnabled && (
           <SnippetsPanel
@@ -2460,7 +2445,6 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         connectionId={activeConnectionId}
         monitorVisible={monitorVisible}
         fileManagerVisible={activeConnectionId ? !!fileManagerVisible[activeConnectionId] : false}
-        apiLogVisible={apiLogVisible}
         snippetsVisible={snippetsVisible}
         snippetsEnabled={snippetsEnabled}
         portForwardVisible={portForwardVisible}
@@ -2474,7 +2458,6 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         onFullscreenToggle={() => handleToggleFullscreen('')}
         onMonitorToggle={toggleMonitor}
         onFileManagerToggle={openFileManager}
-        onApiLogToggle={toggleApiLog}
         onSnippetsToggle={toggleSnippets}
         onPortForwardToggle={togglePortForward}
         onAiChatToggle={toggleAiChat}

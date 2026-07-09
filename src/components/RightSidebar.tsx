@@ -1,4 +1,5 @@
 import { Button, Tooltip } from 'antd'
+import { useNavigate } from 'react-router-dom'
 import {
   DashboardOutlined,
   FolderOutlined,
@@ -15,7 +16,6 @@ interface RightSidebarProps {
   connectionId: string | null
   monitorVisible: boolean
   fileManagerVisible: boolean
-  apiLogVisible: boolean
   snippetsVisible: boolean
   snippetsEnabled: boolean
   portForwardVisible: boolean
@@ -28,7 +28,6 @@ interface RightSidebarProps {
   showFullscreen?: boolean
   onMonitorToggle: () => void
   onFileManagerToggle: () => void
-  onApiLogToggle: () => void
   onSnippetsToggle: () => void
   onPortForwardToggle: () => void
   onAiChatToggle: () => void
@@ -40,7 +39,6 @@ export function RightSidebar({
   connectionId,
   monitorVisible,
   fileManagerVisible,
-  apiLogVisible,
   snippetsVisible,
   snippetsEnabled,
   portForwardVisible,
@@ -53,13 +51,13 @@ export function RightSidebar({
   showFullscreen,
   onMonitorToggle,
   onFileManagerToggle,
-  onApiLogToggle,
   onSnippetsToggle,
   onPortForwardToggle,
   onAiChatToggle,
   onDockerToggle,
   onFullscreenToggle,
 }: RightSidebarProps) {
+  const navigate = useNavigate()
   return (
     <div
       className="right-sidebar"
@@ -141,10 +139,10 @@ export function RightSidebar({
             {mcpEnabled && (
               <Tooltip title="MCP 日志" placement="left">
                 <Button
-                  type={apiLogVisible ? 'primary' : 'text'}
+                  type="text"
                   size="small"
                   icon={<ApiOutlined />}
-                  onClick={onApiLogToggle}
+                  onClick={() => navigate('/logs')}
                 />
               </Tooltip>
             )}
