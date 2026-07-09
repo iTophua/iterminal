@@ -74,6 +74,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   })
   const [mcpLoading, setMcpLoading] = useState(false)
   const [apiServerRunning, setApiServerRunning] = useState(false)
+  const [mcpToken, setMcpToken] = useState<string | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [appVersion, setAppVersion] = useState<string>('')
   
@@ -204,6 +205,9 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         } else if (!enabled && running) {
           await invoke('stop_api_server')
         }
+        // 加载 API token
+        const token = await invoke<string | null>('get_mcp_token')
+        setMcpToken(token)
       } catch (e) {
         console.error('Failed to check MCP status:', e)
       }
@@ -229,6 +233,21 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       message.error(`MCP 服务${checked ? '启动' : '停止'}失败: ${e}`)
     } finally {
       setMcpLoading(false)
+    }
+  }
+
+  const handleResetToken = async () => {
+    try {
+      const newToken = await invoke<string>('reset_mcp_token')
+      setMcpToken(newToken)
+      // 重启 API 服务让新 token 生效
+      if (mcpEnabled) {
+        await invoke('stop_api_server')
+        await invoke('start_api_server_command')
+      }
+      message.success('Token 已重置，重启 API 服务后生效')
+    } catch (e) {
+      message.error(`重置 Token 失败: ${e}`)
     }
   }
 
@@ -870,6 +889,63 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
           </div>
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
             仅监听本地回环地址，外部网络无法访问
+          </Text>
+        </div>
+
+        <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
+
+        {/* API Token 鉴权 */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <KeyOutlined style={{ color: 'var(--color-primary)' }} />
+            <Text style={{ color: 'var(--color-text)', fontWeight: 500 }}>API 鉴权 Token</Text>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{
+              background: 'var(--color-bg-spotlight)',
+              padding: '8px 12px',
+              borderRadius: 6,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: 'var(--color-text-secondary)',
+              flex: 1,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}>
+              {mcpToken
+                ? `${mcpToken.slice(0, 8)}${'•'.repeat(24)}${mcpToken.slice(-4)}`
+                : '未生成'}
+            </div>
+            <Tooltip title="复制完整 Token">
+              <Button
+                size="small"
+                type="text"
+                icon={<CopyOutlined />}
+                disabled={!mcpToken}
+                onClick={async () => {
+                  if (mcpToken) {
+                    try {
+                      await navigator.clipboard.writeText(mcpToken)
+                      message.success('已复制')
+                    } catch {
+                      message.error('复制失败')
+                    }
+                  }
+                }}
+              />
+            </Tooltip>
+            <Tooltip title="重置 Token（重启 API 后生效）">
+              <Button
+                size="small"
+                type="text"
+                icon={<ReloadOutlined />}
+                onClick={handleResetToken}
+              />
+            </Tooltip>
+          </div>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+            MCP 服务器自动从 <code style={{ fontSize: 11 }}>~/.iterminal/mcp_token</code> 读取，无需手动配置
           </Text>
         </div>
 

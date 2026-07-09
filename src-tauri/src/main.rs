@@ -61,6 +61,8 @@ fn main() {
             iterminal::commands::api::is_api_server_running,
             iterminal::commands::api::stop_api_server,
             iterminal::commands::api::start_api_server_command,
+            iterminal::commands::api::get_mcp_token,
+            iterminal::commands::api::reset_mcp_token,
             iterminal::commands::license::verify_license,
             iterminal::commands::license::get_license,
             iterminal::commands::license::is_feature_available,

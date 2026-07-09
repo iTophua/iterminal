@@ -1,7 +1,7 @@
 use axum::{
     extract::Path,
     http::{Method, StatusCode},
-    response::Json,
+    response::{IntoResponse, Json},
     routing::{delete, get, post},
     Router,
 };
@@ -88,6 +88,8 @@ pub struct PathRequest {
 
 pub struct ApiState {
     pub app_handle: AppHandle,
+    /// API 鉴权 token（为空则不校验）
+    pub token: Option<String>,
 }
 
 fn emit_operation(
@@ -124,8 +126,8 @@ fn emit_operation(
     }
 }
 
-pub fn create_api_router(app_handle: AppHandle) -> Router {
-    let state = Arc::new(ApiState { app_handle });
+pub fn create_api_router(app_handle: AppHandle, token: Option<String>) -> Router {
+    let state = Arc::new(ApiState { app_handle, token: token.clone() });
 
     Router::new()
         .route("/api/status", get(get_status))
@@ -184,6 +186,10 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
             "/api/connections/{id}/delete-directory",
             post(delete_directory_handler),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            token.clone(),
+            auth_middleware,
+        ))
         .layer(
             CorsLayer::new()
                 .allow_origin([
@@ -196,6 +202,53 @@ pub fn create_api_router(app_handle: AppHandle) -> Router {
                 .allow_headers(tower_http::cors::Any),
         )
         .with_state(state)
+}
+
+/// Token 鉴权 middleware：校验 Authorization: Bearer {token}。
+/// /api/status 白名单不校验（健康检查）。token 为 None 时跳过（兼容旧版）。
+async fn auth_middleware(
+    axum::extract::State(expected_token): axum::extract::State<Option<String>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    // 无 token 配置 → 不校验
+    let expected = match &expected_token {
+        Some(t) if !t.is_empty() => t.clone(),
+        _ => return next.run(req).await,
+    };
+
+    // 健康检查白名单
+    if req.uri().path() == "/api/status" {
+        return next.run(req).await;
+    }
+
+    // 校验 Authorization header
+    let auth_header = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok());
+
+    match auth_header {
+        Some(h) if h.starts_with("Bearer ") => {
+            let provided = &h[7..];
+            if provided == expected {
+                next.run(req).await
+            } else {
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ApiResponse::<serde_json::Value>::error("Invalid token")),
+                )
+                    .into_response()
+            }
+        }
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiResponse::<serde_json::Value>::error(
+                "Missing or invalid Authorization header",
+            )),
+        )
+            .into_response(),
+    }
 }
 
 async fn get_status() -> Json<ApiResponse<serde_json::Value>> {
@@ -1082,6 +1135,78 @@ async fn delete_directory_handler(
     }
 }
 
+// ============ API Token 鉴权 ============
+
+const MCP_TOKEN_SETTING_KEY: &str = "mcp_api_token";
+
+/// token 文件路径：~/.iterminal/mcp_token
+fn mcp_token_file_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".iterminal").join("mcp_token"))
+}
+
+/// 生成 32 字节随机 token（hex 编码 = 64 字符）
+fn generate_random_token() -> String {
+    use rand::Rng;
+    let bytes: [u8; 32] = rand::thread_rng().gen();
+    hex::encode(bytes)
+}
+
+/// 将 token 写入文件供 MCP 服务器读取（权限 0600）
+fn write_token_file(token: &str) {
+    if let Some(path) = mcp_token_file_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if std::fs::write(&path, token).is_ok() {
+            // Unix 下设置 0600 权限
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+            }
+        }
+    }
+}
+
+/// 确保 token 存在：DB 有则读，没有则生成并存 DB + 写文件。
+fn ensure_mcp_token() -> Option<String> {
+    // 尝试从 DB 读
+    if let Ok(Some(stored)) = super::db::get_setting_inner(MCP_TOKEN_SETTING_KEY) {
+        if !stored.is_empty() {
+            // 确保 token 文件存在（应用可能换了机器）
+            if mcp_token_file_path()
+                .map(|p| !p.exists())
+                .unwrap_or(false)
+            {
+                write_token_file(&stored);
+            }
+            return Some(stored);
+        }
+    }
+
+    // 生成新 token
+    let token = generate_random_token();
+    let _ = super::db::save_setting_inner(MCP_TOKEN_SETTING_KEY, &token);
+    write_token_file(&token);
+    Some(token)
+}
+
+/// 获取当前 MCP token（明文，供设置页展示）
+#[tauri::command]
+pub async fn get_mcp_token() -> Result<Option<String>, String> {
+    Ok(super::db::get_setting_inner(MCP_TOKEN_SETTING_KEY)?)
+}
+
+/// 重置 token：生成新的，存 DB + 写文件。
+/// 注意：需要重启 API 服务才能生效（新连接用新 token）。
+#[tauri::command]
+pub async fn reset_mcp_token() -> Result<String, String> {
+    let token = generate_random_token();
+    super::db::save_setting_inner(MCP_TOKEN_SETTING_KEY, &token)?;
+    write_token_file(&token);
+    Ok(token)
+}
+
 pub async fn start_api_server(app_handle: AppHandle) {
     let cancel_token = CancellationToken::new();
 
@@ -1092,7 +1217,10 @@ pub async fn start_api_server(app_handle: AppHandle) {
 
     API_RUNNING.store(true, Ordering::SeqCst);
 
-    let app = create_api_router(app_handle);
+    // 生成或读取 API 鉴权 token
+    let api_token = ensure_mcp_token();
+
+    let app = create_api_router(app_handle, api_token);
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 27149));
 
     println!("iTerminal API Server running on http://{}", addr);

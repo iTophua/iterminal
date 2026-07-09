@@ -7,8 +7,34 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
+import { readFileSync, existsSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 
 const API_BASE = "http://127.0.0.1:27149";
+
+/**
+ * 读取 iTerminal API 鉴权 token。
+ * token 由 iTerminal 应用生成，写入 ~/.iterminal/mcp_token（权限 0600）。
+ */
+function loadApiToken(): string | null {
+  const paths = [
+    join(homedir(), ".iterminal", "mcp_token"),
+    join(homedir(), ".config", "iterminal", "mcp_token"), // XDG fallback
+  ];
+  for (const p of paths) {
+    try {
+      if (existsSync(p)) {
+        return readFileSync(p, "utf-8").trim();
+      }
+    } catch {
+      // 读取失败（权限等），尝试下一个路径
+    }
+  }
+  return null;
+}
+
+const API_TOKEN = loadApiToken();
 
 interface ApiResponse<T> {
   success: boolean;
@@ -103,7 +129,10 @@ async function apiCall<T>(
   
   const options: RequestInit = {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
+    },
     signal: controller.signal,
   };
   if (body) {
