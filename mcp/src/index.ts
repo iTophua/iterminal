@@ -5,6 +5,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { readFileSync, existsSync } from "fs";
@@ -487,8 +491,8 @@ const tools: Tool[] = [
 ];
 
 const server = new Server(
-  { name: "iterminal-mcp", version: "1.0.0" },
-  { capabilities: { tools: {} } }
+  { name: "iterminal-mcp", version: "2.1.0" },
+  { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
@@ -739,10 +743,220 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
+// ============ Resources：文件树 ============
+
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  const result = await apiCall<Connection[]>("GET", "/api/connections");
+  const resources = (result.data || []).map((c) => ({
+    uri: `iterminal://${c.id}/`,
+    name: `${c.username}@${c.host}`,
+    description: `SSH 连接 ${c.username}@${c.host}:${c.port} 的文件系统`,
+    mimeType: "text/directory",
+  }));
+  return { resources };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  // uri 格式: iterminal://{connectionId}/{path}
+  const uri = request.params.uri;
+  const match = uri.match(/^iterminal:\/\/([^/]+)\/(.*)$/);
+  if (!match) {
+    throw new Error(`Invalid URI format: ${uri}`);
+  }
+  const [, connId, rawPath] = match;
+  const path = decodeURIComponent(rawPath) || "/";
+
+  // 尝试列目录
+  const listResult = await apiCall<Array<{ name: string; path: string; is_directory: boolean; size: number; modified: string }>>(
+    "GET",
+    `/api/connections/${connId}/files?path=${encodeURIComponent(path)}`
+  );
+
+  if (listResult.success && listResult.data) {
+    // 目录 → 返回文件列表
+    const listing = listResult.data
+      .map((f) => `${f.is_directory ? "📁" : "📄"} ${f.name}${f.is_directory ? "/" : ""}\t${f.size} bytes\t${f.modified}`)
+      .join("\n");
+    return {
+      contents: [
+        {
+          uri: request.params.uri,
+          mimeType: "text/plain",
+          text: `目录: ${path}\n\n${listing}`,
+        },
+      ],
+    };
+  }
+
+  // 目录列表失败 → 可能是文件，尝试读内容
+  const readResult = await apiCall<{ path: string; content: string; size: number; encoding: string }>(
+    "POST",
+    `/api/connections/${connId}/read_file`,
+    { path }
+  );
+
+  if (readResult.success && readResult.data) {
+    return {
+      contents: [
+        {
+          uri: request.params.uri,
+          mimeType: "text/plain",
+          text: readResult.data.content,
+        },
+      ],
+    };
+  }
+
+  throw new Error(`无法读取 ${path}: ${listResult.error || readResult.error}`);
+});
+
+// ============ Prompts：运维命令模板 ============
+
+const prompts = [
+  {
+    name: "troubleshoot-high-cpu",
+    description: "诊断服务器 CPU 占用过高的完整排查流程",
+    arguments: [
+      { name: "connection_id", description: "已连接的服务器 ID", required: true },
+      { name: "process_hint", description: "可疑进程名（可选）", required: false },
+    ],
+  },
+  {
+    name: "check-disk-space",
+    description: "检查磁盘空间使用情况并找出大文件",
+    arguments: [
+      { name: "connection_id", description: "已连接的服务器 ID", required: true },
+    ],
+  },
+  {
+    name: "analyze-logs",
+    description: "分析指定服务的日志文件",
+    arguments: [
+      { name: "connection_id", description: "已连接的服务器 ID", required: true },
+      { name: "service", description: "服务名（如 nginx, mysql, sshd）", required: true },
+      { name: "lines", description: "查看最近 N 行（默认 100）", required: false },
+    ],
+  },
+  {
+    name: "check-network",
+    description: "网络连接性诊断（监听端口/活动连接/防火墙）",
+    arguments: [
+      { name: "connection_id", description: "已连接的服务器 ID", required: true },
+    ],
+  },
+  {
+    name: "security-audit",
+    description: "基础安全审计（登录用户/SSH 配置/异常进程）",
+    arguments: [
+      { name: "connection_id", description: "已连接的服务器 ID", required: true },
+    ],
+  },
+];
+
+server.setRequestHandler(ListPromptsRequestSchema, async () => {
+  return { prompts };
+});
+
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+  const connId = args?.connection_id || "<connection_id>";
+  const processHint = args?.process_hint;
+  const service = args?.service || "nginx";
+  const lines = args?.lines || "100";
+
+  const templates: Record<string, { role: string; content: { type: string; text: string } }[]> = {
+    "troubleshoot-high-cpu": [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `请帮我在连接 ${connId} 上排查 CPU 占用过高的问题。\n\n请依次执行以下命令并分析：\n1. 用 iter_exec 执行 \`top -bn1 | head -20\` 查看整体 CPU 使用和占用最高的进程\n2. 用 iter_exec 执行 \`ps aux --sort=-%cpu | head -10\` 查看 CPU 排名${processHint ? `\n3. 重点关注进程名包含 "${processHint}" 的进程` : ""}\n\n分析完后给出具体的优化建议。`,
+        },
+      },
+    ],
+    "check-disk-space": [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `请帮我在连接 ${connId} 上检查磁盘空间：\n\n1. 用 iter_exec 执行 \`df -h\` 查看各分区使用率\n2. 对使用率超过 80% 的分区，用 iter_exec 执行 \`du -sh /* 2>/dev/null | sort -rh | head -10\` 找大目录\n3. 给出清理建议（日志/缓存/临时文件等）`,
+        },
+      },
+    ],
+    "analyze-logs": [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `请在连接 ${connId} 上分析 ${service} 的日志：\n\n1. 用 iter_exec 执行 \`journalctl -u ${service} --no-pager -n ${lines}\` 查看最近 ${lines} 行\n2. 如果 journalctl 没有数据，尝试常见日志路径（/var/log/${service}/error.log 等）\n3. 找出 ERROR/WARN/FATAL 级别的日志并解释原因`,
+        },
+      },
+    ],
+    "check-network": [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `请在连接 ${connId} 上做网络诊断：\n\n1. 用 iter_exec 执行 \`ss -tlnp\` 查看监听端口\n2. 用 iter_exec 执行 \`ss -tnp | head -20\` 查看活动连接\n3. 用 iter_exec 执行 \`iptables -L -n | head -30\` 查看防火墙规则\n4. 分析是否有异常端口或可疑连接`,
+        },
+      },
+    ],
+    "security-audit": [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `请在连接 ${connId} 上做基础安全审计：\n\n1. 用 iter_exec 执行 \`who\` 查看当前登录用户\n2. 用 iter_exec 执行 \`last -20\` 查看最近登录记录\n3. 用 iter_exec 执行 \`grep -v "^#" /etc/ssh/sshd_config | grep -E "PermitRootLogin|PasswordAuthentication|Port "\` 检查 SSH 配置\n4. 用 iter_list_processes 查看是否有可疑进程\n5. 给出安全加固建议`,
+        },
+      },
+    ],
+  };
+
+  const messages = templates[name];
+  if (!messages) {
+    throw new Error(`Unknown prompt: ${name}`);
+  }
+
+  return { messages };
+});
+
+// ============ 多传输支持 ============
+
 async function main() {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error("iTerminal MCP Server running on stdio");
+  const transportMode = process.env.ITERMINAL_MCP_TRANSPORT || "stdio";
+
+  if (transportMode === "sse") {
+    // SSE 传输模式：启动 HTTP server（需安装 express optional dependency）
+    const port = parseInt(process.env.ITERMINAL_MCP_PORT || "3107", 10);
+    const { SSEServerTransport } = await import("@modelcontextprotocol/sdk/server/sse.js");
+    // @ts-ignore — express 是 optionalDependency，仅 SSE 模式需要
+    const express = (await import("express")).default;
+
+    const app = express();
+    let transport: any = null;
+
+    app.get("/sse", async (req: any, res: any) => {
+      transport = new SSEServerTransport("/messages", res);
+      await server.connect(transport);
+    });
+
+    app.post("/messages", async (req: any, res: any) => {
+      if (transport) {
+        await transport.handlePostMessage(req, res);
+      } else {
+        res.status(400).json({ error: "No active SSE connection" });
+      }
+    });
+
+    app.listen(port, "127.0.0.1", () => {
+      console.error(`iTerminal MCP Server (SSE) running on http://127.0.0.1:${port}/sse`);
+    });
+  } else {
+    // 默认 stdio 传输
+    const transport = new StdioServerTransport();
+    await server.connect(transport);
+    console.error("iTerminal MCP Server running on stdio");
+  }
 }
 
 main().catch(console.error);
