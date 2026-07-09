@@ -4,6 +4,13 @@
   box-sizing: border-box;
 }
 
+/* DockerOutlined 的 SVG 源文件 path 上硬编码了 fill="#cacaca"，
+   导致它不跟随文字色。antd 给图标外层 span 加了 .anticon-docker 类，
+   这里强制 path 用 currentColor，让它在按钮激活/未激活时跟随文字色。 */
+.anticon-docker svg path {
+  fill: currentColor !important;
+}
+
 /* 主题切换时禁用过渡动画，避免闪烁 */
 .theme-transitioning,
 .theme-transitioning * {

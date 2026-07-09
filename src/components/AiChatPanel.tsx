@@ -451,6 +451,8 @@ export default function AiChatPanel({
           placeholder="问点什么... (Enter 发送，Shift+Enter 换行)"
           autoSize={{ minRows: 2, maxRows: 6 }}
           onPressEnter={e => {
+            // 中文/日文输入法组合中按回车是确认候选词（keyCode 229），不要发送
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return
             if (!e.shiftKey) {
               e.preventDefault()
               if (!sending) handleSend()
@@ -521,59 +523,54 @@ const MessageBubble = memo(function MessageBubble({
 
   return (
     <div style={{
-      display: 'flex',
-      justifyContent: isUser ? 'flex-end' : 'flex-start',
-      marginBottom: 12,
+      marginBottom: 16,
     }}>
-      <div
-        className="ai-chat-bubble"
-        style={{
-          maxWidth: '88%',
-          padding: '8px 10px',
-          borderRadius: 8,
-          background: isUser
-            ? 'color-mix(in srgb, var(--color-primary) 12%, transparent)'
-            : 'var(--color-fill-quaternary, var(--color-fill))',
-          border: '1px solid var(--color-border-secondary, var(--color-border))',
-        }}
-      >
-        {/* 附带的上下文标签 */}
-        {ctx && (ctx.recentOutput || ctx.selection || ctx.cwd) && (
-          <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-            {ctx.selection && (
-              <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>
-                <PaperClipOutlined /> 含选中内容
-                {ctx.selection.length > 30 ? ` (${ctx.selection.slice(0, 30)}…)` : ` (${ctx.selection})`}
-              </Tag>
-            )}
-            {ctx.recentOutput && (
-              <Tag color="geekblue" style={{ margin: 0, fontSize: 11 }}>
-                <PaperClipOutlined /> 含最近终端输出
-              </Tag>
-            )}
-            {ctx.cwd && (
-              <Tag style={{ margin: 0, fontSize: 11 }}>📁 {ctx.cwd}</Tag>
-            )}
-          </div>
-        )}
-
-        {/* 内容 */}
-        {isEmpty ? (
-          <div style={{ padding: 4 }}><Spin size="small" /></div>
-        ) : (
-          <div className="ai-chat-content" style={{ position: 'relative' }}>
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={{
-                code: (props) => <CodeBlock {...props} onCopy={onCopy} onInsert={onInsert} onRun={onRun} />,
-              }}
-            >
-              {msg.content + (streaming ? ' ▍' : '')}
-            </ReactMarkdown>
-          </div>
-        )}
+      {/* 角色标识 */}
+      <div style={{
+        fontSize: 11,
+        color: 'var(--color-text-tertiary)',
+        marginBottom: 4,
+        fontWeight: 500,
+      }}>
+        {isUser ? '我' : 'AI'}
       </div>
+
+      {/* 附带的上下文标签 */}
+      {ctx && (ctx.recentOutput || ctx.selection || ctx.cwd) && (
+        <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+          {ctx.selection && (
+            <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>
+              <PaperClipOutlined /> 含选中内容
+              {ctx.selection.length > 30 ? ` (${ctx.selection.slice(0, 30)}…)` : ` (${ctx.selection})`}
+            </Tag>
+          )}
+          {ctx.recentOutput && (
+            <Tag color="geekblue" style={{ margin: 0, fontSize: 11 }}>
+              <PaperClipOutlined /> 含最近终端输出
+            </Tag>
+          )}
+          {ctx.cwd && (
+            <Tag style={{ margin: 0, fontSize: 11 }}>📁 {ctx.cwd}</Tag>
+          )}
+        </div>
+      )}
+
+      {/* 内容 */}
+      {isEmpty ? (
+        <div style={{ padding: 4 }}><Spin size="small" /></div>
+      ) : (
+        <div className="ai-chat-content" style={{ position: 'relative', fontSize: 13, lineHeight: 1.6 }}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={{
+              code: (props) => <CodeBlock {...props} onCopy={onCopy} onInsert={onInsert} onRun={onRun} />,
+            }}
+          >
+            {msg.content + (streaming ? ' ▍' : '')}
+          </ReactMarkdown>
+        </div>
+      )}
     </div>
   )
 }, (prev, next) => {
@@ -588,6 +585,23 @@ const MessageBubble = memo(function MessageBubble({
 })
 
 // ============ 代码块（带复制/插入/运行按钮）============
+
+/**
+ * 从 react-markdown 传入的 children（React node 数组）中递归提取纯文本。
+ *
+ * react-markdown v10 的 code 组件，block code 的 children 是多元素数组
+ *（含高亮后的 <span>），直接 String(children) 会得到 "[object Object]"。
+ */
+function extractText(node: React.ReactNode): string {
+  if (node == null || node === false) return ''
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(extractText).join('')
+  if (typeof node === 'object' && 'props' in (node as any)) {
+    return extractText((node as any).props.children)
+  }
+  return ''
+}
 
 function CodeBlock({
   className,
@@ -605,8 +619,9 @@ function CodeBlock({
   // react-markdown v10: inline code 无 className（language-xxx），block code 有
   const match = /language-(\w+)/.exec(className || '')
   const lang = match ? match[1] : ''
+  // 从 React node 中提取纯文本（避免 [object Object]）
+  const text = extractText(children).replace(/\n$/, '')
   // 判断是否 inline（无 className 且 children 是单行短文本）
-  const text = String(children ?? '').replace(/\n$/, '')
   const isInline = !className && !text.includes('\n')
 
   if (isInline) {
