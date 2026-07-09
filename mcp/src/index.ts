@@ -356,6 +356,24 @@ const tools: Tool[] = [
     },
   },
   {
+    name: "iter_save_connection",
+    description: "新建并保存一个 SSH 连接，可选自动连接。保存后可通过 iter_list_saved_connections 查看。" +
+      "参数: name(名称), host(主机), port(端口,默认22), username(用户名), password(密码), keyFile(私钥路径), autoConnect(是否立即连接,默认false)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "连接名称（如 web-server）" },
+        host: { type: "string", description: "主机地址" },
+        port: { type: "number", description: "SSH 端口，默认 22" },
+        username: { type: "string", description: "登录用户名" },
+        password: { type: "string", description: "密码（与 keyFile 二选一）" },
+        keyFile: { type: "string", description: "私钥文件路径（与 password 二选一）" },
+        autoConnect: { type: "boolean", description: "是否保存后自动连接，默认 false" },
+      },
+      required: ["name", "host", "username"],
+    },
+  },
+  {
     name: "iter_network_stats",
     description: "获取远程服务器网络接口统计信息。参数: id(连接标识)",
     inputSchema: {
@@ -613,6 +631,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "iter_quick_connect": {
         result = await apiCall<string>("POST", `/api/saved-connections/${params.id}/connect`);
+        break;
+      }
+
+      case "iter_save_connection": {
+        result = await apiCall<string>("POST", "/api/saved-connections", {
+          name: params.name,
+          host: params.host,
+          port: params.port,
+          username: params.username,
+          password: params.password,
+          keyFile: params.keyFile,
+          autoConnect: params.autoConnect ?? false,
+        });
         break;
       }
 

@@ -126,6 +126,33 @@ fn emit_operation(
     }
 }
 
+/// 发送增强的连接状态变更事件，附带连接信息（供前端自动打开终端）。
+///
+/// 与 emit_operation 的区别：这个附带 connection 对象，让前端无需再查 DB。
+/// 仅在 connect/quick_connect 成功时调用。
+async fn emit_connection_opened(
+    app: &AppHandle,
+    connection_id: &str,
+    name: Option<&str>,
+    host: &str,
+    port: u16,
+    username: &str,
+) {
+    let _ = app.emit(
+        "connection-opened",
+        serde_json::json!({
+            "connectionId": connection_id,
+            "connection": {
+                "id": connection_id,
+                "name": name.unwrap_or(host),
+                "host": host,
+                "port": port,
+                "username": username
+            }
+        }),
+    );
+}
+
 pub fn create_api_router(app_handle: AppHandle, token: Option<String>) -> Router {
     let state = Arc::new(ApiState { app_handle, token: token.clone() });
 
@@ -152,6 +179,7 @@ pub fn create_api_router(app_handle: AppHandle, token: Option<String>) -> Router
             post(download_file_handler),
         )
         .route("/api/saved-connections", get(list_saved_connections))
+        .route("/api/saved-connections", post(save_and_connect_handler))
         .route(
             "/api/saved-connections/{id}/connect",
             post(quick_connect_handler),
@@ -304,6 +332,16 @@ async fn create_connection(
                 true,
                 None,
             );
+            // 通知前端自动打开终端（附带连接信息）
+            emit_connection_opened(
+                &state.app_handle,
+                &payload.id,
+                None,
+                &payload.host,
+                payload.port.unwrap_or(22),
+                &payload.username,
+            )
+            .await;
             Ok(Json(ApiResponse::success(payload.id)))
         }
         Err(e) => {
@@ -762,6 +800,104 @@ async fn list_saved_connections(
     }
 }
 
+/// 保存新连接并可选自动连接。
+/// POST /api/saved-connections
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SaveConnectionRequest {
+    pub name: String,
+    pub host: String,
+    pub port: Option<u16>,
+    pub username: String,
+    pub password: Option<String>,
+    pub key_file: Option<String>,
+    /// 是否保存后自动连接
+    #[serde(default)]
+    pub auto_connect: bool,
+}
+
+async fn save_and_connect_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Json(payload): Json<SaveConnectionRequest>,
+) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
+    let port = payload.port.unwrap_or(22);
+    let id = format!("conn-{}", chrono::Utc::now().timestamp_millis());
+
+    // 保存到 DB
+    let record = ConnectionRecord {
+        id: id.clone(),
+        name: payload.name.clone(),
+        host: payload.host.clone(),
+        port,
+        username: payload.username.clone(),
+        password: payload.password.clone(),
+        key_file: payload.key_file.clone(),
+        group_name: None,
+        tags: None,
+        last_connected_at: None,
+        created_at: None,
+        updated_at: None,
+        sort_order: None,
+    };
+    db::save_connection(record).map_err(|e| {
+        (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))
+    })?;
+
+    let details = format!("{}@{}:{}", payload.username, payload.host, port);
+    emit_operation(
+        &state.app_handle,
+        "save_connection",
+        None,
+        &format!("保存连接 {} ({})", payload.name, details),
+        true,
+        None,
+    );
+
+    // 自动连接
+    if payload.auto_connect {
+        let connection = SSHConnection {
+            host: payload.host.clone(),
+            port,
+            username: payload.username.clone(),
+            password: payload.password.clone(),
+            key_file: payload.key_file.clone(),
+        };
+        match ssh::connect_ssh(id.clone(), connection).await {
+            Ok(_) => {
+                emit_operation(
+                    &state.app_handle,
+                    "connect",
+                    Some(&id),
+                    &details,
+                    true,
+                    None,
+                );
+                emit_connection_opened(
+                    &state.app_handle,
+                    &id,
+                    Some(&payload.name),
+                    &payload.host,
+                    port,
+                    &payload.username,
+                )
+                .await;
+            }
+            Err(e) => {
+                emit_operation(
+                    &state.app_handle,
+                    "connect",
+                    Some(&id),
+                    &details,
+                    false,
+                    Some(&e),
+                );
+                return Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))));
+            }
+        }
+    }
+
+    Ok(Json(ApiResponse::success(id)))
+}
+
 async fn quick_connect_handler(
     axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
@@ -786,6 +922,11 @@ async fn quick_connect_handler(
     };
 
     let details = format!("{}@{}:{}", record.username, record.host, record.port);
+    // 克隆前端需要的信息（emit_connection_opened 用）
+    let conn_name = record.name.clone();
+    let conn_host = record.host.clone();
+    let conn_port = record.port;
+    let conn_username = record.username.clone();
 
     match ssh::connect_ssh(id.clone(), connection).await {
         Ok(_) => {
@@ -797,6 +938,16 @@ async fn quick_connect_handler(
                 true,
                 None,
             );
+            // 通知前端自动打开终端
+            emit_connection_opened(
+                &state.app_handle,
+                &id,
+                Some(&conn_name),
+                &conn_host,
+                conn_port,
+                &conn_username,
+            )
+            .await;
             Ok(Json(ApiResponse::success(id)))
         }
         Err(e) => {

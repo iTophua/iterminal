@@ -108,6 +108,61 @@ function MenuActionHandler() {
   )
 }
 
+/**
+ * 监听 MCP/API 发来的 connection-opened 事件，自动在 UI 中打开终端。
+ *
+ * 当外部 AI 通过 HTTP API 建立连接时，后端 emit 此事件，前端收到后：
+ * 1. 若已存在则仅激活（避免重复）
+ * 2. 若不存在则 get_shell → addConnection → 跳转终端页
+ */
+function McpConnectionHandler() {
+  const navigate = useNavigate()
+  const connectedConnections = useTerminalStore(s => s.connectedConnections)
+  const addConnection = useTerminalStore(s => s.addConnection)
+  const setActiveConnection = useTerminalStore(s => s.setActiveConnection)
+
+  useEffect(() => {
+    const unlisten = listen<{ connectionId: string; connection: { id: string; name: string; host: string; port: number; username: string } }>(
+      'connection-opened',
+      async (event) => {
+        const { connectionId, connection: conn } = event.payload
+
+        // 防重复：store 中已有则仅激活
+        const existing = connectedConnections.find(c => c.connectionId === connectionId)
+        if (existing) {
+          setActiveConnection(connectionId)
+          navigate('/terminal')
+          return
+        }
+
+        try {
+          // AI 建立的连接已有 SSH session 但没 shell，补创建
+          const shellId = await invoke<string>('get_shell', { id: connectionId })
+          addConnection({
+            id: conn.id,
+            name: conn.name,
+            host: conn.host,
+            port: conn.port,
+            username: conn.username,
+            password: undefined,
+            keyFile: undefined,
+            group: '',
+            tags: [],
+            status: 'online',
+          }, shellId)
+          navigate('/terminal')
+        } catch (e) {
+          console.error('[MCP] Failed to auto-open terminal:', e)
+        }
+      }
+    )
+
+    return () => { unlisten.then(fn => fn()) }
+  }, [navigate, connectedConnections, addConnection, setActiveConnection])
+
+  return null
+}
+
 function SessionRestorer() {
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([])
   const [restoreModalVisible, setRestoreModalVisible] = useState(false)
@@ -391,6 +446,7 @@ function MainApp() {
       <SessionRestorer />
       <SessionSaver />
       <MenuActionHandler />
+      <McpConnectionHandler />
       <TitleBar />
       <Layout style={{
         minHeight: 'calc(100vh - 28px)',
