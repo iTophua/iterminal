@@ -574,7 +574,7 @@ const MessageBubble = memo(function MessageBubble({
     </div>
   )
 }, (prev, next) => {
-  // 自定义比较：只看消息内容/角色/上下文 + streaming 状态。
+  // 自定义比较：id 相同时 role/context 必然不变，只需比 content（流式更新）和 streaming。
   // 忽略 onCopy/onInsert/onRun 引用变化（它们语义稳定，引用变化不应触发重渲）。
   // 这样流式拼接当前消息时，历史消息不会重渲（markdown 解析是 CPU 大头）。
   return (
