@@ -540,7 +540,7 @@ npm run test:e2e
 - russh 使用原生 async/await，需要 Rust 1.75+
 - License 系统: 免费版 3 连接限制，付费版无限连接
 - 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)
-- MCP 已发布到 npm: `iterminal-mcp-server@1.0.4`
+- MCP 已发布到 npm: `iterminal-mcp-server@2.1.0`
 - 字体列表缓存在 localStorage，首次加载后不再重复加载
 - 连接列表在启动时预加载到 store，全局共享状态
 - 命令历史在数据库启动时自动清理过期和孤立记录

@@ -107,6 +107,9 @@ fn emit_operation(
         error: error.map(|s| s.to_string()),
     };
 
+    // 持久化到 DB（供独立日志页面查询历史）
+    db::save_mcp_log(operation, connection_id, details, success, error);
+
     let _ = app.emit("api-operation", &log);
 
     if let Some(id) = connection_id {
@@ -500,6 +503,7 @@ pub struct ReadFileRequest {
 }
 
 async fn read_file_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
     Json(payload): Json<ReadFileRequest>,
 ) -> Result<Json<ApiResponse<sftp::FileContent>>, (StatusCode, Json<ApiResponse<sftp::FileContent>>)>
@@ -507,8 +511,28 @@ async fn read_file_handler(
     let max_size = payload.max_size.unwrap_or(1024 * 1024);
 
     match sftp::read_file_content(id.clone(), payload.path.clone(), Some(max_size)).await {
-        Ok(content) => Ok(Json(ApiResponse::success(content))),
-        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+        Ok(content) => {
+            emit_operation(
+                &state.app_handle,
+                "read_file",
+                Some(&id),
+                &payload.path,
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(content)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "read_file",
+                Some(&id),
+                &payload.path,
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
     }
 }
 
@@ -656,10 +680,32 @@ async fn download_file_handler(
     }
 }
 
-async fn list_saved_connections() -> Json<ApiResponse<Vec<ConnectionRecord>>> {
+async fn list_saved_connections(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+) -> Json<ApiResponse<Vec<ConnectionRecord>>> {
     match db::get_connections() {
-        Ok(connections) => Json(ApiResponse::success(connections)),
-        Err(e) => Json(ApiResponse::error(&e)),
+        Ok(connections) => {
+            emit_operation(
+                &state.app_handle,
+                "list_saved",
+                None,
+                &format!("{} 条已保存连接", connections.len()),
+                true,
+                None,
+            );
+            Json(ApiResponse::success(connections))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "list_saved",
+                None,
+                "读取已保存连接",
+                false,
+                Some(&e),
+            );
+            Json(ApiResponse::error(&e))
+        }
     }
 }
 
@@ -715,24 +761,38 @@ async fn quick_connect_handler(
 }
 
 async fn get_network_stats_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<Json<ApiResponse<ssh::NetworkStats>>, (StatusCode, Json<ApiResponse<ssh::NetworkStats>>)>
 {
-    match ssh::get_network_stats(id).await {
-        Ok(stats) => Ok(Json(ApiResponse::success(stats))),
-        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    match ssh::get_network_stats(id.clone()).await {
+        Ok(stats) => {
+            emit_operation(&state.app_handle, "network_stats", Some(&id), "网络统计", true, None);
+            Ok(Json(ApiResponse::success(stats)))
+        }
+        Err(e) => {
+            emit_operation(&state.app_handle, "network_stats", Some(&id), "网络统计", false, Some(&e));
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
     }
 }
 
 async fn list_processes_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
 ) -> Result<
     Json<ApiResponse<Vec<ssh::ProcessInfo>>>,
     (StatusCode, Json<ApiResponse<Vec<ssh::ProcessInfo>>>),
 > {
-    match ssh::list_processes(id).await {
-        Ok(processes) => Ok(Json(ApiResponse::success(processes))),
-        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    match ssh::list_processes(id.clone()).await {
+        Ok(processes) => {
+            emit_operation(&state.app_handle, "list_processes", Some(&id), &format!("{} 个进程", processes.len()), true, None);
+            Ok(Json(ApiResponse::success(processes)))
+        }
+        Err(e) => {
+            emit_operation(&state.app_handle, "list_processes", Some(&id), "进程列表", false, Some(&e));
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
     }
 }
 
@@ -859,6 +919,7 @@ async fn extract_handler(
 }
 
 async fn search_files_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Result<
@@ -878,9 +939,29 @@ async fn search_files_handler(
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
 
-    match sftp::search_files(id, path, pattern, Some(max_results)).await {
-        Ok(results) => Ok(Json(ApiResponse::success(results))),
-        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    match sftp::search_files(id.clone(), path.clone(), pattern.clone(), Some(max_results)).await {
+        Ok(results) => {
+            emit_operation(
+                &state.app_handle,
+                "search_files",
+                Some(&id),
+                &format!("path={}, pattern={}", path, pattern),
+                true,
+                None,
+            );
+            Ok(Json(ApiResponse::success(results)))
+        }
+        Err(e) => {
+            emit_operation(
+                &state.app_handle,
+                "search_files",
+                Some(&id),
+                &format!("path={}, pattern={}", path, pattern),
+                false,
+                Some(&e),
+            );
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
     }
 }
 

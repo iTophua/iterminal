@@ -945,42 +945,75 @@ ${claudeConfig}`}
 
         <div>
           <Text style={{ color: 'var(--color-text)', fontWeight: 500, display: 'block', marginBottom: 12 }}>
-            可用工具 (11个)
+            可用工具 (26个)
           </Text>
-          
+
           <div style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>
             <div style={{ marginBottom: 12 }}>
-              <b style={{ color: 'var(--color-text)' }}>连接管理</b>
+              <b style={{ color: 'var(--color-text)' }}>连接管理（6）</b>
               <div style={{ marginLeft: 12, marginTop: 4 }}>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_status</code> - 检查 API 服务状态</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_connect</code> - 创建 SSH 连接 (id, host, port, username, password)</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_disconnect</code> - 断开连接 (id)</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_test_connection</code> - 测试连接是否可用</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_list_connections</code> - 列出所有活跃连接</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_status</code> — 检查 API 服务状态</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_connect</code> — 创建 SSH 连接</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_disconnect</code> — 断开连接</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_test_connection</code> — 测试连接</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_list_connections</code> — 列出活跃连接</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_list_saved_connections</code> — 列出已保存连接</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_quick_connect</code> — 用已保存连接快速连接</div>
               </div>
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <b style={{ color: 'var(--color-text)' }}>命令执行</b>
+              <b style={{ color: 'var(--color-text)' }}>命令执行（1）</b>
               <div style={{ marginLeft: 12, marginTop: 4 }}>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_exec</code> - 在远程服务器执行命令 (id, command)</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_exec</code> — 在远程服务器执行命令</div>
               </div>
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <b style={{ color: 'var(--color-text)' }}>系统监控</b>
+              <b style={{ color: 'var(--color-text)' }}>系统监控（4）</b>
               <div style={{ marginLeft: 12, marginTop: 4 }}>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_monitor</code> - 获取 CPU/内存/磁盘使用情况 (id)</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_monitor</code> — CPU/内存/磁盘</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_network_stats</code> — 网络流量统计</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_list_processes</code> — 进程列表</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_kill_process</code> — 杀进程</div>
               </div>
             </div>
 
             <div style={{ marginBottom: 12 }}>
-              <b style={{ color: 'var(--color-text)' }}>文件操作</b>
+              <b style={{ color: 'var(--color-text)' }}>文件系统（6）</b>
               <div style={{ marginLeft: 12, marginTop: 4 }}>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_list_dir</code> - 列出目录内容 (id, path)</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_mkdir</code> - 创建目录 (id, path)</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_rm</code> - 删除文件 (id, path)</div>
-                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_rename</code> - 重命名文件/目录 (id, old_path, new_path)</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_list_dir</code> — 列目录</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_mkdir</code> — 创建目录</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_rm</code> — 删除文件</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_rename</code> — 重命名</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_create_file</code> — 创建空文件</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_delete_directory</code> — 删除目录（含内容）</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <b style={{ color: 'var(--color-text)' }}>文件内容（2）</b>
+              <div style={{ marginLeft: 12, marginTop: 4 }}>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_read_file</code> — 读文件内容</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_write_file</code> — 写文件内容</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <b style={{ color: 'var(--color-text)' }}>传输（3）</b>
+              <div style={{ marginLeft: 12, marginTop: 4 }}>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_upload_file</code> — 上传文件</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_download_file</code> — 下载文件</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_upload_folder</code> — 上传整个目录</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <b style={{ color: 'var(--color-text)' }}>压缩 / 搜索（3）</b>
+              <div style={{ marginLeft: 12, marginTop: 4 }}>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_compress</code> — 压缩文件/目录</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_extract</code> — 解压归档</div>
+                <div>• <code style={{ background: 'var(--color-bg-spotlight)', padding: '1px 4px', borderRadius: 3 }}>iter_search_files</code> — 搜索文件</div>
               </div>
             </div>
           </div>

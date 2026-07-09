@@ -264,6 +264,29 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // MCP 操作日志（持久化，供独立日志页面查询）
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS mcp_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation TEXT NOT NULL,
+            connection_id TEXT,
+            details TEXT NOT NULL,
+            success INTEGER NOT NULL,
+            error TEXT,
+            created_at INTEGER NOT NULL
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_mcp_logs_time ON mcp_logs(created_at DESC)",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    cleanup_expired_mcp_logs(&conn);
+
     migrate_passwords_if_needed(&conn)?;
 
     DB_INITIALIZED.store(true, Ordering::SeqCst);
@@ -1281,6 +1304,172 @@ pub fn save_ai_message(
         context,
         created_at: now,
     })
+}
+
+// ============ MCP 操作日志 ============
+
+/// MCP 日志记录（camelCase，前端直接用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpLog {
+    pub id: i64,
+    pub operation: String,
+    pub connection_id: Option<String>,
+    pub details: String,
+    pub success: bool,
+    pub error: Option<String>,
+    pub created_at: i64,
+}
+
+/// MCP 日志保留上限（条数）
+const MCP_LOGS_MAX_ROWS: i64 = 10000;
+/// MCP 日志过期天数
+const MCP_LOGS_EXPIRE_DAYS: i64 = 30;
+
+/// 写入一条 MCP 操作日志（供 api.rs 的 emit_operation 调用）。
+/// pub(crate) — 不暴露为 Tauri 命令，仅后端内部使用。
+pub(crate) fn save_mcp_log(
+    operation: &str,
+    connection_id: Option<&str>,
+    details: &str,
+    success: bool,
+    error: Option<&str>,
+) {
+    let conn = match get_db() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[MCP] Failed to get DB for log: {}", e);
+            return;
+        }
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    if let Err(e) = conn.execute(
+        "INSERT INTO mcp_logs (operation, connection_id, details, success, error, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![
+            operation,
+            connection_id,
+            details,
+            success as i32,
+            error,
+            now
+        ],
+    ) {
+        eprintln!("[MCP] Failed to save log: {}", e);
+        return;
+    }
+    cleanup_mcp_logs(&conn);
+}
+
+/// 清理过期 + 超量 MCP 日志。非致命：失败只打日志。
+pub(crate) fn cleanup_mcp_logs(conn: &Connection) {
+    let expire_threshold =
+        chrono::Utc::now().timestamp_millis() - (MCP_LOGS_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
+    let _ = conn.execute(
+        "DELETE FROM mcp_logs WHERE created_at < ?1",
+        [expire_threshold],
+    );
+    let _ = conn.execute(
+        "DELETE FROM mcp_logs WHERE id NOT IN (
+            SELECT id FROM mcp_logs ORDER BY created_at DESC LIMIT ?1
+        )",
+        [MCP_LOGS_MAX_ROWS],
+    );
+}
+
+/// 启动时清理过期日志（init_database 中调用）
+fn cleanup_expired_mcp_logs(conn: &Connection) {
+    cleanup_mcp_logs(conn);
+}
+
+/// 查询 MCP 日志（分页 + 可选成功/失败过滤），按时间倒序。
+#[tauri::command]
+pub fn list_mcp_logs(
+    limit: Option<i64>,
+    offset: Option<i64>,
+    filter_success: Option<bool>,
+) -> Result<Vec<McpLog>, String> {
+    let conn = get_db()?;
+    let limit = limit.unwrap_or(200).min(1000).max(1);
+    let offset = offset.unwrap_or(0).max(0);
+
+    let mut stmt = match filter_success {
+        Some(true) => conn
+            .prepare(
+                "SELECT id, operation, connection_id, details, success, error, created_at
+                 FROM mcp_logs WHERE success = 1
+                 ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| e.to_string())?,
+        Some(false) => conn
+            .prepare(
+                "SELECT id, operation, connection_id, details, success, error, created_at
+                 FROM mcp_logs WHERE success = 0
+                 ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| e.to_string())?,
+        None => conn
+            .prepare(
+                "SELECT id, operation, connection_id, details, success, error, created_at
+                 FROM mcp_logs
+                 ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
+            )
+            .map_err(|e| e.to_string())?,
+    };
+
+    let logs = stmt
+        .query_map(rusqlite::params![limit, offset], |row| {
+            Ok(McpLog {
+                id: row.get(0)?,
+                operation: row.get(1)?,
+                connection_id: row.get(2)?,
+                details: row.get(3)?,
+                success: row.get::<_, i32>(4)? != 0,
+                error: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    Ok(logs)
+}
+
+/// 统计 MCP 日志（成功数/失败数/总数）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpLogStats {
+    pub total: i64,
+    pub success: i64,
+    pub failed: i64,
+}
+
+#[tauri::command]
+pub fn count_mcp_logs() -> Result<McpLogStats, String> {
+    let conn = get_db()?;
+    let total: i64 = conn
+        .query_row("SELECT COUNT(*) FROM mcp_logs", [], |row| row.get(0))
+        .map_err(|e| e.to_string())?;
+    let success: i64 = conn
+        .query_row("SELECT COUNT(*) FROM mcp_logs WHERE success = 1", [], |row| {
+            row.get(0)
+        })
+        .map_err(|e| e.to_string())?;
+    Ok(McpLogStats {
+        total,
+        success,
+        failed: total - success,
+    })
+}
+
+/// 清空所有 MCP 日志
+#[tauri::command]
+pub fn clear_mcp_logs() -> Result<bool, String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM mcp_logs", [])
+        .map_err(|e| e.to_string())?;
+    Ok(true)
 }
 
 #[cfg(test)]
