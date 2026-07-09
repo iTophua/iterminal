@@ -1588,7 +1588,38 @@ const handlePointerUp = () => {
       try { addon?.fit() } catch {}
     })
   }, [terminalSettings])
-  
+
+  // 性能：窗口失焦/切到后台时暂停所有终端的光标闪烁（用户看不到，省 CPU）
+  // 窗口重新获焦时恢复（恢复后由切连接 effect 再把非活动的关掉）
+  useEffect(() => {
+    const applyBlink = (visible: boolean) => {
+      const blink = visible && terminalSettingsRef.current.cursorBlink
+      Object.values(terminalInstances.current).forEach(term => {
+        if (term) term.options.cursorBlink = blink
+      })
+    }
+    const onHide = () => applyBlink(false)
+    const onShow = () => applyBlink(true)
+    const onVisChange = () => applyBlink(!document.hidden)
+    window.addEventListener('blur', onHide)
+    window.addEventListener('focus', onShow)
+    document.addEventListener('visibilitychange', onVisChange)
+    return () => {
+      window.removeEventListener('blur', onHide)
+      window.removeEventListener('focus', onShow)
+      document.removeEventListener('visibilitychange', onVisChange)
+    }
+  }, [])
+
+  // 性能：切换活动连接时，只让活动连接的终端闪烁光标，非活动连接的关掉
+  useEffect(() => {
+    Object.entries(terminalInstances.current).forEach(([key, term]) => {
+      if (!term) return
+      const [connId] = key.split('_')
+      term.options.cursorBlink = (connId === activeConnectionId) && terminalSettingsRef.current.cursorBlink
+    })
+  }, [activeConnectionId])
+
   // 复制选中内容
   const handleCopy = useCallback(async () => {
     const term = terminalInstances.current[contextMenu.sessionKey]
