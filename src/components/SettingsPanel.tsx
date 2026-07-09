@@ -1015,6 +1015,40 @@ ${claudeConfig}`}
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
             配置后重启 AI 工具生效，确保 iTerminal 已启动且 MCP 服务开启
           </Text>
+
+          {/* SSE 模式说明 */}
+          <details style={{ marginTop: 12 }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--color-text-tertiary)', fontSize: 12, userSelect: 'none' }}>
+              高级：SSE 传输模式（可选）
+            </summary>
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
+              <p style={{ marginBottom: 8 }}>默认使用 stdio 传输（上方配置）。如需 SSE 模式（常驻 HTTP 进程，支持远程客户端）：</p>
+              <div style={{
+                background: 'var(--color-bg-spotlight)',
+                padding: '8px 12px',
+                borderRadius: 6,
+                fontFamily: 'monospace',
+                fontSize: 11,
+                color: 'var(--color-text-secondary)',
+                marginBottom: 8,
+                whiteSpace: 'pre',
+                overflow: 'auto',
+              }}>
+{`# 1. 手动启动 MCP 服务器（SSE 模式）
+ITERMINAL_MCP_TRANSPORT=sse npx iterminal-mcp-server
+
+# 2. AI 工具配置改用 url 连接
+{
+  "mcpServers": {
+    "iterminal": {
+      "url": "http://127.0.0.1:3107/sse"
+    }
+  }
+}`}
+              </div>
+              <p>SSE 模式需要额外安装 express：<code style={{ fontSize: 11 }}>npm i express</code>（在 mcp 目录下）</p>
+            </div>
+          </details>
         </div>
 
         <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
