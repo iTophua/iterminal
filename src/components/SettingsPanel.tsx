@@ -817,7 +817,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   "mcp": {
     "iterminal": {
       "type": "local",
-      "command": ["npx", "iterminal-mcp-server"],
+      "command": ["npx", "-y", "iterminal-mcp-server@latest"],
       "enabled": true
     }
   }
@@ -826,7 +826,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   "mcpServers": {
     "iterminal": {
       "command": "npx",
-      "args": ["iterminal-mcp-server"]
+      "args": ["-y", "iterminal-mcp-server@latest"]
     }
   }
 }`
@@ -1035,7 +1035,7 @@ ${claudeConfig}`}
                 overflow: 'auto',
               }}>
 {`# 1. 手动启动 MCP 服务器（SSE 模式）
-ITERMINAL_MCP_TRANSPORT=sse npx iterminal-mcp-server
+ITERMINAL_MCP_TRANSPORT=sse npx -y iterminal-mcp-server@latest
 
 # 2. AI 工具配置改用 url 连接
 {
