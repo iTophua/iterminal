@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react'
+import { useEffect, useState, useCallback, useRef, memo } from 'react'
 import { Button, Tooltip, Empty, Input, Select, App, Tag, Spin, Switch, Dropdown, Modal } from 'antd'
 import {
   CloseOutlined,
@@ -382,24 +382,10 @@ export default function AiChatPanel({
     }
   }, [message])
 
-  // ---- 快捷提问填充 ----
-  const handleQuickPrompt = useCallback((prompt: string) => {
-    setInput(prompt)
-    setTimeout(() => inputRef.current?.focus(), 30)
-  }, [])
-
   const activeConv = conversations.find(c => c.id === activeId)
 
-  // 快捷提问预设。前两项含选中内容时动态拼接——但不在 render 里取 selection
-  //（取 selection 要遍历终端 buffer 200 行，开销大）。改为点击时懒取。
-  // 其它预设是固定文案，用 useMemo 缓存。
-  const fixedQuickPrompts = useMemo(() => ([
-    { label: '查高占用进程', icon: <ThunderboltOutlined />, prompt: '怎么查看 CPU 占用最高的 10 个进程？' },
-    { label: '查磁盘空间', icon: <ThunderboltOutlined />, prompt: '怎么查看磁盘空间使用情况？' },
-    { label: '查端口占用', icon: <ThunderboltOutlined />, prompt: '怎么查看哪个进程占用了某个端口？' },
-  ]), [])
-
   // 点击「解释报错/优化命令」时才取 selection（避免每次 render 都遍历 buffer）
+  // 如果终端有选中文本，会自动拼到提问内容里，用户不需要手动复制粘贴
   const handleQuickExplain = useCallback(() => {
     const sel = getSelectionFromContext(getTerminalContext)
     setInput(sel ? `解释这段终端输出的报错原因并给出修复建议：\n\n${sel}` : '解释这段输出的报错原因并给出修复建议')
@@ -514,27 +500,22 @@ export default function AiChatPanel({
           gap: 4,
           marginBottom: 6,
         }}>
-          <Tag
-            style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
-            onClick={handleQuickExplain}
-          >
-            <BulbOutlined /> 解释报错
-          </Tag>
-          <Tag
-            style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
-            onClick={handleQuickOptimize}
-          >
-            <ThunderboltOutlined /> 优化命令
-          </Tag>
-          {fixedQuickPrompts.map(p => (
+          <Tooltip title="自动带上终端选中的内容">
             <Tag
-              key={p.label}
               style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
-              onClick={() => handleQuickPrompt(p.prompt)}
+              onClick={handleQuickExplain}
             >
-              {p.icon} {p.label}
+              <BulbOutlined /> 解释报错
             </Tag>
-          ))}
+          </Tooltip>
+          <Tooltip title="自动带上终端选中的命令">
+            <Tag
+              style={{ margin: 0, cursor: 'pointer', fontSize: 11 }}
+              onClick={handleQuickOptimize}
+            >
+              <ThunderboltOutlined /> 优化命令
+            </Tag>
+          </Tooltip>
         </div>
 
         <Input.TextArea
