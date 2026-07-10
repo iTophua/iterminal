@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { initDatabase, migrateFromLocalStorage, getConnections } from '../services/database'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
+import { useLicenseStore } from '../stores/licenseStore'
 import { setupNightlyCleanup } from '../utils/transferCleanup'
 import type { InitStep } from '../components/SplashScreen'
 
@@ -16,6 +17,7 @@ interface InitializationState {
 
 const DEFAULT_STEPS: InitStep[] = [
   { key: 'database', label: '初始化数据库', status: 'pending' },
+  { key: 'license', label: '加载授权信息', status: 'pending' },
   { key: 'fonts', label: '加载系统字体', status: 'pending' },
   { key: 'migrate', label: '迁移历史数据', status: 'pending' },
   { key: 'loadConnections', label: '加载连接列表', status: 'pending' },
@@ -116,6 +118,23 @@ export function useAppInitialization() {
           setState(prev => ({ ...prev, isComplete: true, displayProgress: 100 }))
         }, remainingTime)
         return
+      }
+      completedSteps++
+      updateProgress((completedSteps / totalSteps) * 100)
+      animateDisplayProgress((completedSteps / totalSteps) * 100)
+
+      if (cancelledRef.current) return
+      updateStep('license', 'loading')
+      updateProgress(completedSteps / totalSteps * 100 + 10)
+      animateDisplayProgress(completedSteps / totalSteps * 100 + 15)
+
+      try {
+        await useLicenseStore.getState().fetchLicense()
+        if (cancelledRef.current) return
+        updateStep('license', 'done')
+      } catch (error) {
+        console.error('License loading failed:', error)
+        updateStep('license', 'error')
       }
       completedSteps++
       updateProgress((completedSteps / totalSteps) * 100)

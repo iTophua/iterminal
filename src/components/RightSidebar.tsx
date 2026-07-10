@@ -8,7 +8,7 @@ import {
   FullscreenExitOutlined,
   ThunderboltOutlined,
   LinkOutlined,
-  MessageOutlined,
+  RobotOutlined,
   DockerOutlined,
 } from '@ant-design/icons'
 
@@ -171,7 +171,7 @@ export function RightSidebar({
                 <Button
                   type={aiChatVisible ? 'primary' : 'text'}
                   size="small"
-                  icon={<MessageOutlined />}
+                  icon={<RobotOutlined />}
                   onClick={onAiChatToggle}
                 />
               </Tooltip>

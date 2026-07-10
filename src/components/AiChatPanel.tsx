@@ -521,39 +521,64 @@ const MessageBubble = memo(function MessageBubble({
   // 流式且内容为空时显示加载态
   const isEmpty = streaming && msg.content === ''
 
+  // 附带的上下文标签
+  const contextTags = ctx && (ctx.recentOutput || ctx.selection || ctx.cwd) ? (
+    <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+      {ctx.selection && (
+        <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>
+          <PaperClipOutlined /> 含选中内容
+          {ctx.selection.length > 30 ? ` (${ctx.selection.slice(0, 30)}…)` : ` (${ctx.selection})`}
+        </Tag>
+      )}
+      {ctx.recentOutput && (
+        <Tag color="geekblue" style={{ margin: 0, fontSize: 11 }}>
+          <PaperClipOutlined /> 含最近终端输出
+        </Tag>
+      )}
+      {ctx.cwd && (
+        <Tag style={{ margin: 0, fontSize: 11 }}>📁 {ctx.cwd}</Tag>
+      )}
+    </div>
+  ) : null
+
+  // ---- 用户消息：右对齐 + 气泡 ----
+  if (isUser) {
+    return (
+      <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+        {contextTags}
+        <div style={{
+          maxWidth: '85%',
+          padding: '8px 12px',
+          borderRadius: 12,
+          borderTopRightRadius: 4,
+          background: 'var(--color-primary)',
+          color: '#fff',
+          fontSize: 13,
+          lineHeight: 1.6,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}>
+          {msg.content}
+        </div>
+      </div>
+    )
+  }
+
+  // ---- AI 消息：左对齐 + 全宽 Markdown（无气泡）----
   return (
     <div style={{
       marginBottom: 16,
     }}>
-      {/* 角色标识 */}
       <div style={{
         fontSize: 11,
         color: 'var(--color-text-tertiary)',
         marginBottom: 4,
         fontWeight: 500,
       }}>
-        {isUser ? '我' : 'AI'}
+        AI
       </div>
 
-      {/* 附带的上下文标签 */}
-      {ctx && (ctx.recentOutput || ctx.selection || ctx.cwd) && (
-        <div style={{ marginBottom: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-          {ctx.selection && (
-            <Tag color="blue" style={{ margin: 0, fontSize: 11 }}>
-              <PaperClipOutlined /> 含选中内容
-              {ctx.selection.length > 30 ? ` (${ctx.selection.slice(0, 30)}…)` : ` (${ctx.selection})`}
-            </Tag>
-          )}
-          {ctx.recentOutput && (
-            <Tag color="geekblue" style={{ margin: 0, fontSize: 11 }}>
-              <PaperClipOutlined /> 含最近终端输出
-            </Tag>
-          )}
-          {ctx.cwd && (
-            <Tag style={{ margin: 0, fontSize: 11 }}>📁 {ctx.cwd}</Tag>
-          )}
-        </div>
-      )}
+      {contextTags}
 
       {/* 内容 */}
       {isEmpty ? (
