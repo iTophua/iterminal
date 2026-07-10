@@ -1262,7 +1262,8 @@ body {
   transform: translateY(0);
 }
 
-/* 徽章动画 */
+/* 徽章弹跳动画 —— 仅显式标记 .badge-bounce 的元素使用，
+   避免全局 .ant-badge-count 选择器让所有徽章（侧边栏连接数等）持续动画浪费 CPU */
 @keyframes badgeBounce {
   0%, 100% {
     transform: scale(1);
@@ -1272,7 +1273,7 @@ body {
   }
 }
 
-.ant-badge-count {
+.ant-badge-count.badge-bounce {
   animation: badgeBounce 2s ease-in-out infinite;
 }
 
@@ -1401,7 +1402,6 @@ body {
 .status-dot.online {
   background: var(--color-success);
   box-shadow: 0 0 8px var(--color-success);
-  animation: statusPulse 2s ease-in-out infinite;
 }
 
 .status-dot.connecting {

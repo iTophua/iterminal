@@ -1641,6 +1641,30 @@ const handlePointerUp = () => {
     })
   }, [activeConnectionId])
 
+  // 性能：焦点离开终端区域时（如点击 AI 面板输入框）关闭活动终端光标闪烁
+  // 光标闪烁是 xterm 的 setInterval 驱动的持续重绘，是空闲 CPU 的大头
+  useEffect(() => {
+    const updateBlink = () => {
+      const activeEl = document.activeElement
+      // xterm 的 textarea 有类 .xterm-helper-textarea；终端容器内点击的元素 parent 是 .xterm
+      const inTerminal = activeEl?.closest('.xterm') != null
+      const blink = inTerminal && terminalSettingsRef.current.cursorBlink
+      Object.entries(terminalInstances.current).forEach(([key, term]) => {
+        if (!term) return
+        const [connId] = key.split('_')
+        // 非活动连接始终关掉；活动连接仅在焦点在终端内时闪烁
+        term.options.cursorBlink = (connId === activeConnectionId) && blink
+      })
+    }
+    // 用 focusin/focusout（冒泡）检测焦点进出终端
+    document.addEventListener('focusin', updateBlink)
+    document.addEventListener('focusout', updateBlink)
+    return () => {
+      document.removeEventListener('focusin', updateBlink)
+      document.removeEventListener('focusout', updateBlink)
+    }
+  }, [activeConnectionId])
+
   // 复制选中内容
   const handleCopy = useCallback(async () => {
     const term = terminalInstances.current[contextMenu.sessionKey]
