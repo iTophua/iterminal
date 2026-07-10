@@ -1238,6 +1238,15 @@ pub fn delete_ai_conversation(id: String) -> Result<bool, String> {
     Ok(true)
 }
 
+/// 清空对话的所有消息（保留对话壳，标题不变）
+#[tauri::command]
+pub fn clear_ai_messages(id: String) -> Result<bool, String> {
+    let conn = get_db()?;
+    conn.execute("DELETE FROM ai_messages WHERE conversation_id = ?1", [&id])
+        .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// 读取对话的所有消息（按时间正序）
 #[tauri::command]
 pub fn get_ai_messages(conversation_id: String) -> Result<Vec<AiMessage>, String> {

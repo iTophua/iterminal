@@ -17,6 +17,7 @@ import {
   LoadingOutlined,
   CheckCircleOutlined,
   ExclamationCircleOutlined,
+  ClearOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import ReactMarkdown from 'react-markdown'
@@ -28,6 +29,7 @@ import {
   createConversation,
   renameConversation,
   deleteConversation,
+  clearMessages,
   getMessages,
   chatSendStream,
   confirmAgentTool,
@@ -190,6 +192,27 @@ export default function AiChatPanel({
       },
     })
   }, [activeId, message, modal])
+
+  // ---- 清空当前会话消息（保留对话壳）----
+  const handleClearMessages = useCallback(async (id: string) => {
+    modal.confirm({
+      title: '清空会话',
+      content: '将清空当前会话的所有消息，对话标题保留。确定？',
+      okText: '清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await clearMessages(id)
+          setMessages([])
+          setAgentSteps({})
+          message.success('已清空')
+        } catch (err) {
+          message.error(`清空失败: ${err}`)
+        }
+      },
+    })
+  }, [message, modal])
 
   // ---- 重命名对话 ----
   const handleRenameConversation = useCallback(async (id: string) => {
@@ -426,10 +449,13 @@ export default function AiChatPanel({
             menu={{
               items: [
                 { key: 'rename', label: '重命名', icon: <ReloadOutlined /> },
+                { key: 'clear', label: '清空会话', icon: <ClearOutlined /> },
+                { type: 'divider' as const },
                 { key: 'delete', label: '删除对话', icon: <DeleteOutlined />, danger: true },
               ],
               onClick: ({ key }) => {
                 if (key === 'rename') handleRenameConversation(activeConv.id)
+                else if (key === 'clear') handleClearMessages(activeConv.id)
                 else if (key === 'delete') handleDeleteConversation(activeConv.id)
               },
             }}

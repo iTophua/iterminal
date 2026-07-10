@@ -81,6 +81,7 @@ fn main() {
             iterminal::commands::db::create_ai_conversation,
             iterminal::commands::db::rename_ai_conversation,
             iterminal::commands::db::delete_ai_conversation,
+            iterminal::commands::db::clear_ai_messages,
             iterminal::commands::db::get_ai_messages,
             iterminal::commands::db::save_ai_message,
             iterminal::commands::db::list_mcp_logs,

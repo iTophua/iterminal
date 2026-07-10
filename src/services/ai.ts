@@ -124,6 +124,11 @@ export async function deleteConversation(id: string): Promise<boolean> {
   return invoke<boolean>('delete_ai_conversation', { id })
 }
 
+/** 清空对话的所有消息（保留对话壳） */
+export async function clearMessages(id: string): Promise<boolean> {
+  return invoke<boolean>('clear_ai_messages', { id })
+}
+
 /** 读取对话的所有消息（按时间正序） */
 export async function getMessages(conversationId: string): Promise<AiMessage[]> {
   return invoke<AiMessage[]>('get_ai_messages', { conversationId })
