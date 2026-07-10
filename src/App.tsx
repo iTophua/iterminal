@@ -51,6 +51,11 @@ function MenuActionHandler() {
           break
         case 'paste': {
             const activeElement = document.activeElement
+            // xterm 终端有自己的粘贴处理（attachCustomKeyEventHandler），
+            // 菜单加速键不要再重复处理，否则会导致内容粘贴两次
+            if (activeElement && activeElement.classList.contains('xterm-helper-textarea')) {
+              break
+            }
             const isEditable = activeElement && (
               activeElement.tagName === 'INPUT' ||
               activeElement.tagName === 'TEXTAREA' ||
