@@ -132,57 +132,22 @@ function AppWithSplash() {
 
     document.addEventListener('contextmenu', handleContextMenu)
 
-    // 初始设置所有已有的 input/textarea 禁用系统自动纠正
-    document.querySelectorAll('input, textarea').forEach((el) => {
-      el.setAttribute('autocorrect', 'off')
-    })
-
-    // rAF 节流：将一帧内所有 DOM 变更合并为一次批量处理
-    // xterm.js 每写入一个字符就插入 <span>，不加节流会导致每秒数百次回调
-    let pendingMutations: MutationRecord[] = []
-    let rafId: number | null = null
-
-    const processMutations = (mutations: MutationRecord[]) => {
-      const seen = new Set<Element>()
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node.nodeType !== Node.ELEMENT_NODE) continue
-          const el = node as HTMLElement
-          if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-            if (!seen.has(el)) {
-              seen.add(el)
-              el.setAttribute('autocorrect', 'off')
-            }
-          }
-          if (el.querySelectorAll) {
-            el.querySelectorAll('input, textarea').forEach(child => {
-              if (!seen.has(child)) {
-                seen.add(child)
-                child.setAttribute('autocorrect', 'off')
-              }
-            })
-          }
-        }
+    // 禁用所有 input/textarea 的系统自动纠正（macOS 自动拼写纠正在终端/SSH 场景有害）
+    // 用 focusin 事件委托替代 MutationObserver：
+    //   原方案 observe(body, {subtree:true}) 会监听 xterm.js 每个字符插入的 <span>，
+    //   终端有输出时光标闪烁 + 数据写入产生极大量 mutation，即使 rAF 节流遍历开销也很大，
+    //   空闲 CPU 飙到 10%+。focusin 零空闲开销，聚焦时才设置属性。
+    const handleAutocorrect = (e: FocusEvent) => {
+      const target = e.target as HTMLElement
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+        target.setAttribute('autocorrect', 'off')
       }
     }
-
-    const observer = new MutationObserver((mutations) => {
-      pendingMutations.push(...mutations)
-      if (rafId === null) {
-        rafId = requestAnimationFrame(() => {
-          rafId = null
-          const batch = pendingMutations
-          pendingMutations = []
-          processMutations(batch)
-        })
-      }
-    })
-
-    observer.observe(document.body, { childList: true, subtree: true })
+    document.addEventListener('focusin', handleAutocorrect)
 
     return () => {
-      observer.disconnect()
       document.removeEventListener('contextmenu', handleContextMenu)
+      document.removeEventListener('focusin', handleAutocorrect)
     }
   }, [])
 
