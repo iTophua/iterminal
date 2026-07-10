@@ -150,11 +150,29 @@ export function parseContext(context: string | null): TerminalContext | null {
 
 // ============ 流式输出 ============
 
+/** Agent 工具执行事件 */
+export interface ToolEvent {
+  name: string
+  args: string
+  /** running | done | confirm */
+  status: string
+  result?: string
+  success?: boolean
+  confirmId?: string
+}
+
 /** 流式对话的增量事件（后端 emit 的 payload） */
 export interface AiChatChunk {
   delta?: string
   done?: boolean
   error?: string
+  /** Agent 模式：工具执行事件 */
+  tool?: ToolEvent
+}
+
+/** 确认危险命令执行（Agent 模式） */
+export async function confirmAgentTool(confirmId: string, approved: boolean): Promise<boolean> {
+  return invoke<boolean>('confirm_agent_tool', { confirmId, approved })
 }
 
 /**
@@ -166,12 +184,16 @@ export interface AiChatChunk {
  *
  * 实现说明：前端先生成 requestId 并 listen 对应事件，再 invoke。
  * 这样彻底避免「invoke 返回 reqId 后才 listen 导致漏掉开头 chunk」的竞态。
+ *
+ * options.agentMode: 开启智能体模式，AI 可自主执行命令
+ * options.connectionId: Agent 模式需要的 SSH 连接 ID
  */
 export async function chatSendStream(
   conversationId: string,
   userText: string,
   context: TerminalContext | undefined,
-  onChunk: (chunk: AiChatChunk) => void
+  onChunk: (chunk: AiChatChunk) => void,
+  options?: { agentMode?: boolean; connectionId?: string }
 ): Promise<{ cancel: () => void }> {
   const requestId = `req-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
   const eventName = `ai-chat-chunk-${requestId}`
@@ -190,7 +212,14 @@ export async function chatSendStream(
   })
 
   // invoke 在后台执行，不在此 await（调用方通过 onChunk 感知完成）
-  invoke('ai_chat_stream', { conversationId, userText, context, requestId })
+  invoke('ai_chat_stream', {
+    conversationId,
+    userText,
+    context,
+    requestId,
+    agentMode: options?.agentMode ?? false,
+    connectionIdForAgent: options?.connectionId ?? null,
+  })
     .catch((e) => {
       // invoke 失败（如 license 未激活/配置缺失）→ 通过 chunk 通知
       onChunk({ done: true, error: typeof e === 'string' ? e : String(e) })

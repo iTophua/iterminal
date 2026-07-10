@@ -72,6 +72,7 @@ fn main() {
             iterminal::commands::ai::ai_chat,
             iterminal::commands::ai::ai_chat_stream,
             iterminal::commands::ai::stop_ai_chat,
+            iterminal::commands::ai::confirm_agent_tool,
             iterminal::commands::ai::get_ai_config,
             iterminal::commands::ai::save_ai_config,
             iterminal::commands::ai::list_ai_models,

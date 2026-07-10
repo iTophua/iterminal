@@ -679,15 +679,6 @@ struct ActiveChat {
 static CHATS: Lazy<RwLock<HashMap<String, ActiveChat>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
-/// 流式 chat 事件 payload
-#[derive(Debug, Clone, Serialize)]
-struct ChatChunk {
-    delta: Option<String>,
-    done: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
 /// 流式调用 OpenAI 兼容 /v1/chat/completions。
 ///
 /// 每个 token 通过 `on_delta` 回调返回。返回完整的拼接内容。
@@ -783,6 +774,8 @@ pub async fn ai_chat_stream(
     context: Option<TerminalContext>,
     request_id: String,
     app: AppHandle,
+    agent_mode: Option<bool>,
+    connection_id_for_agent: Option<String>,
 ) -> Result<(), String> {
     if !check_feature("ai_assistant").await {
         return Err("AI 助手是专业版功能，请激活 Pro License 后使用".into());
@@ -838,24 +831,66 @@ pub async fn ai_chat_stream(
 
     let event_name = format!("ai-chat-chunk-{}", request_id);
 
+    // 判断是否走 Agent 模式
+    let use_agent = agent_mode.unwrap_or(false)
+        && connection_id_for_agent.is_some();
+
     let (cancel_tx, mut cancel_rx) = oneshot::channel::<()>();
     let app_for_task = app.clone();
     let conv_id = conversation_id.clone();
     let evt = event_name.clone();
+    let req_id = request_id.clone();
 
     let task: JoinHandle<()> = tokio::spawn(async move {
-        let result = tokio::select! {
-            _ = &mut cancel_rx => {
-                let _ = app_for_task.emit(&evt, ChatChunk {
-                    delta: None, done: true, error: Some("已停止".into()),
-                });
-                return;
+        let result: Result<String, String> = if use_agent {
+            // ---- Agent 模式 ----
+            // 把 ChatMessage 转为 serde_json::Value，并替换 system prompt
+            let conn_id = connection_id_for_agent.as_ref().unwrap().clone();
+            let mut agent_messages: Vec<serde_json::Value> = Vec::new();
+            agent_messages.push(serde_json::json!({
+                "role": "system",
+                "content": agent_system_prompt()
+            }));
+            // 历史消息（跳过原 system）
+            for m in &messages {
+                if m.role == "system" {
+                    continue;
+                }
+                agent_messages.push(serde_json::json!({
+                    "role": m.role,
+                    "content": m.content
+                }));
             }
-            r = call_chat_stream(&base_url, api_key.as_deref(), &model, &messages, |d| {
-                let _ = app_for_task.emit(&evt, ChatChunk {
-                    delta: Some(d.to_string()), done: false, error: None,
-                });
-            }) => r
+
+            // Agent loop 内部通过 try_recv 检查取消
+            run_agent_loop(
+                &base_url,
+                api_key.as_deref(),
+                &model,
+                agent_messages,
+                &conn_id,
+                &app_for_task,
+                &evt,
+                &mut cancel_rx,
+                &req_id,
+            )
+            .await
+        } else {
+            // ---- 普通流式模式 ----
+            let result = tokio::select! {
+                _ = &mut cancel_rx => {
+                    let _ = app_for_task.emit(&evt, ChatChunk {
+                        delta: None, done: true, error: Some("已停止".into()), tool: None,
+                    });
+                    return;
+                }
+                r = call_chat_stream(&base_url, api_key.as_deref(), &model, &messages, |d| {
+                    let _ = app_for_task.emit(&evt, ChatChunk {
+                        delta: Some(d.to_string()), done: false, error: None, tool: None,
+                    });
+                }) => r
+            };
+            result
         };
 
         match result {
@@ -868,12 +903,12 @@ pub async fn ai_chat_stream(
                     None,
                 );
                 let _ = app_for_task.emit(&evt, ChatChunk {
-                    delta: None, done: true, error: None,
+                    delta: None, done: true, error: None, tool: None,
                 });
             }
             Err(e) => {
                 let _ = app_for_task.emit(&evt, ChatChunk {
-                    delta: None, done: true, error: Some(e),
+                    delta: None, done: true, error: Some(e), tool: None,
                 });
             }
         }
@@ -908,6 +943,495 @@ pub async fn stop_ai_chat(request_id: String) -> Result<bool, String> {
         Ok(true)
     } else {
         Ok(false) // 不存在视为已结束
+    }
+}
+
+// ============ AI Agent（智能体）============
+
+/// Agent 最大工具调用轮次（防死循环）
+const MAX_AGENT_ROUNDS: usize = 10;
+
+/// 工具执行输出截断字符数（防 token 爆炸）
+const TOOL_OUTPUT_MAX_CHARS: usize = 4000;
+
+/// Agent 系统提示词
+fn agent_system_prompt() -> &'static str {
+    "你是一位资深 Linux/Unix 运维专家，具备 SSH 服务器管理能力。\n\
+     你可以使用工具在远程服务器上执行命令来诊断和解决问题。\n\n\
+     工作方式：\n\
+     1. 分析用户问题，决定需要哪些信息\n\
+     2. 调用工具执行命令收集信息（一次调用一个工具）\n\
+     3. 基于结果分析，如需更多信息继续调用工具\n\
+     4. 信息充足后给出诊断结论和建议\n\n\
+     规则：\n\
+     - 优先用只读命令（ps, docker ps, free, cat, ls, systemctl status）收集信息\n\
+     - 不要随意修改系统，涉及修改操作时先说明目的\n\
+     - 命令执行结果会自动返回给你，不需要用户手动复制\n\
+     - 最终回复用中文，命令用 ```bash 代码块\n\
+     - 涉及危险操作（rm、kill、重启服务）时提醒风险"
+}
+
+/// Agent 可用的工具定义（OpenAI function calling 格式）
+fn agent_tools() -> serde_json::Value {
+    serde_json::json!([
+        {
+            "type": "function",
+            "function": {
+                "name": "exec_command",
+                "description": "在远程服务器上执行 shell 命令，返回 stdout。用于查看系统状态、诊断问题。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "要执行的 shell 命令"
+                        }
+                    },
+                    "required": ["command"]
+                }
+            }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "读取远程服务器上的文件内容（前 100 行）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "文件的绝对路径"
+                        }
+                    },
+                    "required": ["path"]
+                }
+            }
+        }
+    ])
+}
+
+/// 危险命令模式列表（匹配到则需用户确认）
+const DANGER_PATTERNS: &[&str] = &[
+    "rm -rf", "rm -fr", "rmdir", "mkfs", "dd if=", "shutdown", "reboot",
+    "halt", "init 0", "init 6", ">/dev/sd", ":(){ :|:& };:",
+    "chmod -r 777 /", "chmod 777", "mv /* ", "| sh", "| bash", "|/sh", "|/bash",
+    "kill -9 1", "kill -9 -1", "killall", "iptables -f", "userdel", "usermod",
+    "docker rm", "docker rmi", "docker system prune", "docker volume rm",
+    "drop table", "drop database", "truncate table",
+    "passwd", "chage", "visudo", "systemctl stop", "systemctl disable",
+    "service stop", "fdisk", "parted", "wipefs",
+];
+
+/// 检测命令是否危险（需要用户确认）
+fn is_dangerous_command(cmd: &str) -> bool {
+    let lower = cmd.to_lowercase();
+    for pattern in DANGER_PATTERNS {
+        if lower.contains(pattern) {
+            return true;
+        }
+    }
+    false
+}
+
+/// 工具执行事件（推送给前端展示中间步骤）
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ToolEvent {
+    name: String,
+    args: String,
+    /// running | done | confirm
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    success: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    confirm_id: Option<String>,
+}
+
+/// ChatChunk 扩展：增加 tool 字段
+/// （重新定义，覆盖原有 ChatChunk）
+#[derive(Debug, Clone, Serialize)]
+struct ChatChunk {
+    delta: Option<String>,
+    done: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool: Option<ToolEvent>,
+}
+
+/// LLM tool call 解析结果
+struct ToolCallInfo {
+    /// OpenAI tool_call id
+    id: String,
+    /// 函数名
+    name: String,
+    /// 参数值（已从 JSON 中提取出的可读字符串）
+    args: String,
+}
+
+/// LLM 响应：可能包含 tool_calls 或最终文本
+struct LlmToolResponse {
+    /// 最终文本回复（无 tool_calls 时有值）
+    content: String,
+    /// 工具调用列表
+    tool_calls: Vec<ToolCallInfo>,
+    /// 原始 assistant 消息 JSON（含 tool_calls），用于加入历史
+    raw_assistant_msg: serde_json::Value,
+}
+
+/// 带工具调用能力的 LLM 请求（非流式）
+async fn call_chat_with_tools(
+    base_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    messages: &[serde_json::Value],
+) -> Result<LlmToolResponse, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("HTTP 客户端创建失败: {}", e))?;
+
+    let url = format!("{}/chat/completions", base_url);
+    let mut req = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "tools": agent_tools(),
+            "tool_choice": "auto",
+            "temperature": 0.2,
+            "stream": false
+        }));
+
+    if let Some(key) = api_key {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req.send().await.map_err(|e| format!("请求失败: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+
+    if !status.is_success() {
+        let snippet = if body.len() > 500 {
+            format!("{}...", &body[..500])
+        } else {
+            body
+        };
+        return Err(format!("LLM 服务返回 {} : {}", status.as_u16(), snippet));
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("响应不是合法 JSON: {}", e))?;
+
+    let msg = &json["choices"][0]["message"];
+
+    // 提取 tool_calls（如果有）
+    let mut tool_calls = Vec::new();
+    if let Some(tc_array) = msg["tool_calls"].as_array() {
+        for tc in tc_array {
+            let id = tc["id"].as_str().unwrap_or("").to_string();
+            let name = tc["function"]["name"].as_str().unwrap_or("").to_string();
+            let args_raw = tc["function"]["arguments"].as_str().unwrap_or("{}");
+
+            // 从 JSON 参数中提取可读的参数值
+            let args_display = extract_tool_args(&name, args_raw);
+
+            tool_calls.push(ToolCallInfo {
+                id,
+                name,
+                args: args_display,
+            });
+        }
+    }
+
+    let content = msg["content"].as_str().unwrap_or("").to_string();
+
+    // 构造原始 assistant 消息（含 tool_calls 的完整结构，用于历史）
+    let raw_assistant_msg = msg.clone();
+
+    Ok(LlmToolResponse {
+        content,
+        tool_calls,
+        raw_assistant_msg,
+    })
+}
+
+/// 从工具调用的 JSON 参数中提取可读的参数值（用于前端展示）
+fn extract_tool_args(name: &str, args_json: &str) -> String {
+    let parsed: serde_json::Value = match serde_json::from_str(args_json) {
+        Ok(v) => v,
+        Err(_) => return args_json.to_string(),
+    };
+    match name {
+        "exec_command" => parsed["command"].as_str().unwrap_or(args_json).to_string(),
+        "read_file" => parsed["path"].as_str().unwrap_or(args_json).to_string(),
+        _ => args_json.to_string(),
+    }
+}
+
+/// 执行一个工具调用，返回 (output, success)
+async fn execute_tool(
+    name: &str,
+    args_json: &str,
+    connection_id: &str,
+) -> Result<(String, bool), String> {
+    let parsed: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
+
+    let (command, _cmd_desc) = match name {
+        "exec_command" => {
+            let cmd = parsed["command"]
+                .as_str()
+                .ok_or("缺少 command 参数")?;
+            (cmd.to_string(), cmd.to_string())
+        }
+        "read_file" => {
+            let path = parsed["path"].as_str().ok_or("缺少 path 参数")?;
+            (format!("head -n 100 '{}'", path), format!("读取 {}", path))
+        }
+        _ => return Err(format!("未知工具: {}", name)),
+    };
+
+    // 调用 SSH execute_command
+    let result = super::ssh::execute_command(connection_id.to_string(), command)
+        .await
+        .map_err(|e| format!("命令执行失败: {}", e))?;
+
+    let mut output = result.output;
+    if let Some(err) = &result.error {
+        if !err.trim().is_empty() {
+            output.push_str("\n[stderr] ");
+            output.push_str(err);
+        }
+    }
+
+    // 截断超长输出（按字符边界安全截断，避免切到 UTF-8 多字节字符中间）
+    if output.len() > TOOL_OUTPUT_MAX_CHARS {
+        let truncated: String = output.chars().take(TOOL_OUTPUT_MAX_CHARS).collect();
+        output = format!(
+            "{}...\n（已截断，共 {} 字符）",
+            truncated,
+            output.chars().count()
+        );
+    }
+
+    Ok((output, result.success))
+}
+
+/// Agent 循环：自主调用工具 → 分析结果 → 最终回复
+///
+/// 返回最终文本回复（已通过事件流式推送）。
+async fn run_agent_loop(
+    base_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    messages: Vec<serde_json::Value>,
+    connection_id: &str,
+    app: &AppHandle,
+    event_name: &str,
+    cancel_rx: &mut oneshot::Receiver<()>,
+    request_id: &str,
+) -> Result<String, String> {
+    let mut current_messages = messages;
+
+    for _round in 0..MAX_AGENT_ROUNDS {
+        // 检查取消（非阻塞）
+        match cancel_rx.try_recv() {
+            Ok(_) | Err(oneshot::error::TryRecvError::Closed) => {
+                return Err("已取消".into());
+            }
+            Err(oneshot::error::TryRecvError::Empty) => {}
+        }
+
+        // 1. 调用 LLM（带 tools）
+        let response = call_chat_with_tools(base_url, api_key, model, &current_messages).await?;
+
+        // 2. 如果有 tool_calls → 执行工具
+        if !response.tool_calls.is_empty() {
+            // 把 assistant 的 tool_calls 消息加入历史
+            current_messages.push(response.raw_assistant_msg);
+
+            for call in &response.tool_calls {
+                // 通知前端：工具开始执行
+                let _ = app.emit(
+                    event_name,
+                    ChatChunk {
+                        delta: None,
+                        done: false,
+                        error: None,
+                        tool: Some(ToolEvent {
+                            name: call.name.clone(),
+                            args: call.args.clone(),
+                            status: "running".into(),
+                            result: None,
+                            success: None,
+                            confirm_id: None,
+                        }),
+                    },
+                );
+
+                // 3. 危险命令 → 前端确认
+                if is_dangerous_command(&call.args) {
+                    let confirm_id = format!("confirm-{}-{}", request_id, gen_id());
+
+                    // 通知前端：需要确认
+                    let _ = app.emit(
+                        event_name,
+                        ChatChunk {
+                            delta: None,
+                            done: false,
+                            error: None,
+                            tool: Some(ToolEvent {
+                                name: call.name.clone(),
+                                args: call.args.clone(),
+                                status: "confirm".into(),
+                                result: None,
+                                success: None,
+                                confirm_id: Some(confirm_id.clone()),
+                            }),
+                        },
+                    );
+
+                    // 等待用户确认
+                    let approved = wait_for_confirmation(&confirm_id).await;
+
+                    if !approved {
+                        // 用户拒绝 → 告诉 AI
+                        let tool_result_msg = serde_json::json!({
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": "用户拒绝了此命令的执行"
+                        });
+                        current_messages.push(tool_result_msg);
+
+                        let _ = app.emit(
+                            event_name,
+                            ChatChunk {
+                                delta: None,
+                                done: false,
+                                error: None,
+                                tool: Some(ToolEvent {
+                                    name: call.name.clone(),
+                                    args: call.args.clone(),
+                                    status: "done".into(),
+                                    result: Some("用户拒绝执行".into()),
+                                    success: Some(false),
+                                    confirm_id: None,
+                                }),
+                            },
+                        );
+                        continue;
+                    }
+                }
+
+                // 4. 执行工具
+                // 重新构造原始 args JSON 用于 execute_tool
+                let key = if call.name == "exec_command" { "command" } else { "path" };
+                let args_json = serde_json::json!({ key: call.args }).to_string();
+
+                let (output, success) = match execute_tool(&call.name, &args_json, connection_id).await {
+                    Ok(r) => r,
+                    Err(e) => (e, false),
+                };
+
+                // 通知前端：工具执行完成
+                let _ = app.emit(
+                    event_name,
+                    ChatChunk {
+                        delta: None,
+                        done: false,
+                        error: None,
+                        tool: Some(ToolEvent {
+                            name: call.name.clone(),
+                            args: call.args.clone(),
+                            status: "done".into(),
+                            result: Some(output.chars().take(500).collect()),
+                            success: Some(success),
+                            confirm_id: None,
+                        }),
+                    },
+                );
+
+                // 5. 结果加入历史（tool role 消息）
+                let tool_result_msg = serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": output
+                });
+                current_messages.push(tool_result_msg);
+            }
+            // 继续下一轮 LLM 调用
+            continue;
+        }
+
+        // 6. 无 tool_calls → 最终回复，流式输出
+        if !response.content.is_empty() {
+            // 用非流式结果直接推送（不再二次请求）
+            let _ = app.emit(
+                event_name,
+                ChatChunk {
+                    delta: Some(response.content.clone()),
+                    done: false,
+                    error: None,
+                    tool: None,
+                },
+            );
+            return Ok(response.content);
+        }
+
+        // content 和 tool_calls 都为空（异常情况）
+        return Err("AI 未返回有效响应".into());
+    }
+
+    Err(format!("Agent 超过最大执行轮数（{}）", MAX_AGENT_ROUNDS))
+}
+
+/// 生成简单唯一 ID（时间戳纳秒 + 随机数后缀，避免同毫秒碰撞）
+fn gen_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    // 线性同余快速随机，不追求密码学安全，只需避免碰撞
+    let rand = (ts as u64).wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    format!("{:016x}{:04x}", ts, (rand >> 48) & 0xffff)
+}
+
+// ---- 危险命令确认机制 ----
+
+/// 等待用户确认的全局通道
+static CONFIRMATIONS: Lazy<tokio::sync::Mutex<HashMap<String, oneshot::Sender<bool>>>> =
+    Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
+/// 注册一个确认请求，返回 Receiver。前端确认后通过 confirm_agent_tool 触发。
+async fn wait_for_confirmation(confirm_id: &str) -> bool {
+    let (tx, rx) = oneshot::channel::<bool>();
+    CONFIRMATIONS.lock().await.insert(confirm_id.to_string(), tx);
+    // 等待用户响应（最长 5 分钟超时）
+    let result = tokio::time::timeout(std::time::Duration::from_secs(300), rx).await;
+    // 超时后清理 entry，避免泄漏
+    if result.is_err() {
+        CONFIRMATIONS.lock().await.remove(confirm_id);
+    }
+    match result {
+        Ok(Ok(approved)) => approved,
+        _ => false, // 超时或发送端丢弃 → 视为拒绝
+    }
+}
+
+/// 前端调用：确认或拒绝危险命令
+#[tauri::command]
+pub async fn confirm_agent_tool(confirm_id: String, approved: bool) -> Result<bool, String> {
+    let mut map = CONFIRMATIONS.lock().await;
+    if let Some(tx) = map.remove(&confirm_id) {
+        let _ = tx.send(approved);
+        Ok(true)
+    } else {
+        Ok(false) // 确认 ID 不存在（可能已超时）
     }
 }
 

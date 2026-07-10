@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, useMemo, memo } from 'react'
-import { Button, Tooltip, Empty, Input, Select, App, Tag, Spin, Switch, Dropdown } from 'antd'
+import { Button, Tooltip, Empty, Input, Select, App, Tag, Spin, Switch, Dropdown, Modal } from 'antd'
 import {
   CloseOutlined,
   PlusOutlined,
@@ -7,13 +7,16 @@ import {
   CopyOutlined,
   SendOutlined,
   PlayCircleOutlined,
-  MessageOutlined,
+  RobotOutlined,
   ReloadOutlined,
   MoreOutlined,
   PaperClipOutlined,
   StopOutlined,
   BulbOutlined,
   ThunderboltOutlined,
+  LoadingOutlined,
+  CheckCircleOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import ReactMarkdown from 'react-markdown'
@@ -27,10 +30,12 @@ import {
   deleteConversation,
   getMessages,
   chatSendStream,
+  confirmAgentTool,
   parseContext,
   type AiConversation,
   type AiMessage,
   type TerminalContext,
+  type ToolEvent,
 } from '../services/ai'
 
 interface AiChatPanelProps {
@@ -71,10 +76,17 @@ export default function AiChatPanel({
   const [loadingConvs, setLoadingConvs] = useState(false)
   const [loadingMsgs, setLoadingMsgs] = useState(false)
   const [attachContext, setAttachContext] = useState(true)
+  // Agent 智能体模式开关
+  const [agentEnabled, setAgentEnabled] = useState(true)
 
   // 流式：正在生成的消息 id（用于显示打字光标 + 允许停止）
   const [streamingId, setStreamingId] = useState<string | null>(null)
   const cancelRef = useRef<(() => void) | null>(null)
+
+  // Agent 工具步骤（按 messageId 索引）
+  const [agentSteps, setAgentSteps] = useState<Record<string, ToolEvent[]>>({})
+  // 危险命令确认弹窗
+  const [confirmState, setConfirmState] = useState<{ confirmId: string; command: string } | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<any>(null)
@@ -109,8 +121,10 @@ export default function AiChatPanel({
   useEffect(() => {
     if (!activeId) {
       setMessages([])
+      setAgentSteps({})
       return
     }
+    setAgentSteps({})
     let cancelled = false
     setLoadingMsgs(true)
     getMessages(activeId)
@@ -243,6 +257,7 @@ export default function AiChatPanel({
     setStreamingId(placeholderId)
 
     try {
+      const useAgent = agentEnabled && !!connectionId
       const { cancel } = await chatSendStream(convId, text, ctx, (chunk) => {
         if (chunk.error) {
           // 出错：把占位消息内容设为错误提示
@@ -257,13 +272,39 @@ export default function AiChatPanel({
           refreshConversations()
           setStreamingId(null)
           cancelRef.current = null
+        } else if (chunk.tool) {
+          // Agent 工具事件
+          const tool = chunk.tool
+          if (tool.status === 'confirm') {
+            // 危险命令确认弹窗
+            setConfirmState({ confirmId: tool.confirmId!, command: tool.args })
+          } else {
+            // running / done：累积到 agentSteps
+            setAgentSteps(prev => {
+              const existing = prev[placeholderId] || []
+              // running → 新增一条；done → 更新最后一条同 name+args 的状态
+              if (tool.status === 'running') {
+                return { ...prev, [placeholderId]: [...existing, { ...tool }] }
+              } else {
+                // done: 更新最后匹配项
+                const updated = [...existing]
+                for (let i = updated.length - 1; i >= 0; i--) {
+                  if (updated[i].name === tool.name && updated[i].args === tool.args && updated[i].status === 'running') {
+                    updated[i] = { ...tool }
+                    break
+                  }
+                }
+                return { ...prev, [placeholderId]: updated }
+              }
+            })
+          }
         } else if (chunk.delta) {
           // 增量拼接
           setMessages(prev => prev.map(m => m.id === placeholderId
             ? { ...m, content: m.content + chunk.delta }
             : m))
         }
-      })
+      }, useAgent ? { agentMode: true, connectionId: connectionId! } : undefined)
       cancelRef.current = cancel
     } catch (err) {
       setMessages(prev => prev.filter(m => m.id !== optimisticUser.id && m.id !== placeholderId))
@@ -273,7 +314,7 @@ export default function AiChatPanel({
     } finally {
       setSending(false)
     }
-  }, [input, sending, activeId, connectionId, attachContext, getTerminalContext, message, refreshConversations])
+  }, [input, sending, activeId, connectionId, attachContext, agentEnabled, getTerminalContext, message, refreshConversations])
 
   // ---- 停止生成 ----
   const handleStop = useCallback(() => {
@@ -282,6 +323,17 @@ export default function AiChatPanel({
     setStreamingId(null)
     setSending(false)
   }, [])
+
+  // ---- Agent 危险命令确认 ----
+  const handleConfirm = useCallback(async (approved: boolean) => {
+    if (!confirmState) return
+    try {
+      await confirmAgentTool(confirmState.confirmId, approved)
+    } catch {
+      // ignore
+    }
+    setConfirmState(null)
+  }, [confirmState])
 
   // ---- 复制命令 ----
   const handleCopy = useCallback(async (cmd: string) => {
@@ -398,6 +450,7 @@ export default function AiChatPanel({
                 key={m.id}
                 message={m}
                 streaming={m.id === streamingId}
+                agentSteps={agentSteps[m.id]}
                 onCopy={handleCopy}
                 onInsert={onInsertCommand}
                 onRun={onRunCommand}
@@ -465,16 +518,29 @@ export default function AiChatPanel({
           justifyContent: 'space-between',
           alignItems: 'center',
           marginTop: 6,
+          gap: 8,
+          flexWrap: 'wrap',
         }}>
-          <Tooltip title="开启后，本轮会附带当前终端最近输出和选中文本">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12, color: 'var(--color-text-secondary)' }}
-              onClick={() => setAttachContext(v => !v)}
-            >
-              <PaperClipOutlined style={{ color: attachContext ? 'var(--color-primary)' : undefined }} />
-              <span style={{ color: attachContext ? 'var(--color-primary)' : 'var(--color-text-tertiary)' }}>附带终端上下文</span>
-              <Switch size="small" checked={attachContext} onChange={setAttachContext} />
-            </div>
-          </Tooltip>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <Tooltip title={connectionId ? "AI 可自主执行命令查看系统状态、诊断问题，危险命令会弹窗确认" : "需要先连接服务器才能使用智能体"}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12, color: 'var(--color-text-secondary)' }}
+                onClick={() => connectionId && setAgentEnabled(v => !v)}
+              >
+                <RobotOutlined style={{ color: agentEnabled && connectionId ? 'var(--color-primary)' : undefined }} />
+                <span style={{ color: agentEnabled && connectionId ? 'var(--color-primary)' : 'var(--color-text-tertiary)' }}>智能体</span>
+                <Switch size="small" checked={agentEnabled && !!connectionId} onChange={setAgentEnabled} disabled={!connectionId} />
+              </div>
+            </Tooltip>
+            <Tooltip title="开启后，本轮会附带当前终端最近输出和选中文本">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: 12, color: 'var(--color-text-secondary)' }}
+                onClick={() => setAttachContext(v => !v)}
+              >
+                <PaperClipOutlined style={{ color: attachContext ? 'var(--color-primary)' : undefined }} />
+                <span style={{ color: attachContext ? 'var(--color-primary)' : 'var(--color-text-tertiary)' }}>终端上下文</span>
+                <Switch size="small" checked={attachContext} onChange={setAttachContext} />
+              </div>
+            </Tooltip>
+          </div>
           {sending ? (
             <Button
               size="small"
@@ -497,6 +563,92 @@ export default function AiChatPanel({
           )}
         </div>
       </div>
+
+      {/* Agent 危险命令确认弹窗 */}
+      <Modal
+        open={!!confirmState}
+        title="⚠️ AI 请求执行命令"
+        okText="允许执行"
+        cancelText="拒绝"
+        okButtonProps={{ danger: true }}
+        onOk={() => handleConfirm(true)}
+        onCancel={() => handleConfirm(false)}
+      >
+        <p style={{ marginBottom: 8 }}>AI 想在服务器上执行以下命令：</p>
+        <pre style={{
+          padding: '8px 12px',
+          background: 'rgba(255,77,79,0.06)',
+          border: '1px solid rgba(255,77,79,0.3)',
+          borderRadius: 4,
+          fontFamily: 'Menlo, Monaco, monospace',
+          fontSize: 12,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-all',
+        }}>{confirmState?.command}</pre>
+      </Modal>
+    </div>
+  )
+}
+
+// ============ Agent 工具步骤展示 ============
+
+/** 工具名 → 友好标签 */
+const toolLabel: Record<string, string> = {
+  exec_command: '执行命令',
+  read_file: '读取文件',
+  system_monitor: '系统监控',
+  docker_action: 'Docker',
+}
+
+function AgentSteps({ steps }: { steps: ToolEvent[] }) {
+  if (!steps || steps.length === 0) return null
+  return (
+    <div style={{ marginBottom: 8 }}>
+      {steps.map((s, i) => (
+        <div key={i} style={{
+          fontSize: 11,
+          padding: '4px 8px',
+          margin: '3px 0',
+          background: s.success === false ? 'rgba(255,77,79,0.08)' : 'var(--color-fill, rgba(128,128,128,0.08))',
+          borderRadius: 4,
+          border: '1px solid var(--color-border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            {s.status === 'running' ? (
+              <LoadingOutlined style={{ color: 'var(--color-primary)', fontSize: 11 }} />
+            ) : s.success === false ? (
+              <ExclamationCircleOutlined style={{ color: 'var(--color-error)', fontSize: 11 }} />
+            ) : (
+              <CheckCircleOutlined style={{ color: 'var(--color-success)', fontSize: 11 }} />
+            )}
+            <span style={{ color: 'var(--color-text-tertiary)', flexShrink: 0 }}>
+              {toolLabel[s.name] || s.name}:
+            </span>
+            <code style={{
+              color: 'var(--color-text-secondary)',
+              fontFamily: 'Menlo, Monaco, monospace',
+              fontSize: 11,
+              wordBreak: 'break-all',
+              flex: 1,
+            }}>{s.args}</code>
+          </div>
+          {s.result && (
+            <pre style={{
+              margin: '4px 0 0 0',
+              padding: '4px 6px',
+              maxHeight: 80,
+              overflow: 'auto',
+              color: 'var(--color-text-tertiary)',
+              fontSize: 10,
+              fontFamily: 'Menlo, Monaco, monospace',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-all',
+              background: 'rgba(0,0,0,0.05)',
+              borderRadius: 3,
+            }}>{s.result.length > 200 ? s.result.slice(0, 200) + '…' : s.result}</pre>
+          )}
+        </div>
+      ))}
     </div>
   )
 }
@@ -506,12 +658,14 @@ export default function AiChatPanel({
 const MessageBubble = memo(function MessageBubble({
   message: msg,
   streaming,
+  agentSteps,
   onCopy,
   onInsert,
   onRun,
 }: {
   message: AiMessage
   streaming: boolean
+  agentSteps?: ToolEvent[]
   onCopy: (cmd: string) => void
   onInsert?: (cmd: string) => void
   onRun?: (cmd: string) => void
@@ -580,6 +734,9 @@ const MessageBubble = memo(function MessageBubble({
 
       {contextTags}
 
+      {/* Agent 工具执行步骤 */}
+      <AgentSteps steps={agentSteps || []} />
+
       {/* 内容 */}
       {isEmpty ? (
         <div style={{ padding: 4 }}><Spin size="small" /></div>
@@ -605,7 +762,8 @@ const MessageBubble = memo(function MessageBubble({
   return (
     prev.message.id === next.message.id &&
     prev.message.content === next.message.content &&
-    prev.streaming === next.streaming
+    prev.streaming === next.streaming &&
+    prev.agentSteps === next.agentSteps
   )
 })
 
