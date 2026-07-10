@@ -493,6 +493,39 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     togglePortForward,
   } = useRightPanels(activeConnectionId, fileManagerVisible, setFileManagerVisible)
 
+  // AI 面板可拖拽宽度（其他面板仍用固定 360）
+  const [aiPanelWidth, setAiPanelWidth] = useState(440)
+  const [aiResizing, setAiResizing] = useState(false)
+  const aiResizingRef = useRef(false)
+  const aiPanelWidthRef = useRef(aiPanelWidth)
+  aiPanelWidthRef.current = aiPanelWidth
+
+  const startAiResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    aiResizingRef.current = true
+    setAiResizing(true)
+    const startX = e.clientX
+    const startWidth = aiPanelWidthRef.current
+    const onMove = (ev: MouseEvent) => {
+      if (!aiResizingRef.current) return
+      const delta = startX - ev.clientX
+      const newWidth = Math.max(320, Math.min(720, startWidth + delta))
+      setAiPanelWidth(newWidth)
+    }
+    const onUp = () => {
+      aiResizingRef.current = false
+      setAiResizing(false)
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
@@ -2340,13 +2373,35 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       </div>
 
       <div style={{
-        width: (monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || snippetsVisible || portForwardVisible || aiChatVisible || dockerVisible) ? 360 : 0,
+        width: (() => {
+          const anyOpen = monitorVisible || (activeConnectionId && fileManagerVisible[activeConnectionId]) || snippetsVisible || portForwardVisible || aiChatVisible || dockerVisible
+          if (!anyOpen) return 0
+          // AI 面板用可拖拽宽度，其他面板固定 360
+          return (aiChatVisible && aiEnabled) ? aiPanelWidth : 360
+        })(),
         height: '100%',
         flexShrink: 0,
         overflow: 'hidden',
-        transition: 'width 0.2s ease',
+        transition: aiResizing ? 'none' : 'width 0.2s ease',
         borderLeft: '1px solid var(--color-border)',
+        position: 'relative',
       }}>
+        {/* AI 面板专属拖拽手柄（仅 AI 面板打开时显示） */}
+        {aiChatVisible && aiEnabled && (
+          <div
+            onMouseDown={startAiResize}
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 4,
+              cursor: 'col-resize',
+              zIndex: 10,
+            }}
+            className="ai-panel-resizer"
+          />
+        )}
         {monitorVisible && (
           <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
         )}

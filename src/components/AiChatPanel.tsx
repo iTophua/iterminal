@@ -22,7 +22,7 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import 'highlight.js/styles/github-dark.css'
+// 代码高亮配色在 global.css 中用 [data-theme] 选择器自定义，适配亮/暗主题
 import {
   listConversations,
   createConversation,
@@ -81,6 +81,8 @@ export default function AiChatPanel({
 
   // 流式：正在生成的消息 id（用于显示打字光标 + 允许停止）
   const [streamingId, setStreamingId] = useState<string | null>(null)
+  // 流式中对应的 conversationId（防止 effect 重新加载覆盖乐观消息）
+  const streamingConvRef = useRef<string | null>(null)
   const cancelRef = useRef<(() => void) | null>(null)
 
   // Agent 工具步骤（按 messageId 索引）
@@ -114,16 +116,23 @@ export default function AiChatPanel({
     return () => {
       cancelRef.current?.()
       cancelRef.current = null
+      streamingConvRef.current = null
     }
   }, [])
 
   // ---- 加载选中对话的消息 ----
+  // 注意：如果正在对这个对话进行流式生成，跳过加载，避免覆盖正在填充的占位消息。
+  // 典型场景：handleSend 新建对话 → setActiveId 触发本 effect → getMessages 返回空
+  //   或只含 user 消息 → 覆盖掉正在接收 delta 的 placeholder → 看不到 AI 回复。
+  // 但切换到其他对话时正常加载。
   useEffect(() => {
     if (!activeId) {
       setMessages([])
       setAgentSteps({})
       return
     }
+    // 正在对此对话流式生成 → 跳过加载（保留乐观消息）
+    if (streamingConvRef.current === activeId) return
     setAgentSteps({})
     let cancelled = false
     setLoadingMsgs(true)
@@ -255,6 +264,7 @@ export default function AiChatPanel({
     setInput('')
     setSending(true)
     setStreamingId(placeholderId)
+    streamingConvRef.current = convId
 
     try {
       const useAgent = agentEnabled && !!connectionId
@@ -265,12 +275,14 @@ export default function AiChatPanel({
             ? { ...m, content: `⚠️ ${chunk.error}` }
             : m))
           setStreamingId(null)
+          streamingConvRef.current = null
           cancelRef.current = null
         } else if (chunk.done) {
           // 完成：后端已持久化 assistant 消息。保留占位消息（内容已完整），
           // 下次加载对话时会自动替换为真实 id。仅刷新对话列表（标题可能更新）。
           refreshConversations()
           setStreamingId(null)
+          streamingConvRef.current = null
           cancelRef.current = null
         } else if (chunk.tool) {
           // Agent 工具事件
@@ -310,6 +322,7 @@ export default function AiChatPanel({
       setMessages(prev => prev.filter(m => m.id !== optimisticUser.id && m.id !== placeholderId))
       message.error(`发送失败: ${err}`)
       setStreamingId(null)
+      streamingConvRef.current = null
       cancelRef.current = null
     } finally {
       setSending(false)
@@ -321,6 +334,7 @@ export default function AiChatPanel({
     cancelRef.current?.()
     cancelRef.current = null
     setStreamingId(null)
+    streamingConvRef.current = null
     setSending(false)
   }, [])
 
@@ -392,7 +406,7 @@ export default function AiChatPanel({
         borderBottom: '1px solid var(--color-border)',
         flexShrink: 0,
       }}>
-        <MessageOutlined style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
+        <RobotOutlined style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
         <Select
           size="small"
           style={{ flex: 1, minWidth: 0 }}

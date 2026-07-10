@@ -319,6 +319,11 @@ export interface ThemeVariableSet {
   '--color-bg-spotlight': string
   '--color-bg-mask': string
 
+  // Fill
+  '--color-fill': string
+  '--color-fill-secondary': string
+  '--color-fill-tertiary': string
+
   // Brand
   '--color-primary': string
   '--color-primary-hover': string

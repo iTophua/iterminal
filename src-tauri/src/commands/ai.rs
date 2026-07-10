@@ -578,16 +578,12 @@ pub async fn ai_chat(
     )
     .map_err(|e| format!("保存消息失败: {}", e))?;
 
-    // 构造完整 messages：system + 历史 + 本轮
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(chat_system_prompt())];
-    for m in &history {
-        match m.role.as_str() {
-            "user" => messages.push(ChatMessage::user(&m.content)),
-            "assistant" => messages.push(ChatMessage::assistant(&m.content)),
-            _ => {} // 跳过系统消息（由 chat_system_prompt 统一注入）
-        }
-    }
-    messages.push(ChatMessage::user(&context_text));
+    // 构造完整 messages：system + 截断历史 + 本轮（应用滑动窗口 + token 上限）
+    let messages = build_messages_with_context_limit(
+        chat_system_prompt(),
+        &history,
+        &context_text,
+    );
 
     // 调 LLM
     let reply = call_chat(&base_url, api_key.as_deref(), &model, &messages)
@@ -802,7 +798,7 @@ pub async fn ai_chat_stream(
         _ => user_text.clone(),
     };
 
-    // 读历史 + 存 user 消息 + 构造 messages（与非流式 ai_chat 一致）
+    // 读历史 + 存 user 消息 + 构造 messages（应用滑动窗口 + token 上限）
     let history = super::db::get_ai_messages(conversation_id.clone())
         .map_err(|e| format!("读取对话历史失败: {}", e))?;
     let is_first = history.is_empty();
@@ -819,15 +815,11 @@ pub async fn ai_chat_stream(
     )
     .map_err(|e| format!("保存消息失败: {}", e))?;
 
-    let mut messages: Vec<ChatMessage> = vec![ChatMessage::system(chat_system_prompt())];
-    for m in &history {
-        match m.role.as_str() {
-            "user" => messages.push(ChatMessage::user(&m.content)),
-            "assistant" => messages.push(ChatMessage::assistant(&m.content)),
-            _ => {}
-        }
-    }
-    messages.push(ChatMessage::user(&context_text));
+    let messages = build_messages_with_context_limit(
+        chat_system_prompt(),
+        &history,
+        &context_text,
+    );
 
     let event_name = format!("ai-chat-chunk-{}", request_id);
 
@@ -944,6 +936,103 @@ pub async fn stop_ai_chat(request_id: String) -> Result<bool, String> {
     } else {
         Ok(false) // 不存在视为已结束
     }
+}
+
+// ============ 上下文管理（滑动窗口 + token 估算）============
+
+/// 保留最近多少轮对话（1 轮 = 1 条 user + 1 条 assistant）
+const CONTEXT_KEEP_RECENT_ROUNDS: usize = 6;
+/// 上下文 token 硬上限（为 system prompt + 模型输出预留空间）
+/// 大多数模型上下文窗口 ≥ 4K；这里保守地限制历史部分
+const CONTEXT_MAX_TOKENS: usize = 6000;
+
+/// 粗略估算字符串的 token 数（约 4 字符 = 1 token，中文字符密度更高按 2 字符算）。
+/// 不引入 tiktoken 等重依赖，误差可接受（用于截断决策而非精确计费）。
+fn estimate_tokens(text: &str) -> usize {
+    let cjk_count = text.chars().filter(|c| {
+        (*c >= '\u{4E00}' && *c <= '\u{9FFF}')      // CJK 统一汉字
+        || (*c >= '\u{3040}' && *c <= '\u{30FF}')    // 平假名 + 片假名
+        || (*c >= '\u{AC00}' && *c <= '\u{D7A3}')    // 韩文音节
+    }).count();
+
+    let other_chars = text.chars().count() - cjk_count;
+    // CJK 字符约 1 字符 = 1 token；英文约 4 字符 = 1 token；至少 1 token
+    let other_tokens = if other_chars == 0 { 0 } else { (other_chars + 3) / 4 };
+    (cjk_count + other_tokens).max(1)
+}
+
+/// 从历史消息中构造发给 LLM 的 messages 数组，应用滑动窗口 + token 上限。
+///
+/// 策略：
+/// 1. system prompt 永远保留
+/// 2. 保留最近 N 轮对话（user + assistant 配对）
+/// 3. 如果仍超 token 上限，从最早的历史开始丢弃，直到满足限制
+///
+/// 返回完整的 messages 数组（system + 截断后的历史 + 本轮 user）。
+fn build_messages_with_context_limit(
+    system_prompt: &str,
+    history: &[super::db::AiMessage],
+    current_user_text: &str,
+) -> Vec<ChatMessage> {
+    let mut messages = vec![ChatMessage::system(system_prompt)];
+
+    // 只保留 user / assistant 消息，按时间顺序（DB 已按 created_at ASC 返回）
+    let history_msgs: Vec<&super::db::AiMessage> = history
+        .iter()
+        .filter(|m| m.role == "user" || m.role == "assistant")
+        .collect();
+
+    // 配对成轮次（user + assistant），从后往前保留最近 N 轮。
+    // 倒序遍历（i 从 len 递减），用 insert(0,...) 保持正序输出。
+    let mut recent: Vec<&super::db::AiMessage> = Vec::new();
+    let mut rounds = 0usize;
+    let mut i = history_msgs.len();
+
+    while i > 0 && rounds < CONTEXT_KEEP_RECENT_ROUNDS {
+        i -= 1;
+        let msg = &history_msgs[i];
+        recent.insert(0, msg);
+
+        // 如果当前是 assistant 且前一条是 user → 配对保留（算同一轮）
+        if msg.role == "assistant" && i > 0 && history_msgs[i - 1].role == "user" {
+            i -= 1;
+            recent.insert(0, &history_msgs[i]);
+        }
+        rounds += 1;
+    }
+
+    // 计算当前保留消息的 token 估算
+    let system_tokens = estimate_tokens(system_prompt);
+    let user_tokens = estimate_tokens(current_user_text);
+    let mut budget = CONTEXT_MAX_TOKENS.saturating_sub(system_tokens + user_tokens);
+
+    // 从最新的消息往前保留，直到 token 预算用完
+    let mut kept: Vec<&super::db::AiMessage> = Vec::new();
+    for msg in recent.iter().rev() {
+        let t = estimate_tokens(&msg.content);
+        if t > budget {
+            break;
+        }
+        budget -= t;
+        kept.insert(0, *msg);
+    }
+
+    // 如果截断导致开头是 assistant 消息（没有对应 user），去掉它
+    // （某些模型要求第一条非 system 消息是 user）
+    while kept.first().map_or(false, |m| m.role == "assistant") {
+        kept.remove(0);
+    }
+
+    for m in &kept {
+        match m.role.as_str() {
+            "user" => messages.push(ChatMessage::user(&m.content)),
+            "assistant" => messages.push(ChatMessage::assistant(&m.content)),
+            _ => {}
+        }
+    }
+
+    messages.push(ChatMessage::user(current_user_text));
+    messages
 }
 
 // ============ AI Agent（智能体）============
@@ -1653,5 +1742,139 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], vec!["line1".to_string(), "line2".to_string()]);
         assert!(remainder.is_empty());
+    }
+
+    // ---- 上下文管理测试 ----
+
+    fn make_msg(role: &str, content: &str) -> super::super::db::AiMessage {
+        super::super::db::AiMessage {
+            id: format!("{}-{}", role, content.len()),
+            conversation_id: "test".into(),
+            role: role.into(),
+            content: content.into(),
+            context: None,
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn test_estimate_tokens_english() {
+        // 英文约 4 字符 = 1 token；"hello world!" = 12 chars → ceil(12/4) = 3
+        let tokens = estimate_tokens("hello world!");
+        assert_eq!(tokens, 3);
+    }
+
+    #[test]
+    fn test_estimate_tokens_chinese() {
+        // 中文 1 字符 ≈ 1 token；"你好世界" = 4 CJK chars
+        let tokens = estimate_tokens("你好世界");
+        assert_eq!(tokens, 4);
+    }
+
+    #[test]
+    fn test_estimate_tokens_mixed() {
+        // 混合："你好" (2 CJK) + "hello" (5 other → ceil(5/4)=2) = 4
+        let tokens = estimate_tokens("你好hello");
+        assert_eq!(tokens, 4);
+    }
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(estimate_tokens(""), 1);
+    }
+
+    #[test]
+    fn test_build_messages_short_history() {
+        // 短历史：全部保留
+        let history = vec![
+            make_msg("user", "hello"),
+            make_msg("assistant", "hi there"),
+        ];
+        let messages = build_messages_with_context_limit("SYSTEM", &history, "new question");
+        // system + 2 历史 + 1 本轮 = 4
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].role, "system");
+        assert_eq!(messages[0].content, "SYSTEM");
+        assert_eq!(messages[1].role, "user");
+        assert_eq!(messages[2].role, "assistant");
+        assert_eq!(messages[3].content, "new question");
+    }
+
+    #[test]
+    fn test_build_messages_truncates_old_rounds() {
+        // 超过 6 轮的历史，应该只保留最近的
+        let mut history = Vec::new();
+        for i in 0..10 {
+            history.push(make_msg("user", &format!("question {}", i)));
+            history.push(make_msg("assistant", &format!("answer {}", i)));
+        }
+        let messages = build_messages_with_context_limit("S", &history, "current");
+        // system + 最多 6 轮 (12 条) + 本轮 = 最多 14
+        assert!(messages.len() <= 14);
+        assert!(messages.len() >= 3); // 至少 system + 1 轮 + 本轮
+        // 最后一条是本轮
+        assert_eq!(messages.last().unwrap().content, "current");
+        // 最早的 question 0 应该被丢弃
+        let history_first = &messages[1].content;
+        assert!(
+            !history_first.contains("question 0"),
+            "question 0 should be truncated, got: {}",
+            history_first
+        );
+    }
+
+    #[test]
+    fn test_build_messages_keeps_correct_pairing() {
+        // 验证 user/assistant 配对正确
+        let history = vec![
+            make_msg("user", "q0"),
+            make_msg("assistant", "a0"),
+            make_msg("user", "q1"),
+            make_msg("assistant", "a1"),
+        ];
+        let messages = build_messages_with_context_limit("S", &history, "current");
+        // 全部保留（2 轮 < 6 轮限制）
+        assert_eq!(messages.len(), 6); // system + 4 + current
+        assert_eq!(messages[1].content, "q0");
+        assert_eq!(messages[2].content, "a0");
+        assert_eq!(messages[3].content, "q1");
+        assert_eq!(messages[4].content, "a1");
+        assert_eq!(messages[5].content, "current");
+    }
+
+    #[test]
+    fn test_build_messages_no_leading_assistant() {
+        // 截断后不应以 assistant 消息开头（除非前面有 user）
+        let mut history = vec![
+            make_msg("assistant", "orphan reply"),  // 没有 user 配对
+        ];
+        for i in 0..6 {
+            history.push(make_msg("user", &format!("q{}", i)));
+            history.push(make_msg("assistant", &format!("a{}", i)));
+        }
+        let messages = build_messages_with_context_limit("S", &history, "current");
+        // 第 1 条历史消息不应是 orphan assistant
+        assert!(
+            messages[1].role != "assistant" || messages.len() <= 2,
+            "messages should not start with orphan assistant"
+        );
+    }
+
+    #[test]
+    fn test_build_messages_empty_history() {
+        let messages = build_messages_with_context_limit("S", &[], "first message");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "system");
+        assert_eq!(messages[1].content, "first message");
+    }
+
+    #[test]
+    fn test_is_dangerous_command() {
+        assert!(is_dangerous_command("rm -rf /"));
+        assert!(is_dangerous_command("docker rm -f abc123"));
+        assert!(is_dangerous_command("shutdown -h now"));
+        assert!(!is_dangerous_command("docker ps -a"));
+        assert!(!is_dangerous_command("free -m"));
+        assert!(!is_dangerous_command("cat /etc/nginx/nginx.conf"));
     }
 }

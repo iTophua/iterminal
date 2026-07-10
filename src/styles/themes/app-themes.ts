@@ -158,6 +158,11 @@ function buildThemeVariables(config: CoreColorConfig): ThemeVariableSet {
   const focusRing = `rgba(${primaryRgb}, 0.25)`
   const focusShadow = `0 0 0 3px rgba(${primaryRgb}, 0.15)`
 
+  // fill — 填充色（内联代码背景、代码块语言标签栏等）
+  const fillTertiary = isDark ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.04)'
+  const fillSecondary = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'
+  const fill = isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(0, 0, 0, 0.08)'
+
   return {
     // Elevation
     '--color-bg-base': bgBase,
@@ -168,6 +173,11 @@ function buildThemeVariables(config: CoreColorConfig): ThemeVariableSet {
     '--color-bg-overlay': overlay,
     '--color-bg-spotlight': `rgba(${primaryRgb}, ${isDark ? 0.08 : 0.05})`,
     '--color-bg-mask': isDark ? 'rgba(0, 0, 0, 0.65)' : 'rgba(0, 0, 0, 0.45)',
+
+    // Fill
+    '--color-fill': fill,
+    '--color-fill-secondary': fillSecondary,
+    '--color-fill-tertiary': fillTertiary,
 
     // Brand
     '--color-primary': primary,
