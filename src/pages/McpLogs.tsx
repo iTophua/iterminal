@@ -17,8 +17,26 @@ import {
   CopyOutlined,
   ReloadOutlined,
   ApiOutlined,
+  LinkOutlined,
+  LaptopOutlined,
+  CodeOutlined,
+  FolderOpenOutlined,
+  FileTextOutlined,
+  CloudUploadOutlined,
+  CloudDownloadOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  FolderAddOutlined,
+  SearchOutlined,
+  DashboardOutlined,
+  ApiOutlined as ApiIcon,
+  GlobalOutlined,
+  StopOutlined,
+  ScanOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
+import { useTerminalStore } from '../stores/terminalStore'
+import type { Connection } from '../types/shared'
 
 // ============ 类型 ============
 
@@ -107,6 +125,36 @@ const getOperationColor = (operation: string): string => {
   return colorMap[operation] || 'var(--color-text-secondary)'
 }
 
+// 操作图标映射
+const getOperationIcon = (operation: string) => {
+  const iconMap: Record<string, React.ReactNode> = {
+    connect: <LinkOutlined />,
+    disconnect: <StopOutlined />,
+    quick_connect: <LinkOutlined />,
+    list_saved: <LaptopOutlined />,
+    exec: <CodeOutlined />,
+    monitor: <DashboardOutlined />,
+    network_stats: <GlobalOutlined />,
+    list_processes: <ScanOutlined />,
+    kill_process: <StopOutlined />,
+    list_dir: <FolderOpenOutlined />,
+    mkdir: <FolderAddOutlined />,
+    rm: <DeleteOutlined />,
+    rename: <EditOutlined />,
+    create_file: <FileTextOutlined />,
+    delete_directory: <DeleteOutlined />,
+    read_file: <FileTextOutlined />,
+    write_file: <EditOutlined />,
+    upload: <CloudUploadOutlined />,
+    upload_folder: <CloudUploadOutlined />,
+    download: <CloudDownloadOutlined />,
+    compress: <FolderOpenOutlined />,
+    extract: <FolderOpenOutlined />,
+    search_files: <SearchOutlined />,
+  }
+  return iconMap[operation] || <ApiIcon />
+}
+
 /** 毫秒时间戳 → 显示字符串 */
 function formatTime(ms: number): string {
   const d = new Date(ms)
@@ -127,6 +175,17 @@ function McpLogs() {
   const [timeRange, setTimeRange] = useState<string>('all')
   const [keyword, setKeyword] = useState('')
   const unlistenRef = useRef<UnlistenFn | null>(null)
+
+  // 已保存的连接列表，用于把 connectionId 解析为可读的连接名称
+  const allConnections = useTerminalStore(s => s.allConnections)
+  // connectionId → Connection 映射，O(1) 查找
+  const connMap = useMemo(() => {
+    const map = new Map<string, Connection>()
+    for (const c of allConnections) {
+      map.set(c.id, c)
+    }
+    return map
+  }, [allConnections])
 
   // ============ 加载历史日志 ============
   const loadLogs = useCallback(
@@ -258,11 +317,14 @@ function McpLogs() {
   // ============ 导出 TSV ============
   const handleDownload = useCallback(() => {
     if (filteredLogs.length === 0) return
-    const header = '时间\t操作\t状态\t详情\t错误\t连接ID\n'
+    const header = '时间\t操作\t状态\t连接名称\t主机\t详情\t错误\t连接ID\n'
     const content = filteredLogs
       .map(l => {
         const status = l.success ? '成功' : '失败'
-        return `${formatTime(l.createdAt)}\t${operationLabels[l.operation] || l.operation}\t${status}\t${l.details}\t${l.error || ''}\t${l.connectionId || ''}`
+        const conn = l.connectionId ? connMap.get(l.connectionId) : null
+        const connName = conn?.name || ''
+        const host = conn?.host || ''
+        return `${formatTime(l.createdAt)}\t${operationLabels[l.operation] || l.operation}\t${status}\t${connName}\t${host}\t${l.details}\t${l.error || ''}\t${l.connectionId || ''}`
       })
       .join('\n')
     const blob = new Blob([header + content], { type: 'text/plain;charset=utf-8' })
@@ -274,7 +336,7 @@ function McpLogs() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-  }, [filteredLogs])
+  }, [filteredLogs, connMap])
 
   const handleCopy = useCallback(async (text: string) => {
     try {
@@ -407,7 +469,9 @@ function McpLogs() {
           />
         ) : (
           <>
-            {filteredLogs.map((log, idx) => (
+            {filteredLogs.map((log, idx) => {
+              const conn = log.connectionId ? connMap.get(log.connectionId) : null
+              return (
               <div
                 key={`${log.id}-${idx}`}
                 style={{
@@ -416,13 +480,16 @@ function McpLogs() {
                   background: 'var(--color-bg-spotlight)',
                   borderRadius: 6,
                   fontSize: 12,
+                  borderLeft: `3px solid ${getOperationColor(log.operation)}`,
                 }}
               >
+                {/* 第一行：时间 + 操作类型 + 状态 + 连接信息 */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
                   <span style={{ color: 'var(--color-text-tertiary)', fontSize: 11 }}>
                     {formatTime(log.createdAt)}
                   </span>
-                  <span style={{ color: getOperationColor(log.operation), fontWeight: 500 }}>
+                  <span style={{ color: getOperationColor(log.operation), fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    {getOperationIcon(log.operation)}
                     {operationLabels[log.operation] || log.operation}
                   </span>
                   <span
@@ -436,12 +503,24 @@ function McpLogs() {
                   >
                     {log.success ? '成功' : '失败'}
                   </span>
-                  {log.connectionId && (
-                    <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>
-                      [{log.connectionId.slice(0, 8)}]
-                    </span>
+                  {conn && (
+                    <Tooltip title={`${conn.username}@${conn.host}:${conn.port}`}>
+                      <span style={{ color: 'var(--color-text-secondary)', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                        <LinkOutlined style={{ fontSize: 10 }} />
+                        {conn.name}
+                        <span style={{ color: 'var(--color-text-tertiary)' }}>{conn.host}</span>
+                      </span>
+                    </Tooltip>
+                  )}
+                  {log.connectionId && !conn && (
+                    <Tooltip title={log.connectionId}>
+                      <span style={{ color: 'var(--color-text-tertiary)', fontSize: 10 }}>
+                        [临时连接 {log.connectionId.slice(0, 8)}]
+                      </span>
+                    </Tooltip>
                   )}
                 </div>
+                {/* 第二行：详情/错误 */}
                 <div
                   style={{
                     color: log.success ? 'var(--color-text-secondary)' : 'var(--color-error)',
@@ -469,7 +548,8 @@ function McpLogs() {
                   )}
                 </div>
               </div>
-            ))}
+              )
+            })}
 
             {/* 加载更多 */}
             {hasMore && keyword === '' && timeRange === 'all' && (
