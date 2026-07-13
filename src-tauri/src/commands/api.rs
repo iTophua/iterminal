@@ -124,8 +124,13 @@ fn emit_operation(
             }),
         );
 
-        // 同步到前端终端（exec 除外——exec handler 会单独 emit 含完整输出的活动通知）
-        if operation != "exec" {
+        // 同步到前端终端：
+        // - exec 除外——exec handler 单独 emit 含完整输出的活动通知
+        // - 连接管理类（connect/disconnect/quick_connect/list_saved）不需要显示在终端
+        //   （连接建立时 shell 可能还没创建，写了也看不到）
+        match operation {
+            "exec" | "connect" | "disconnect" | "quick_connect" | "list_saved" => {}
+            _ => {
             let label = match operation {
                 "list_dir" => format!("\r\n\x1b[36m[MCP] ls {}\x1b[0m\r\n", details),
                 "mkdir" => format!("\r\n\x1b[36m[MCP] mkdir {}\x1b[0m\r\n", details),
@@ -138,6 +143,7 @@ fn emit_operation(
                 _ => format!("\r\n\x1b[36m[MCP] {} {}\x1b[0m\r\n", operation, details),
             };
             emit_mcp_activity(app, id, &label);
+            }
         }
     }
 }
