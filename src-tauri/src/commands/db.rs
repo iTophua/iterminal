@@ -285,6 +285,10 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // 迁移：新增 result 列（存储 exec 命令的输出结果，截断到 2000 字符）
+    // 失败说明列已存在，忽略
+    let _ = conn.execute("ALTER TABLE mcp_logs ADD COLUMN result TEXT", []);
+
     cleanup_expired_mcp_logs(&conn);
 
     migrate_passwords_if_needed(&conn)?;
@@ -1327,6 +1331,7 @@ pub struct McpLog {
     pub details: String,
     pub success: bool,
     pub error: Option<String>,
+    pub result: Option<String>,
     pub created_at: i64,
 }
 
@@ -1343,6 +1348,7 @@ pub(crate) fn save_mcp_log(
     details: &str,
     success: bool,
     error: Option<&str>,
+    result: Option<&str>,
 ) {
     let conn = match get_db() {
         Ok(c) => c,
@@ -1353,14 +1359,15 @@ pub(crate) fn save_mcp_log(
     };
     let now = chrono::Utc::now().timestamp_millis();
     if let Err(e) = conn.execute(
-        "INSERT INTO mcp_logs (operation, connection_id, details, success, error, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO mcp_logs (operation, connection_id, details, success, error, result, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
             operation,
             connection_id,
             details,
             success as i32,
             error,
+            result,
             now
         ],
     ) {
@@ -1405,21 +1412,21 @@ pub fn list_mcp_logs(
     let mut stmt = match filter_success {
         Some(true) => conn
             .prepare(
-                "SELECT id, operation, connection_id, details, success, error, created_at
+                "SELECT id, operation, connection_id, details, success, error, result, created_at
                  FROM mcp_logs WHERE success = 1
                  ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
             )
             .map_err(|e| e.to_string())?,
         Some(false) => conn
             .prepare(
-                "SELECT id, operation, connection_id, details, success, error, created_at
+                "SELECT id, operation, connection_id, details, success, error, result, created_at
                  FROM mcp_logs WHERE success = 0
                  ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
             )
             .map_err(|e| e.to_string())?,
         None => conn
             .prepare(
-                "SELECT id, operation, connection_id, details, success, error, created_at
+                "SELECT id, operation, connection_id, details, success, error, result, created_at
                  FROM mcp_logs
                  ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
             )
@@ -1435,7 +1442,8 @@ pub fn list_mcp_logs(
                 details: row.get(3)?,
                 success: row.get::<_, i32>(4)? != 0,
                 error: row.get(5)?,
-                created_at: row.get(6)?,
+                result: row.get(6)?,
+                created_at: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?

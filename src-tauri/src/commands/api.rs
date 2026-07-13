@@ -40,6 +40,8 @@ pub struct ApiOperation {
     pub details: String,
     pub success: bool,
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -99,6 +101,7 @@ fn emit_operation(
     details: &str,
     success: bool,
     error: Option<&str>,
+    result: Option<&str>,
 ) {
     let log = ApiOperation {
         timestamp: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -107,10 +110,11 @@ fn emit_operation(
         details: details.to_string(),
         success,
         error: error.map(|s| s.to_string()),
+        result: result.map(|s| s.to_string()),
     };
 
     // 持久化到 DB（供独立日志页面查询历史）
-    db::save_mcp_log(operation, connection_id, details, success, error);
+    db::save_mcp_log(operation, connection_id, details, success, error, result);
 
     let _ = app.emit("api-operation", &log);
 
@@ -368,6 +372,7 @@ async fn create_connection(
                 &details,
                 true,
                 None,
+        None,
             );
             // 通知前端自动打开终端（附带连接信息）
             emit_connection_opened(
@@ -389,6 +394,7 @@ async fn create_connection(
                 &details,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -417,6 +423,7 @@ async fn delete_connection(
                 &info.unwrap_or_default(),
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -428,6 +435,7 @@ async fn delete_connection(
                 &id,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -460,6 +468,21 @@ async fn execute_command_handler(
 
     match ssh::execute_command(id.clone(), payload.command).await {
         Ok(result) => {
+            // exec 记录命令输出到日志（截断到 2000 字符，防止大输出撑爆 DB）
+            let output_for_log = if result.output.is_empty() && result.error.is_none() {
+                None
+            } else {
+                let combined = if let Some(stderr) = &result.error {
+                    format!("{}{}", result.output, stderr)
+                } else {
+                    result.output.clone()
+                };
+                Some(if combined.len() > 2000 {
+                    format!("{}…\n(截断，完整输出共 {} 字符)", &combined[..2000], combined.chars().count())
+                } else {
+                    combined
+                })
+            };
             emit_operation(
                 &state.app_handle,
                 "exec",
@@ -467,6 +490,7 @@ async fn execute_command_handler(
                 &full_command,
                 result.success,
                 result.error.as_deref(),
+                output_for_log.as_deref(),
             );
             // 同步到前端终端：显示命令 + 输出 + 退出码
             let mut activity = format!("\r\n\x1b[36m[MCP] $\x1b[0m {}\r\n", full_command);
@@ -500,6 +524,7 @@ async fn execute_command_handler(
                 &full_command,
                 false,
                 Some(&e),
+        None,
             );
             let activity = format!(
                 "\r\n\x1b[36m[MCP] $\x1b[0m {}\r\n\x1b[31m[MCP] error: {}\x1b[0m\r\n",
@@ -532,7 +557,7 @@ async fn list_files_handler(
 
     match sftp::list_directory(id.clone(), path.clone()).await {
         Ok(entries) => {
-            emit_operation(&state.app_handle, "list_dir", Some(&id), &path, true, None);
+            emit_operation(&state.app_handle, "list_dir", Some(&id), &path, true, None, None);
             Ok(Json(ApiResponse::success(entries)))
         }
         Err(e) => {
@@ -543,6 +568,7 @@ async fn list_files_handler(
                 &path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -563,6 +589,7 @@ async fn create_directory_handler(
                 &payload.path,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -574,6 +601,7 @@ async fn create_directory_handler(
                 &payload.path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -594,6 +622,7 @@ async fn delete_file_handler(
                 &payload.path,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -605,6 +634,7 @@ async fn delete_file_handler(
                 &payload.path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -634,6 +664,7 @@ async fn rename_file_handler(
                 &format!("{} -> {}", old_path, new_path),
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -645,6 +676,7 @@ async fn rename_file_handler(
                 &format!("{} -> {}", old_path, new_path),
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -674,6 +706,7 @@ async fn read_file_handler(
                 &payload.path,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(content)))
         }
@@ -685,6 +718,7 @@ async fn read_file_handler(
                 &payload.path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -712,6 +746,7 @@ async fn write_file_handler(
                 &payload.path,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -723,6 +758,7 @@ async fn write_file_handler(
                 &payload.path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -761,7 +797,7 @@ async fn upload_file_handler(
 
     match result {
         Ok(bytes) => {
-            emit_operation(&state.app_handle, "upload", Some(&id), &details, true, None);
+            emit_operation(&state.app_handle, "upload", Some(&id), &details, true, None, None);
             Ok(Json(ApiResponse::success(TransferResult {
                 success: true,
                 bytes_transferred: bytes,
@@ -776,6 +812,7 @@ async fn upload_file_handler(
                 &details,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -814,6 +851,7 @@ async fn download_file_handler(
                 &details,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(TransferResult {
                 success: true,
@@ -829,6 +867,7 @@ async fn download_file_handler(
                 &details,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -847,6 +886,7 @@ async fn list_saved_connections(
                 &format!("{} 条已保存连接", connections.len()),
                 true,
                 None,
+        None,
             );
             Json(ApiResponse::success(connections))
         }
@@ -858,6 +898,7 @@ async fn list_saved_connections(
                 "读取已保存连接",
                 false,
                 Some(&e),
+        None,
             );
             Json(ApiResponse::error(&e))
         }
@@ -914,6 +955,7 @@ async fn save_and_connect_handler(
         &format!("保存连接 {} ({})", payload.name, details),
         true,
         None,
+None,
     );
 
     // 自动连接
@@ -934,6 +976,7 @@ async fn save_and_connect_handler(
                     &details,
                     true,
                     None,
+            None,
                 );
                 emit_connection_opened(
                     &state.app_handle,
@@ -953,6 +996,7 @@ async fn save_and_connect_handler(
                     &details,
                     false,
                     Some(&e),
+            None,
                 );
                 return Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))));
             }
@@ -1001,6 +1045,7 @@ async fn quick_connect_handler(
                 &details,
                 true,
                 None,
+        None,
             );
             // 通知前端自动打开终端
             emit_connection_opened(
@@ -1022,6 +1067,7 @@ async fn quick_connect_handler(
                 &details,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1035,11 +1081,11 @@ async fn get_network_stats_handler(
 {
     match ssh::get_network_stats(id.clone()).await {
         Ok(stats) => {
-            emit_operation(&state.app_handle, "network_stats", Some(&id), "网络统计", true, None);
+            emit_operation(&state.app_handle, "network_stats", Some(&id), "网络统计", true, None, None);
             Ok(Json(ApiResponse::success(stats)))
         }
         Err(e) => {
-            emit_operation(&state.app_handle, "network_stats", Some(&id), "网络统计", false, Some(&e));
+            emit_operation(&state.app_handle, "network_stats", Some(&id), "网络统计", false, Some(&e), None);
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
     }
@@ -1054,11 +1100,11 @@ async fn list_processes_handler(
 > {
     match ssh::list_processes(id.clone()).await {
         Ok(processes) => {
-            emit_operation(&state.app_handle, "list_processes", Some(&id), &format!("{} 个进程", processes.len()), true, None);
+            emit_operation(&state.app_handle, "list_processes", Some(&id), &format!("{} 个进程", processes.len()), true, None, None);
             Ok(Json(ApiResponse::success(processes)))
         }
         Err(e) => {
-            emit_operation(&state.app_handle, "list_processes", Some(&id), "进程列表", false, Some(&e));
+            emit_operation(&state.app_handle, "list_processes", Some(&id), "进程列表", false, Some(&e), None);
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
     }
@@ -1083,6 +1129,7 @@ async fn kill_process_handler(
                 &format!("pid: {}", payload.pid),
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -1094,6 +1141,7 @@ async fn kill_process_handler(
                 &format!("pid: {}", payload.pid),
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1126,6 +1174,7 @@ async fn compress_handler(
                 &format!("{} -> {}", payload.source_path, payload.target_path),
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -1137,6 +1186,7 @@ async fn compress_handler(
                 &format!("{} -> {}", payload.source_path, payload.target_path),
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1169,6 +1219,7 @@ async fn extract_handler(
                 &format!("{} -> {}", payload.file_path, payload.target_dir),
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -1180,6 +1231,7 @@ async fn extract_handler(
                 &format!("{} -> {}", payload.file_path, payload.target_dir),
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1216,6 +1268,7 @@ async fn search_files_handler(
                 &format!("path={}, pattern={}", path, pattern),
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(results)))
         }
@@ -1227,6 +1280,7 @@ async fn search_files_handler(
                 &format!("path={}, pattern={}", path, pattern),
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1267,6 +1321,7 @@ async fn upload_folder_handler(
                 &format!("{} -> {}", payload.local_path, payload.remote_path),
                 result.success,
                 result.error.as_deref(),
+        None,
             );
             Ok(Json(ApiResponse::success(TransferResult {
                 success: result.success,
@@ -1282,6 +1337,7 @@ async fn upload_folder_handler(
                 &format!("{} -> {}", payload.local_path, payload.remote_path),
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1302,6 +1358,7 @@ async fn create_file_handler(
                 &payload.path,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -1313,6 +1370,7 @@ async fn create_file_handler(
                 &payload.path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
@@ -1333,6 +1391,7 @@ async fn delete_directory_handler(
                 &payload.path,
                 true,
                 None,
+        None,
             );
             Ok(Json(ApiResponse::success(true)))
         }
@@ -1344,6 +1403,7 @@ async fn delete_directory_handler(
                 &payload.path,
                 false,
                 Some(&e),
+        None,
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }

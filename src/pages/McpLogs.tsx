@@ -33,6 +33,8 @@ import {
   GlobalOutlined,
   StopOutlined,
   ScanOutlined,
+  DownOutlined,
+  RightOutlined,
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { useTerminalStore } from '../stores/terminalStore'
@@ -48,6 +50,7 @@ interface McpLog {
   details: string
   success: boolean
   error: string | null
+  result: string | null
   createdAt: number
 }
 
@@ -59,6 +62,7 @@ interface McpOperationEvent {
   details: string
   success: boolean
   error: string | null
+  result: string | null
 }
 
 interface McpLogStats {
@@ -175,6 +179,17 @@ function McpLogs() {
   const [timeRange, setTimeRange] = useState<string>('all')
   const [keyword, setKeyword] = useState('')
   const unlistenRef = useRef<UnlistenFn | null>(null)
+  // 展开查看 exec 结果的日志 id 集合
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+
+  const toggleExpand = useCallback((id: number) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
 
   // 已保存的连接列表，用于把 connectionId 解析为可读的连接名称
   const allConnections = useTerminalStore(s => s.allConnections)
@@ -245,6 +260,7 @@ function McpLogs() {
           details: e.details,
           success: e.success,
           error: e.error,
+          result: e.result,
           createdAt: Date.now(),
         }
         setLogs(prev => [newLog, ...prev].slice(0, PAGE_SIZE * 3)) // 内存上限 600
@@ -317,14 +333,15 @@ function McpLogs() {
   // ============ 导出 TSV ============
   const handleDownload = useCallback(() => {
     if (filteredLogs.length === 0) return
-    const header = '时间\t操作\t状态\t连接名称\t主机\t详情\t错误\t连接ID\n'
+    const header = '时间\t操作\t状态\t连接名称\t主机\t详情\t执行结果\t错误\t连接ID\n'
     const content = filteredLogs
       .map(l => {
         const status = l.success ? '成功' : '失败'
         const conn = l.connectionId ? connMap.get(l.connectionId) : null
         const connName = conn?.name || ''
         const host = conn?.host || ''
-        return `${formatTime(l.createdAt)}\t${operationLabels[l.operation] || l.operation}\t${status}\t${connName}\t${host}\t${l.details}\t${l.error || ''}\t${l.connectionId || ''}`
+        const result = (l.result || '').replace(/\t/g, ' ').replace(/\n/g, '\\n')
+        return `${formatTime(l.createdAt)}\t${operationLabels[l.operation] || l.operation}\t${status}\t${connName}\t${host}\t${l.details}\t${result}\t${l.error || ''}\t${l.connectionId || ''}`
       })
       .join('\n')
     const blob = new Blob([header + content], { type: 'text/plain;charset=utf-8' })
@@ -547,6 +564,41 @@ function McpLogs() {
                     </Tooltip>
                   )}
                 </div>
+                {/* 第三行：exec 结果（可展开/收起） */}
+                {log.result && (
+                  <div style={{ marginTop: 4 }}>
+                    <span
+                      onClick={() => toggleExpand(log.id)}
+                      style={{ cursor: 'pointer', fontSize: 11, color: 'var(--color-text-tertiary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      {expandedIds.has(log.id) ? <DownOutlined style={{ fontSize: 10 }} /> : <RightOutlined style={{ fontSize: 10 }} />}
+                      执行结果
+                    </span>
+                    {expandedIds.has(log.id) && (
+                      <div style={{
+                        marginTop: 4,
+                        padding: '6px 8px',
+                        background: 'var(--color-fill, rgba(128,128,128,0.08))',
+                        borderRadius: 4,
+                        border: '1px solid var(--color-border)',
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all',
+                        fontSize: 11,
+                        fontFamily: 'Menlo, Monaco, monospace',
+                        color: 'var(--color-text-secondary)',
+                        maxHeight: 300,
+                        overflow: 'auto',
+                        position: 'relative',
+                      }}>
+                        <CopyOutlined
+                          onClick={() => handleCopy(log.result!)}
+                          style={{ position: 'absolute', top: 6, right: 6, color: 'var(--color-text-tertiary)', cursor: 'pointer', fontSize: 12 }}
+                        />
+                        {log.result}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               )
             })}
