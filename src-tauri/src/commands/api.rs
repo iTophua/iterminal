@@ -123,6 +123,22 @@ fn emit_operation(
                 "success": success
             }),
         );
+
+        // 同步到前端终端（exec 除外——exec handler 会单独 emit 含完整输出的活动通知）
+        if operation != "exec" {
+            let label = match operation {
+                "list_dir" => format!("\r\n\x1b[36m[MCP] ls {}\x1b[0m\r\n", details),
+                "mkdir" => format!("\r\n\x1b[36m[MCP] mkdir {}\x1b[0m\r\n", details),
+                "rm" => format!("\r\n\x1b[36m[MCP] rm {}\x1b[0m\r\n", details),
+                "rename" => format!("\r\n\x1b[36m[MCP] mv {}\x1b[0m\r\n", details),
+                "read_file" => format!("\r\n\x1b[36m[MCP] cat {}\x1b[0m\r\n", details),
+                "write_file" => format!("\r\n\x1b[36m[MCP] write {}\x1b[0m\r\n", details),
+                "upload" => format!("\r\n\x1b[36m[MCP] upload {}\x1b[0m\r\n", details),
+                "download" => format!("\r\n\x1b[36m[MCP] download {}\x1b[0m\r\n", details),
+                _ => format!("\r\n\x1b[36m[MCP] {} {}\x1b[0m\r\n", operation, details),
+            };
+            emit_mcp_activity(app, id, &label);
+        }
     }
 }
 
@@ -149,6 +165,21 @@ async fn emit_connection_opened(
                 "port": port,
                 "username": username
             }
+        }),
+    );
+}
+
+/// MCP 操作时把操作内容同步 emit 给前端终端，让用户能看到 AI 在做什么。
+///
+/// 前端 Terminal.tsx 订阅 `mcp-activity` 事件，按 connectionId 找到对应 xterm，
+/// 把 `text` 写入终端显示。这样 MCP（iterminal-mcp-server）执行的命令和文件操作
+/// 不会在前端"隐身"——用户能看到完整的操作记录。
+fn emit_mcp_activity(app: &AppHandle, connection_id: &str, text: &str) {
+    let _ = app.emit(
+        "mcp-activity",
+        serde_json::json!({
+            "connectionId": connection_id,
+            "text": text
         }),
     );
 }
@@ -431,6 +462,28 @@ async fn execute_command_handler(
                 result.success,
                 result.error.as_deref(),
             );
+            // 同步到前端终端：显示命令 + 输出 + 退出码
+            let mut activity = format!("\r\n\x1b[36m[MCP] $\x1b[0m {}\r\n", full_command);
+            if !result.output.is_empty() {
+                activity.push_str(&result.output);
+                if !result.output.ends_with('\n') {
+                    activity.push('\n');
+                }
+            }
+            if let Some(stderr) = &result.error {
+                if !stderr.is_empty() {
+                    activity.push_str(stderr);
+                    if !stderr.ends_with('\n') {
+                        activity.push('\n');
+                    }
+                }
+            }
+            activity.push_str(&format!(
+                "\x1b[{}m[MCP] exit code: {}\x1b[0m\r\n",
+                if result.success { "36" } else { "31" },
+                if result.success { 0 } else { 1 }
+            ));
+            emit_mcp_activity(&state.app_handle, &id, &activity);
             Ok(Json(ApiResponse::success(result)))
         }
         Err(e) => {
@@ -442,6 +495,11 @@ async fn execute_command_handler(
                 false,
                 Some(&e),
             );
+            let activity = format!(
+                "\r\n\x1b[36m[MCP] $\x1b[0m {}\r\n\x1b[31m[MCP] error: {}\x1b[0m\r\n",
+                full_command, e
+            );
+            emit_mcp_activity(&state.app_handle, &id, &activity);
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
     }

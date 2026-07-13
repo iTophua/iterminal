@@ -1497,6 +1497,25 @@ const handlePointerUp = () => {
     }
   }, [connectedConnections, markConnectionDisconnected, message])
 
+  // MCP 活动监听：外部通过 iterminal-mcp-server 执行的操作（exec/文件操作）会 emit
+  // mcp-activity 事件，这里把内容写到对应连接的活动终端 session，让用户能看到完整操作。
+  useEffect(() => {
+    const unlisten = listen<{ connectionId: string; text: string }>('mcp-activity', (event) => {
+      const { connectionId, text } = event.payload
+      const conn = connectedConnectionsRef.current.find(c => c.connectionId === connectionId)
+      if (!conn) return
+      // 写入该连接的活动 session（用户当前看到的 pane）
+      const activeSess = getActiveSessionInPane(conn.rootPane)
+      if (!activeSess) return
+      const key = `${connectionId}_${activeSess.id}`
+      const term = terminalInstances.current[key]
+      if (term && text) {
+        term.write(text)
+      }
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [])
+
   const handleCloseSession = useCallback(async (connId: string, sessId: string, paneId?: string) => {
     const conn = connectedConnections.find(c => c.connectionId === connId)
     if (!conn) return
