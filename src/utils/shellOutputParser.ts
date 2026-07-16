@@ -43,6 +43,14 @@ const ANSI_ESCAPE_REGEX = /\x1b(?:\[[0-9;]*[a-zA-Z]|\][^\x07]*\x07|\][^\x1b]*\x1
 const OSC_REGEX = /\x1b\](\d+);([^\x07\x1b]*)(?:\x07|\x1b\\)/g
 
 /**
+ * OSC 7 序列正则：shell 上报当前工作目录。
+ * 格式：\x1b]7;file://hostname/path\x07
+ * 捕获组 1 = /path 部分（不含 file://host）
+ * 用于终端 cd 后通知文件管理面板跟随切换。
+ */
+const OSC7_REGEX = /\x1b\]7;file:\/\/[^\/]*(\/[^\x07\x1b]*)?(?:\x07|\x1b\\)/
+
+/**
  * Shell Integration OSC 133 序列
  * 用于标记命令边界（如果 shell 支持）
  */
@@ -65,6 +73,20 @@ export function stripAnsi(str: string): string {
     .replace(/\x1b\[[0-9]*[JK]/g, '')
     .replace(/\x1b\[\/?[0-9]+[hl]/g, '')
     .trim()
+}
+
+/**
+ * 从原始输出中提取 OSC 7 上报的当前目录。
+ * 必须在 stripAnsi 之前调用（stripAnsi 会删掉 OSC 序列）。
+ * @returns 路径如 "/home/admin"，提取失败返回 null
+ */
+export function extractCwdFromOsc7(output: string): string | null {
+  const match = output.match(OSC7_REGEX)
+  if (!match) return null
+  // match[1] 是 /path 部分（已由正则捕获组提取）
+  const path = match[1]
+  if (!path) return '/'
+  return decodeURIComponent(path)
 }
 
 /**
@@ -277,14 +299,24 @@ export class CommandTracker {
   processOutput(
     output: string,
     terminal: Terminal,
-  ): { command: string | null; promptDetected: boolean; shellIntegration?: ReturnType<typeof detectShellIntegration> } {
+  ): { command: string | null; promptDetected: boolean; shellIntegration?: ReturnType<typeof detectShellIntegration>; cwd?: string | null } {
     const result = {
       command: null as string | null,
       promptDetected: false,
       shellIntegration: undefined as ReturnType<typeof detectShellIntegration> | undefined,
+      cwd: null as string | null,
     }
 
-    // 性能短路：绝大多数输出 chunk 是命令的普通输出文本（非提示符、无 OSC 序列）。
+    // OSC 7 CWD 上报检测（在 stripAnsi 之前，否则 payload 被删）
+    // 高频路径上大部分 chunk 不含 ESC 序列，includes 快速短路
+    if (output.includes('\x1b]7;')) {
+      const cwd = extractCwdFromOsc7(output)
+      if (cwd) {
+        result.cwd = cwd
+      }
+    }
+
+    // 性能短路：大多数输出 chunk 是命令的普通输出文本（非提示符、无 OSC 序列）。
     // 只有当 chunk 可能包含提示符时才需要跑全套正则：
     //   - 含 OSC 133 序列（shell integration 标记）
     //   - 含换行（提示符通常在行尾，多行输出末行可能是提示符）

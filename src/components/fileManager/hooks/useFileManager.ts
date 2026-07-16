@@ -37,6 +37,8 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
   }, [selectedNode])
 
   const [pathInput, setPathInput] = useState(currentPath)
+  // 跟踪面板内部导航设置的路径，用于区分"终端 cd 触发的路径变化" vs "面板自己点击的"，防回环
+  const panelNavigatedPathRef = useRef<string | null>(null)
 
   const mapFilesToNodes = useCallback(
     (files: any[]): TreeNode[] => {
@@ -113,6 +115,8 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
           }
         }
         if (isRoot) {
+          // 标记这是面板内部导航触发的路径变化，让跟随 effect 跳过（防回环）
+          panelNavigatedPathRef.current = path
           store.setCurrentPath(connectionId, path)
         }
         loadingPathsRef.current.delete(path)
@@ -120,6 +124,7 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
         loadingPathsRef.current.delete(path)
         if (path !== '/' && isRoot) {
           message.warning(`目录 "${path}" 不存在，已切换到根目录`)
+          panelNavigatedPathRef.current = '/'
           store.setCurrentPath(connectionId, '/')
           loadDirectory('/', true)
           return
@@ -155,9 +160,19 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
   }, [visible, connectionId])
 
   useEffect(() => {
-    if (visible && connectionId) {
-      setPathInput(store.currentPaths[connectionId] || '/')
+    if (!visible || !connectionId) return
+    const newPath = store.currentPaths[connectionId] || '/'
+    // 如果是面板内部导航设置的路径（panelNavigatedPathRef），跳过跟随加载，避免回环
+    if (panelNavigatedPathRef.current === newPath) {
+      panelNavigatedPathRef.current = null
+      return
     }
+    // 路径没变也不重复加载
+    if (newPath === currentPathRef.current) return
+    // 终端 cd 触发的路径变化 → 面板跟随切换目录
+    setPathInput(newPath)
+    loadDirectoryRef.current(newPath, true)
+    setSelectedKeys([newPath])
   }, [visible, connectionId, store.currentPaths])
 
   const refreshCurrent = useCallback(async () => {
@@ -203,6 +218,7 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
 
   const goHome = useCallback(() => {
     const homePath = '/home/' + (connection?.username || '')
+    panelNavigatedPathRef.current = homePath
     store.setCurrentPath(connectionId, homePath)
     loadDirectory(homePath, true)
   }, [connection?.username, connectionId, loadDirectory, store])

@@ -98,6 +98,7 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const setConnectionReconnecting = useTerminalStore(state => state.setConnectionReconnecting)
   const setConnectionInitializing = useTerminalStore(state => state.setConnectionInitializing)
   const addConnection = useTerminalStore(state => state.addConnection)
+  const setCurrentPath = useTerminalStore(state => state.setCurrentPath)
   const updateSessionShellId = useTerminalStore(state => state.updateSessionShellId)
   const splitPane = useTerminalStore(state => state.splitPane)
   const splitPaneWithPosition = useTerminalStore(state => state.splitPaneWithPosition)
@@ -1226,6 +1227,11 @@ const handlePointerUp = () => {
                   const [connId] = key.split('_')
                   addCommand(connId, result.command)
                 }
+                // OSC 7 上报了终端当前目录 → 更新 store，文件管理面板会跟随
+                if (result.cwd) {
+                  const [connId] = key.split('_')
+                  setCurrentPath(connId, result.cwd)
+                }
               }
             }
           })
@@ -1376,6 +1382,10 @@ const handlePointerUp = () => {
               if (result.command) {
                 const [connId] = key.split('_')
                 addCommand(connId, result.command)
+              }
+              if (result.cwd) {
+                const [connId] = key.split('_')
+                setCurrentPath(connId, result.cwd)
               }
             }
           }

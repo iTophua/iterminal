@@ -396,6 +396,19 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
         .await
         .map_err(|e| e.to_string())?;
 
+    // 注入 OSC 7 CWD 上报钩子：每次提示符出现前，shell 发送当前目录给终端。
+    // 前端解析 OSC 7 (file://host/path) 后更新文件管理面板路径，实现终端 cd 后面板跟随。
+    // bash 用 PROMPT_COMMAND，zsh 用 precmd，sh/fish 兜底不注入（不影响功能）。
+    let cwd_hook = r#"
+__iterminal_cwd_report() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }
+if [ -n "$BASH_VERSION" ]; then
+  PROMPT_COMMAND="__iterminal_cwd_report;$PROMPT_COMMAND"
+elif [ -n "$ZSH_VERSION" ]; then
+  precmd_functions+=(__iterminal_cwd_report)
+fi
+"#;
+    let _ = channel.data(cwd_hook.as_bytes()).await;
+
     let (cancel_tx, mut cancel_rx) = oneshot::channel();
     let (resize_tx, mut resize_rx) = mpsc::channel::<(u32, u32)>(10);
     let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(100);
