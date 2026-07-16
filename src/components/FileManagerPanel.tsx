@@ -35,6 +35,8 @@ import { useFileOperations } from './fileManager/hooks/useFileOperations'
 import { useTransfer } from './fileManager/hooks/useTransfer'
 import { useDragDrop } from './fileManager/hooks/useDragDrop'
 import { formatSize } from './fileManager/utils'
+import CodeEditor from './CodeEditor'
+import { App } from 'antd'
 
 interface FileManagerPanelProps {
   connectionId: string
@@ -44,6 +46,7 @@ interface FileManagerPanelProps {
 
 export default function FileManagerPanel({ connectionId, visible, onClose }: FileManagerPanelProps) {
   const store = useTerminalStore()
+  const { modal } = App.useApp()
 
   const [contextMenuVisible, setContextMenuVisible] = useState(false)
   const [contextMenuPos, setContextMenuPos] = useState({ x: 0, y: 0 })
@@ -712,33 +715,73 @@ export default function FileManagerPanel({ connectionId, visible, onClose }: Fil
 
       <Modal
         open={fileOps.editVisible}
-        title={`编辑: ${fileOps.editFile?.name || ''}`}
-        onCancel={() => fileOps.setEditVisible(false)}
+        title={
+          <span>
+            编辑: {fileOps.editFile?.name || ''}
+            {fileOps.editContent !== fileOps.editOriginalContent && (
+              <span style={{ color: 'var(--color-warning)', marginLeft: 6 }}>●</span>
+            )}
+          </span>
+        }
+        onCancel={() => {
+          // 未保存确认
+          if (fileOps.editContent !== fileOps.editOriginalContent) {
+            modal.confirm({
+              title: '放弃修改？',
+              content: '当前内容已修改但未保存，确定关闭？',
+              okText: '放弃',
+              okButtonProps: { danger: true },
+              cancelText: '继续编辑',
+              onOk: () => fileOps.setEditVisible(false),
+            })
+          } else {
+            fileOps.setEditVisible(false)
+          }
+        }}
         onOk={fileOps.handleSaveEdit}
         okText="保存"
-        cancelText="取消"
+        okButtonProps={{ disabled: fileOps.editTruncated }}
+        cancelText="关闭"
         confirmLoading={fileOps.editSaving}
-        width={900}
-        styles={{ body: { maxHeight: '70vh', overflow: 'auto' } }}
+        width={960}
+        styles={{ body: { padding: 0 } }}
       >
         {fileOps.editLoading ? (
           <div style={{ textAlign: 'center', padding: 40 }}>
             <Spin />
           </div>
         ) : (
-          <Input.TextArea
-            value={fileOps.editContent}
-            onChange={(e) => fileOps.setEditContent(e.target.value)}
-            rows={20}
-            allowClear
-            style={{
-              fontFamily: 'monospace',
-              fontSize: 12,
-              background: 'var(--color-bg-container)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-text)',
-            }}
-          />
+          <div style={{ display: 'flex', flexDirection: 'column', height: '70vh' }}>
+            {/* 工具栏 */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '4px 12px',
+              borderBottom: '1px solid var(--color-border)',
+              fontSize: 11,
+              color: 'var(--color-text-tertiary)',
+              flexShrink: 0,
+            }}>
+              <span>
+                {fileOps.editTruncated && (
+                  <span style={{ color: 'var(--color-error)' }}>⚠ 已截断（不可保存） · </span>
+                )}
+                {fileOps.editContent.split('\n').length} 行 · {fileOps.editContent.length} 字符
+              </span>
+              <span>{fileOps.editFile?.path}</span>
+            </div>
+            {/* 编辑器 */}
+            <div style={{ flex: 1, overflow: 'hidden' }}>
+              <CodeEditor
+                value={fileOps.editContent}
+                onChange={fileOps.setEditContent}
+                language={fileOps.editFile?.name}
+                onSave={fileOps.handleSaveEdit}
+                style={{ height: '100%', border: 'none', borderRadius: 0 }}
+              />
+            </div>
+          </div>
         )}
       </Modal>
 

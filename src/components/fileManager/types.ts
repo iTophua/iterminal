@@ -84,9 +84,11 @@ export interface FileOperationState {
   previewSize: number
   editVisible: boolean
   editContent: string
+  editOriginalContent: string
   editFile: { name: string; path: string } | null
   editLoading: boolean
   editSaving: boolean
+  editTruncated: boolean
   searchVisible: boolean
   searchQuery: string
   searchResults: TreeNode[]

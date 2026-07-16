@@ -53,9 +53,11 @@ export function useFileOperations({
 
   const [editVisible, setEditVisible] = useState(false)
   const [editContent, setEditContent] = useState('')
+  const [editOriginalContent, setEditOriginalContent] = useState('')
   const [editFile, setEditFile] = useState<{ name: string; path: string } | null>(null)
   const [editLoading, setEditLoading] = useState(false)
   const [editSaving, setEditSaving] = useState(false)
+  const [editTruncated, setEditTruncated] = useState(false)
 
   const [searchVisible, setSearchVisible] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -299,6 +301,21 @@ export function useFileOperations({
 
   const handleEdit = useCallback(async () => {
     if (!selectedNode || selectedNode.isDirectory) return
+
+    // 二进制文件扩展名拦截（避免把图片/压缩包当文本加载）
+    const binaryExts = [
+      '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.bmp', '.tiff',
+      '.pdf', '.zip', '.tar', '.gz', '.bz2', '.xz', '.rar', '.7z',
+      '.exe', '.dll', '.so', '.dylib', '.bin', '.dat', '.db', '.sqlite',
+      '.mp3', '.mp4', '.avi', '.mov', '.mkv', '.wav', '.flv',
+      '.class', '.jar', '.war', '.pyc', '.o', '.a',
+    ]
+    const lowerName = selectedNode.title.toLowerCase()
+    if (binaryExts.some(ext => lowerName.endsWith(ext))) {
+      message.warning('二进制文件不支持编辑')
+      return
+    }
+
     setEditLoading(true)
     setEditFile({ name: selectedNode.title, path: selectedNode.path })
     try {
@@ -310,10 +327,17 @@ export function useFileOperations({
           maxSize: 10 * 1024 * 1024,
         }
       )
+      // 后端检测到二进制内容
+      if (result.encoding === 'binary') {
+        message.warning('检测到二进制内容，不支持编辑')
+        return
+      }
       if (result.truncated) {
-        message.warning('文件较大，仅加载前 10MB 内容')
+        message.warning('文件较大，仅加载前 10MB（已截断，不可保存）')
       }
       setEditContent(result.content)
+      setEditOriginalContent(result.content)
+      setEditTruncated(result.truncated)
       setEditVisible(true)
     } catch (err) {
       message.error(`读取文件失败: ${err}`)
@@ -324,6 +348,11 @@ export function useFileOperations({
 
   const handleSaveEdit = useCallback(async () => {
     if (!editFile) return
+    // 截断文件禁止保存（防止把截断后的部分覆盖写回，导致后续内容丢失）
+    if (editTruncated) {
+      message.error('文件已截断，保存会导致 10MB 之后的内容丢失')
+      return
+    }
     setEditSaving(true)
     try {
       await invoke('write_file_content', {
@@ -332,13 +361,17 @@ export function useFileOperations({
         content: editContent,
       })
       message.success('保存成功')
+      // 更新原始内容，清除 dirty 状态
+      setEditOriginalContent(editContent)
       setEditVisible(false)
+      // 刷新文件列表（更新大小/修改时间）
+      refreshCurrent()
     } catch (err) {
       message.error(`保存失败: ${err}`)
     } finally {
       setEditSaving(false)
     }
-  }, [connectionId, editContent, editFile, message])
+  }, [connectionId, editContent, editFile, editTruncated, message, refreshCurrent])
 
   const handleSearch = useCallback(async () => {
     if (!searchQuery.trim()) return
@@ -450,9 +483,11 @@ export function useFileOperations({
     setEditVisible,
     editContent,
     setEditContent,
+    editOriginalContent,
     editFile,
     editLoading,
     editSaving,
+    editTruncated,
     searchVisible,
     setSearchVisible,
     searchQuery,
