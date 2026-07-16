@@ -93,6 +93,9 @@ export default function AiChatPanel({
   const [confirmState, setConfirmState] = useState<{ confirmId: string; command: string } | null>(null)
 
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  // 用户是否停留在底部附近（true=自动跟随新消息，false=用户手动上滚了）
+  const stickToBottomRef = useRef(true)
   const inputRef = useRef<any>(null)
 
   // ---- 加载对话列表 ----
@@ -135,6 +138,8 @@ export default function AiChatPanel({
     }
     // 正在对此对话流式生成 → 跳过加载（保留乐观消息）
     if (streamingConvRef.current === activeId) return
+    // 切换对话时恢复自动跟随到底部
+    stickToBottomRef.current = true
     setAgentSteps({})
     let cancelled = false
     setLoadingMsgs(true)
@@ -145,10 +150,21 @@ export default function AiChatPanel({
     return () => { cancelled = true }
   }, [activeId, message])
 
-  // ---- 新消息时自动滚动到底部 ----
+  // ---- 新消息时自动滚动到底部（仅当用户停留在底部附近时）----
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (stickToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages])
+
+  // ---- 检测用户手动滚动：上滚时停止自动跟随，滚回底部时恢复 ----
+  const handleMessagesScroll = useCallback(() => {
+    const el = messagesContainerRef.current
+    if (!el) return
+    // 距底部 < 60px 视为"在底部"，允许自动跟随
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    stickToBottomRef.current = distFromBottom < 60
+  }, [])
 
   // ---- 外部预填输入框（终端右键「发送到 AI 对话」）----
   useEffect(() => {
@@ -285,6 +301,8 @@ export default function AiChatPanel({
     }
     setMessages(prev => [...prev, optimisticUser, placeholder])
     setInput('')
+    // 用户主动发送消息，强制跟随到底部看回复
+    stickToBottomRef.current = true
     setSending(true)
     setStreamingId(placeholderId)
     streamingConvRef.current = convId
@@ -460,7 +478,12 @@ export default function AiChatPanel({
       </div>
 
       {/* 消息区 */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px 10px' }} className="ai-chat-messages">
+      <div
+        ref={messagesContainerRef}
+        onScroll={handleMessagesScroll}
+        style={{ flex: 1, overflow: 'auto', padding: '12px 10px' }}
+        className="ai-chat-messages"
+      >
         {loadingMsgs ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
         ) : messages.length === 0 ? (
