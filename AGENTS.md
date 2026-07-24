@@ -472,6 +472,11 @@ useAppInitialization 执行初始化步骤
 
 ## 约定
 
+**开发流程（Git）:**
+- 直接在 `main` 分支上开发和提交，**不要切特性分支**。这是单人维护项目，分支合并流程是多余的步骤。
+- 提交信息用中文，格式：`type(范围): 描述`（如 `fix(terminal): ...`、`feat(文件管理): ...`）。
+- 仅在用户明确要求时才执行 commit/push。
+
 **前端 (React/TypeScript):**
 - 组件使用函数式组件 + hooks
 - 状态管理使用 Zustand
