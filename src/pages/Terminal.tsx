@@ -59,6 +59,7 @@ import { getRecentConnections, recordConnectionHistory } from '../services/datab
 import { createCommandTracker, CommandTracker } from '../utils/shellOutputParser'
 import { matchShortcut } from '../utils/shortcutUtils'
 import { applyXtermImePatch } from '../utils/xtermImePatch'
+import { getXtermCellMetrics, isAlternateBuffer } from '../utils/xtermMetrics'
 import type { Connection } from '../types/shared'
 
 interface TerminalProps {
@@ -228,6 +229,12 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
 
       if (term && container && term.element) {
         try {
+          // 备用屏（vi/nano/less/tmux/man/top 等全屏程序）下不显示命令提示
+          if (isAlternateBuffer(term)) {
+            updateGhostTextOverlay(key, 0, 0, '')
+            return
+          }
+
           const buffer = term.buffer.active
           const cursorY = buffer.cursorY
 
@@ -253,18 +260,29 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
             offsetX = cached.offsetX
             screenOffsetTop = cached.screenOffsetTop
           } else {
+            // offsetX / screenOffsetTop 需要容器坐标系换算；screenRect 同时复用给 fallback 的尺寸测量，
+            // 精确值成功时只产生这一次 getBoundingClientRect 调用。
             const screenRect = xtermScreen.getBoundingClientRect()
             const containerRect = container.getBoundingClientRect()
-
-            const firstRow = xtermScreen.querySelector('.xterm-row')
-            if (firstRow) {
-              actualCellHeight = (firstRow as HTMLElement).getBoundingClientRect().height
-            } else {
-              actualCellHeight = screenRect.height / (term.rows || 24)
-            }
-            actualCellWidth = screenRect.width / (term.cols || 80)
             offsetX = screenRect.left - containerRect.left
             screenOffsetTop = screenRect.top - containerRect.top
+
+            // 优先用 xterm 内部 _renderService.dimensions 的 CSS 像素精确值（与 FitAddon 同源），
+            // 替代旧的 screenRect.width / cols 近似——后者会把滚动条/末端留白算进宽度，
+            // 导致 cellWidth 偏大、ghost 浮层随输入长度向右漂移（用户反馈"右偏半个字符"）。
+            const precise = getXtermCellMetrics(term, xtermScreen)
+            if (precise) {
+              actualCellWidth = precise.cellWidth
+              actualCellHeight = precise.cellHeight
+            } else {
+              const firstRow = xtermScreen.querySelector('.xterm-row')
+              if (firstRow) {
+                actualCellHeight = (firstRow as HTMLElement).getBoundingClientRect().height
+              } else {
+                actualCellHeight = screenRect.height / (term.rows || 24)
+              }
+              actualCellWidth = screenRect.width / (term.cols || 80)
+            }
 
             cellMetricsCacheRef.current[key] = {
               cellWidth: actualCellWidth,
@@ -279,7 +297,7 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
           ghostTextCellHeightRef.current[key] = actualCellHeight
 
           const startX = ghostTextStartXRef.current[key] ?? buffer.cursorX
-          
+
           const ghostX = startX + input.length
 
           updateGhostTextOverlay(
@@ -1071,6 +1089,22 @@ const handlePointerUp = () => {
             const [connId] = key.split('_')
             const conn = connectedConnectionsRef.current.find(c => c.connectionId === connId)
 
+            // 输入广播：把输入同步发送到所有其它活跃终端。广播仅在 broadcast 开启时生效，
+            // 且只复用 enqueueWrite（纯字符写入），ghost text/命令追踪始终只作用于源终端。
+            // 只广播到「存在于 connectedConnections 且未断开/重连」的连接，
+            // 避免广播到已关闭但 shellIdsRef 残留 key 的死会话。
+            const broadcastData = (payload: string) => {
+              if (!broadcastEnabledRef.current) return
+              for (const otherKey of Object.keys(shellIdsRef.current)) {
+                if (otherKey === key) continue
+                const [otherConnId] = otherKey.split('_')
+                const otherConn = connectedConnectionsRef.current.find(c => c.connectionId === otherConnId)
+                if (!otherConn || otherConn.disconnected || otherConn.reconnecting) continue
+                if (!shellIdsRef.current[otherKey]) continue
+                enqueueWrite(otherKey, payload)
+              }
+            }
+
             if (conn?.disconnected && !conn.reconnecting) {
               if (data === '\r' || data === '\n') {
                 handleReconnect(connId)
@@ -1079,6 +1113,20 @@ const handlePointerUp = () => {
             }
 
             if (conn?.reconnecting) {
+              return
+            }
+
+            // 备用屏（vi/nano/less/tmux/man/top 等全屏程序）下不做命令提示：
+            // 这些程序自己管理屏幕和按键，把它们的按键累积成 shell 输入会导致
+            // 退出后误触发提示或在编辑器/分页器里闪现幽灵文本。
+            if (isAlternateBuffer(terminal)) {
+              // 仍在备用屏时清掉残留的 ghost 状态，避免回到普通屏后错位显示
+              if (ghostTextRef.current[key]?.input || ghostTextRef.current[key]?.suggestion) {
+                clearGhostText(key)
+                currentInputRef.current[key] = ''
+              }
+              enqueueWrite(key, data)
+              broadcastData(data)
               return
             }
 
@@ -1112,6 +1160,13 @@ const handlePointerUp = () => {
                 clearGhostText(key)
                 return
               }
+            }
+            // 上下方向键：shell 用它切换历史命令，会整行替换当前输入。
+            // 此时 currentInputRef 已失效（shell 端替换了输入行，但不经过 onData 文本追踪），
+            // 必须清掉 ghost 建议并重置输入追踪，否则残留的建议会错位显示。
+            else if (data === '\x1b[A' || data === '\x1b[B') {
+              clearGhostText(key)
+              currentInputRef.current[key] = ''
             }
             else if (data === '\r' || data === '\n') {
               clearGhostText(key)
@@ -1153,22 +1208,7 @@ const handlePointerUp = () => {
             }
             
             enqueueWrite(key, data)
-
-            // 输入广播：开启后把同样输入同步发送到所有其它活跃终端。
-            // 只复用 enqueueWrite（纯字符写入），ghost text/命令追踪仅作用于源终端。
-            // 只广播到「存在于 connectedConnections 且未断开/重连」的连接，
-            // 避免广播到已关闭但 shellIdsRef 残留 key 的死会话。
-            if (broadcastEnabledRef.current) {
-              for (const otherKey of Object.keys(shellIdsRef.current)) {
-                if (otherKey === key) continue
-                const [otherConnId] = otherKey.split('_')
-                const otherConn = connectedConnectionsRef.current.find(c => c.connectionId === otherConnId)
-                // 必须存在且状态正常才广播
-                if (!otherConn || otherConn.disconnected || otherConn.reconnecting) continue
-                if (!shellIdsRef.current[otherKey]) continue
-                enqueueWrite(otherKey, data)
-              }
-            }
+            broadcastData(data)
           })
 
           terminal.onResize(({ cols, rows }) => {
@@ -1199,6 +1239,15 @@ const handlePointerUp = () => {
                 matchAndUpdateGhostText(key, connId, ghost.input, ghost.currentIndex)
               })
             }
+          })
+
+          // 缓冲区切换（normal <-> alternate）：进入 vi/nano/less/tmux 等全屏程序时
+          // 主动清掉残留的 ghost 状态，避免提示浮层在编辑器/分页器里错位显示；
+          // 回到 normal 时也重置输入起点，因为光标位置已变。
+          // 返回的 disposable 由 terminal.dispose() 统一释放，无需手动管理。
+          terminal.buffer.onBufferChange(() => {
+            clearGhostText(key)
+            currentInputRef.current[key] = ''
           })
 
           terminalInstances.current[key] = terminal
@@ -1520,6 +1569,14 @@ const handlePointerUp = () => {
       const key = `${connectionId}_${activeSess.id}`
       const term = terminalInstances.current[key]
       if (term && text) {
+        // 抑制命令追踪：MCP 写入的文本（如 "[MCP] $ cmd"）会混入终端缓冲区，
+        // 紧随其后的真实 shell 提示符可能触发命令提取把 MCP 命令误存入历史。
+        // 这里设置抑制标记，跳过接下来的命令提取周期。
+        // （extractLastCommand 也已排除含 [MCP] 的行，这是双保险。）
+        const tracker = commandTrackersRef.current[key]
+        if (tracker) {
+          tracker.suppressNext()
+        }
         term.write(text)
       }
     })
