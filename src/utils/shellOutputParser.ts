@@ -33,6 +33,10 @@ const EXCLUDE_PATTERNS: RegExp[] = [
   /\|\|/,
   /;\s*\w/,
   /^\s*$/,
+  // MCP 通过 mcp-activity 写入终端的活动标记行（如 "[MCP] $ command"、"[MCP] exit code: 0"）。
+  // 这些行格式上会被提示符正则误匹配（[MCP] 满足 \[[\w]+\] 且带 $），导致 CommandTracker
+  // 把 MCP 执行的命令当成用户输入存入历史，污染命令建议。这里在提示符检测源头排除。
+  /\[MCP\]/,
 ]
 
 const ANSI_ESCAPE_REGEX = /\x1b(?:\[[0-9;]*[a-zA-Z]|\][^\x07]*\x07|\][^\x1b]*\x1b\\)/g
@@ -163,10 +167,15 @@ export function extractLastCommand(
   for (let i = endLine; i >= startLine; i--) {
     const line = buffer.getLine(i)
     if (!line) continue
-    
+
     const lineText = getLineText(line)
     const stripped = stripAnsi(lineText)
-    
+
+    // 跳过 MCP 活动标记行（"[MCP] $ ..." / "[MCP] exit code: ..."）：
+    // 这些是 mcp-activity 写入终端的回显，不是 shell 真实提示符，
+    // 继续向上扫找到真正的用户提示符。
+    if (stripped.includes('[MCP]')) continue
+
     // 使用更严格的提示符匹配：必须是标准格式
     // 格式：[user@host path]$ 或 user@host:path$ 或 ❯
     const strictPromptMatch = stripped.match(/^(\[[\w\-@.\s~]+\]|[\w\-@.\[\]]+@[\w\-.]+:[~\/\w\-.,]*|❯)\s*[\$#]?\s*/)
@@ -265,6 +274,13 @@ export class CommandTracker {
   private lastPromptLine: number = -1
   private lastExtractedCommand: string = ''
   private pendingCommand: string = ''
+  /**
+   * 外部活动（MCP exec 等）注入终端的文本标记。
+   * 设置后，紧接着的若干次 processOutput 中的命令提取会被跳过，
+   * 防止注入文本干扰真实命令边界判定（双保险，extractLastCommand 已排除 MCP 行）。
+   * 用计数而非布尔：一次 MCP 活动可能跨越多个 shell-output chunk（提示符可能分多次到达）。
+   */
+  private suppressCount: number = 0
   
   recordInput(data: string): void {
     if (data.startsWith('\x1b')) return
@@ -334,38 +350,48 @@ export class CommandTracker {
     result.shellIntegration = integration
     
     if (integration.hasIntegration) {
-      
+
       if (integration.commandFinished) {
-        const command = extractLastCommand(terminal, this.lastPromptLine)
-        if (command) {
-          const cleanCommand = command.replace(/\^([CDZ])/g, '').trim()
-          if (cleanCommand && !this.isBlacklisted(cleanCommand) && cleanCommand !== this.lastExtractedCommand) {
-            result.command = cleanCommand
-            this.lastExtractedCommand = cleanCommand
+        // MCP 等外部活动注入终端后跳过本次提取（双保险，extractLastCommand 已排除 MCP 行）
+        if (this.suppressCount > 0) {
+          this.suppressCount--
+        } else {
+          const command = extractLastCommand(terminal, this.lastPromptLine)
+          if (command) {
+            const cleanCommand = command.replace(/\^([CDZ])/g, '').trim()
+            if (cleanCommand && !this.isBlacklisted(cleanCommand) && cleanCommand !== this.lastExtractedCommand) {
+              result.command = cleanCommand
+              this.lastExtractedCommand = cleanCommand
+            }
           }
         }
       }
-      
+
       if (integration.promptStart) {
         this.lastPromptLine = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
         result.promptDetected = true
       }
-      
+
       return result
     }
-    
+
     const strippedOutput = stripAnsi(output)
-    
+
     if (isPromptLine(strippedOutput)) {
       const currentPromptLine = terminal.buffer.active.baseY + terminal.buffer.active.cursorY
-      
+
       if (this.lastPromptLine >= 0 && currentPromptLine > this.lastPromptLine) {
-        const command = extractLastCommand(terminal, this.lastPromptLine)
-        if (command) {
-          const cleanCommand = command.replace(/\^([CDZ])/g, '').trim()
-          if (cleanCommand && !this.isBlacklisted(cleanCommand) && cleanCommand !== this.lastExtractedCommand) {
-            result.command = cleanCommand
-            this.lastExtractedCommand = cleanCommand
+        // MCP 等外部活动注入终端后跳过本次提取（双保险，extractLastCommand 已排除 MCP 行）
+        if (this.suppressCount > 0) {
+          this.suppressCount--
+        } else {
+          const command = extractLastCommand(terminal, this.lastPromptLine)
+          if (command) {
+            const cleanCommand = command.replace(/\^([CDZ])/g, '').trim()
+            if (cleanCommand && !this.isBlacklisted(cleanCommand) && cleanCommand !== this.lastExtractedCommand) {
+              result.command = cleanCommand
+              this.lastExtractedCommand = cleanCommand
+            }
           }
         }
       }
@@ -403,6 +429,7 @@ export class CommandTracker {
     this.lastPromptLine = -1
     this.lastExtractedCommand = ''
     this.pendingCommand = ''
+    this.suppressCount = 0
   }
   
   getPendingCommand(): string {
@@ -411,6 +438,15 @@ export class CommandTracker {
   
   clearPendingCommand(): void {
     this.pendingCommand = ''
+  }
+
+  /**
+   * 标记接下来的 n 次命令提取为抑制（跳过）。
+   * 用于外部活动（MCP exec 等）向终端注入文本后，防止紧随其后的提示符
+   * 触发命令提取把注入的命令误存入历史。默认抑制 2 次（覆盖提示符 + 完成两个阶段）。
+   */
+  suppressNext(n: number = 2): void {
+    this.suppressCount = Math.max(this.suppressCount, n)
   }
 }
 
