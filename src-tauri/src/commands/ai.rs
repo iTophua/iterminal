@@ -1548,10 +1548,16 @@ async fn call_chat_summary(
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|e| format!("响应不是合法 JSON: {}", e))?;
 
-    Ok(json["choices"][0]["message"]["content"]
+    let summary = json["choices"][0]["message"]["content"]
         .as_str()
         .unwrap_or("")
-        .to_string())
+        .to_string();
+
+    if summary.trim().is_empty() {
+        return Err("AI 未返回有效总结内容".into());
+    }
+
+    Ok(summary)
 }
 
 /// 生成简单唯一 ID（时间戳纳秒 + 随机数后缀，避免同毫秒碰撞）

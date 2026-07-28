@@ -875,10 +875,13 @@ function isSingleCommandLine(line: string): boolean {
   // 常见命令前缀
   const CMD_PREFIXES = /^(sudo\s+)?(ls|cd|cat|grep|find|ps|docker|kubectl|systemctl|journalctl|ssh|scp|rsync|tar|zip|unzip|curl|wget|ping|netstat|ss|ifconfig|ip|df|du|free|top|htop|uname|whoami|who|last|head|tail|awk|sed|sort|uniq|wc|chmod|chown|mkdir|rmdir|rm|cp|mv|touch|echo|printf|export|source|alias|history|kill|killall|crontab|service|apt|apt-get|yum|dnf|brew|npm|npx|yarn|pnpm|git|mvn|gradle|cargo|go|python|python3|pip|java|javac|node|ruby|gem|make|cmake)\b/
   if (CMD_PREFIXES.test(trimmed)) return true
-  // 含管道 / 重定向 / 逻辑连接
-  if (/[|&;>]/.test(trimmed)) return true
-  // 以 $ 或 # 提示符开头
-  if (/^[#\$]\s/.test(trimmed)) return true
+  // 管道 / 重定向 / 逻辑连接：必须像命令结构（管道符两边有内容、命令内重定向），
+  // 而非普通文本里出现的孤立符号（如 "a > b"、英文分号、& 字符）。
+  if (/\b\w+\s*\|/.test(trimmed)) return true       // xxx | yyy 管道
+  if (/\b\w+\s*>{1,2}\s*\S/.test(trimmed)) return true // 命令重定向到文件
+  if (/&&|\|\|/.test(trimmed)) return true           // 逻辑连接 && ||
+  // 以 $ 或 # 提示符开头（shell 提示符，非注释）
+  if (/^\$\s/.test(trimmed)) return true
   return false
 }
 
