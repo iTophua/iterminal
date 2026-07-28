@@ -1038,7 +1038,9 @@ fn build_messages_with_context_limit(
 // ============ AI Agent（智能体）============
 
 /// Agent 最大工具调用轮次（防死循环）
-const MAX_AGENT_ROUNDS: usize = 10;
+/// 诊断类任务（如 OOM 排查、链路分析）常需连续执行 8-12 个命令收集信息，
+/// 设为 20 给足空间，仍能防止真正的死循环。
+const MAX_AGENT_ROUNDS: usize = 20;
 
 /// 工具执行输出截断字符数（防 token 爆炸）
 const TOOL_OUTPUT_MAX_CHARS: usize = 4000;
@@ -1475,7 +1477,81 @@ async fn run_agent_loop(
         return Err("AI 未返回有效响应".into());
     }
 
-    Err(format!("Agent 超过最大执行轮数（{}）", MAX_AGENT_ROUNDS))
+    // 到达轮次上限：不再直接报错，而是发一次不带 tools 的请求让 AI 基于已收集的信息做总结。
+    // 这样即使工具调用较多，用户也能拿到有价值的诊断结论，而不是一个干巴巴的错误。
+    // 在历史末尾追加一条提示，引导 AI 输出总结。
+    current_messages.push(serde_json::json!({
+        "role": "user",
+        "content": "已达到工具调用轮次上限，请基于目前已收集的信息给出诊断结论和建议，不要再调用工具。"
+    }));
+
+    match call_chat_summary(base_url, api_key, model, &current_messages).await {
+        Ok(summary) => {
+            let _ = app.emit(
+                event_name,
+                ChatChunk {
+                    delta: Some(summary.clone()),
+                    done: false,
+                    error: None,
+                    tool: None,
+                },
+            );
+            Ok(summary)
+        }
+        Err(e) => Err(format!(
+            "Agent 已执行 {} 轮工具调用，尝试生成总结时失败：{}",
+            MAX_AGENT_ROUNDS, e
+        )),
+    }
+}
+
+/// 不带 tools 的普通聊天请求，用于 agent 达到轮次上限后的总结。
+async fn call_chat_summary(
+    base_url: &str,
+    api_key: Option<&str>,
+    model: &str,
+    messages: &[serde_json::Value],
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| format!("HTTP 客户端创建失败: {}", e))?;
+
+    let url = format!("{}/chat/completions", base_url);
+    let mut req = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "stream": false
+        }));
+
+    if let Some(key) = api_key {
+        req = req.bearer_auth(key);
+    }
+
+    let resp = req.send().await.map_err(|e| format!("请求失败: {}", e))?;
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+
+    if !status.is_success() {
+        let snippet = if body.len() > 500 {
+            format!("{}...", &body[..500])
+        } else {
+            body
+        };
+        return Err(format!("LLM 服务返回 {} : {}", status.as_u16(), snippet));
+    }
+
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| format!("响应不是合法 JSON: {}", e))?;
+
+    Ok(json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_string())
 }
 
 /// 生成简单唯一 ID（时间戳纳秒 + 随机数后缀，避免同毫秒碰撞）

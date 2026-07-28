@@ -153,9 +153,17 @@ export default function AiChatPanel({
   // ---- 新消息时自动滚动到底部（仅当用户停留在底部附近时）----
   useEffect(() => {
     if (stickToBottomRef.current) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+      // 流式输出时用瞬时滚动：smooth 在快速连续 delta 下动画会互相打断/滞后，
+      // 表现为"内容一直在出但没滚到底"。非流式（首条/切换会话）保持 smooth 更顺滑。
+      const isStreaming = streamingId !== null
+      requestAnimationFrame(() => {
+        messagesEndRef.current?.scrollIntoView({
+          behavior: isStreaming ? 'auto' : 'smooth',
+          block: 'end',
+        })
+      })
     }
-  }, [messages])
+  }, [messages, streamingId])
 
   // ---- 检测用户手动滚动：上滚时停止自动跟随，滚回底部时恢复 ----
   const handleMessagesScroll = useCallback(() => {
@@ -830,6 +838,50 @@ function extractText(node: React.ReactNode): string {
   return ''
 }
 
+/**
+ * 判断代码块是否像可在终端执行的命令。
+ * 只有 shell 类语言标注（bash/sh/zsh...）或无标注但内容是单行命令时才返回 true。
+ * 排除：纯文本流程图（含 ↓→ 等箭头）、多行说明、配置文件、日志等。
+ */
+function isCommandLike(lang: string, text: string): boolean {
+  // 明确标注的 shell 类语言 → 命令
+  const SHELL_LANGS = ['bash', 'sh', 'shell', 'zsh', 'fish', 'ksh', 'csh']
+  if (SHELL_LANGS.includes(lang.toLowerCase())) return true
+
+  // 有其它语言标注（如 text, json, python, rust）→ 不是命令
+  if (lang) return false
+
+  // 无语言标注：用启发式判断
+  const trimmed = text.trim()
+  if (!trimmed) return false
+
+  // 含箭头/流程图符号 → 是说明性文本，不是命令
+  if (/[↓→←↑]/.test(trimmed)) return false
+
+  // 多行内容：只有每行都像命令（以常见命令开头或含管道/重定向/&&）才视为命令
+  const lines = trimmed.split('\n').filter(l => l.trim())
+  if (lines.length > 1) {
+    return lines.every(line => isSingleCommandLine(line))
+  }
+
+  // 单行：判断是否像命令
+  return isSingleCommandLine(trimmed)
+}
+
+/** 判断单行文本是否像 shell 命令 */
+function isSingleCommandLine(line: string): boolean {
+  const trimmed = line.trim()
+  if (!trimmed) return false
+  // 常见命令前缀
+  const CMD_PREFIXES = /^(sudo\s+)?(ls|cd|cat|grep|find|ps|docker|kubectl|systemctl|journalctl|ssh|scp|rsync|tar|zip|unzip|curl|wget|ping|netstat|ss|ifconfig|ip|df|du|free|top|htop|uname|whoami|who|last|head|tail|awk|sed|sort|uniq|wc|chmod|chown|mkdir|rmdir|rm|cp|mv|touch|echo|printf|export|source|alias|history|kill|killall|crontab|service|apt|apt-get|yum|dnf|brew|npm|npx|yarn|pnpm|git|mvn|gradle|cargo|go|python|python3|pip|java|javac|node|ruby|gem|make|cmake)\b/
+  if (CMD_PREFIXES.test(trimmed)) return true
+  // 含管道 / 重定向 / 逻辑连接
+  if (/[|&;>]/.test(trimmed)) return true
+  // 以 $ 或 # 提示符开头
+  if (/^[#\$]\s/.test(trimmed)) return true
+  return false
+}
+
 function CodeBlock({
   className,
   children,
@@ -865,6 +917,9 @@ function CodeBlock({
     )
   }
 
+  // 只有命令类代码块才显示插入终端/运行按钮（普通文本、配置、流程图等只保留复制）
+  const runnable = isCommandLike(lang, text)
+
   return (
     <div style={{ margin: '6px 0' }}>
       <div style={{
@@ -899,7 +954,7 @@ function CodeBlock({
         >
           {children}
         </pre>
-        {/* 代码块操作 */}
+        {/* 代码块操作：复制始终显示；插入终端/运行仅对命令类代码块显示 */}
         <div style={{
           display: 'flex',
           gap: 4,
@@ -912,13 +967,13 @@ function CodeBlock({
             onClick={() => onCopy(text)}
             style={{ fontSize: 11 }}
           >复制</Button>
-          {onInsert && (
+          {runnable && onInsert && (
             <Button size="small" type="text" icon={<PlayCircleOutlined />}
               onClick={() => onInsert(text)}
               style={{ fontSize: 11 }}
             >插入终端</Button>
           )}
-          {onRun && (
+          {runnable && onRun && (
             <Button size="small" type="text" danger icon={<SendOutlined />}
               onClick={() => onRun(text)}
               style={{ fontSize: 11 }}
