@@ -169,9 +169,8 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const xtermDomRefs = useRef<{ [key: string]: { screen: HTMLElement | null } }>({})
   // CWD 上报钩子注入过滤：后端在 shell 启动时通过 data() 注入一段 bash/zsh 脚本设置
   // PROMPT_COMMAND/precmd，PTY 回显会把这段脚本源码显示出来并误入命令历史。
-  // 过滤掉这段回显：以 __iterminal_cwd_report 为起点、fi 为终点的多行块。
-  // buffering=true 时进入过滤模式（连接刚建立），检测到脚本块结束后自动关闭。
-  const injectFilterRef = useRef<{ [key: string]: { buffering: boolean; lineBuf: string } }>({})
+  // 用累积 buffer + 正则方式匹配并移除脚本块，比行状态机更简单可靠。
+  const injectFilterRef = useRef<{ [key: string]: { buf: string } }>({})
   // ghost text 按帧合并：快速输入时多次 onData 在同一帧内只算一次 ghost text，
   // 避免每个按键都触发同步 DOM 操作导致主线程阻塞、WKWebView 丢弃按键事件。
   // pendingInputRef 记录最新待处理的 input；rafIdRef 保证一帧只调度一次 rAF。
@@ -1232,8 +1231,8 @@ const handlePointerUp = () => {
           fitAddons.current[key] = fitAddon
           shellIdsRef.current[key] = shellId
           commandTrackersRef.current[key] = createCommandTracker()
-          // 开启 CWD 钩子注入回显过滤：检测到脚本块结束后自动关闭
-          injectFilterRef.current[key] = { buffering: false, lineBuf: '' }
+          // 开启 CWD 钩子注入回显过滤（buffer 累积 + 正则匹配脚本块后自动关闭）
+          injectFilterRef.current[key] = { buf: '' }
 
           const searchAddon = new SearchAddon()
           terminal.loadAddon(searchAddon)
@@ -1401,7 +1400,7 @@ const handlePointerUp = () => {
         updateSessionShellId(connectionId, session.id, newShellId)
         shellIdsRef.current[key] = newShellId
         // 重连后后端会再次注入 CWD 钩子脚本，重新开启过滤
-        injectFilterRef.current[key] = { buffering: false, lineBuf: '' }
+        injectFilterRef.current[key] = { buf: '' }
 
         const eventName = `shell-output-${newShellId}`
         const unlisten = await listen<string>(eventName, (event) => {
@@ -1578,67 +1577,45 @@ const handlePointerUp = () => {
   }, [])
 
   // 过滤 CWD 钩子注入脚本的 PTY 回显。
-  // 后端在 shell 启动时通过 data() 注入一段 bash/zsh 脚本设置 PROMPT_COMMAND/precmd，
-  // PTY 回显会把脚本源码显示出来并误入命令历史。这段脚本块的特征：
-  //   - 起点行包含 __iterminal_cwd_report
-  //   - 结束行（去掉 ANSI/空白后）单独是 fi
-  // 脚本可能跨多个 shell-output chunk 到达，用行缓冲累积未完成行逐行判断。
-  // 检测到脚本块结束后关闭过滤模式（buffering=false），后续不再干预。
+  // 脚本固定以 __iterminal_cwd_report 开头、以 fi 结尾（中间行不含换行符时可能跨 chunk）。
+  // 用 buffer 累积输出直到匹配到完整的脚本块再移除，比行状态机更可靠。
   const filterInjectEcho = useCallback((key: string, data: string): string => {
     const state = injectFilterRef.current[key]
-    if (!state || typeof data !== 'string') return data
+    if (!state) return data
 
-    // 拼上上次残留的不完整行，记录原始是否以换行结尾
-    const combined = state.lineBuf + data
-    state.lineBuf = ''
-    const endsWithNewline = combined.endsWith('\n')
-    let lines = combined.split('\n')
-    // split 后若以 \n 结尾会多出一个空串，去掉它（末尾换行用 endsWithNewline 还原）
-    if (endsWithNewline) lines = lines.slice(0, -1)
-
-    // 最后一段若无换行结尾 → 它是不完整行，暂存到 lineBuf 等下次判断，本轮不输出
-    if (!endsWithNewline) {
-      state.lineBuf = lines.pop()!
+    state.buf += data
+    const START = '__iterminal_cwd_report'
+    const idx = state.buf.indexOf(START)
+    if (idx < 0) {
+      // 脚本尚未出现，若 buffer 已超过安全阈值仍未出现则释放并关闭过滤
+      if (state.buf.length > 4096) {
+        const result = state.buf
+        delete injectFilterRef.current[key]
+        return result
+      }
+      return ''
     }
 
-    const out: string[] = []
-    for (const line of lines) {
-      if (state.buffering) {
-        // 脚本块内：检测结束行 fi（去掉 ANSI/PS2 提示符后单独成行）
-        // PS2 提示符（bash 默认 "> "）会回显在续行前，如 "> fi"，须一并剔除
-        const cleaned = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/^\s*>\s*/, '').trim()
-        if (cleaned === 'fi' || /[$#❯>]\s*$/.test(cleaned)) {
-          // fi 行或新提示符出现 → 脚本块已结束
-          state.buffering = false
-          if (cleaned !== 'fi') out.push(line) // 提示符行保留
-        }
-        continue // 块内所有行（含结束行）都丢弃
+    // 找到脚本起点后，在剩余内容中匹配结束行 fi（可能带 PS2 提示符 "> "）
+    const after = state.buf.substring(idx)
+    const fiRe = /\n(?:>[ \t]*)?fi(?:\r)?\n/
+    const fiMatch = fiRe.exec(after)
+    if (!fiMatch) {
+      // 脚本块未结束（可能还在传输中），继续缓冲
+      if (state.buf.length > 8192) {
+        // 超过安全阈值仍未结束 → 可能字节序列异常，全部释放
+        const result = state.buf
+        delete injectFilterRef.current[key]
+        return result
       }
-      // 块外：检测起点
-      if (line.includes('__iterminal_cwd_report')) {
-        state.buffering = true
-        continue
-      }
-      out.push(line)
+      return ''
     }
 
-    // 处理暂存的不完整行
-    if (state.lineBuf) {
-      if (state.buffering) {
-        // 过滤中：暂留等下次拼上完整行判断
-      } else if (state.lineBuf.includes('__iterminal_cwd_report')) {
-        // 未完成行就是起点 → 进入过滤模式
-        state.buffering = true
-        state.lineBuf = ''
-      } else {
-        // 正常内容 → 立即输出，不能等下次再拼（如 prompt 可能不会再有后续 chunk）
-        out.push(state.lineBuf)
-        state.lineBuf = ''
-      }
-    }
-
-    // 还原末尾换行（保持 xterm 行为一致）
-    return out.length > 0 ? out.join('\n') + (endsWithNewline ? '\n' : '') : (endsWithNewline ? '\n' : '')
+    // 脚本块完整匹配：移除起点到 fi 结束的部分，两侧内容拼接输出
+    const endPos = idx + fiMatch.index + fiMatch[0].length
+    const result = state.buf.substring(0, idx) + state.buf.substring(endPos)
+    delete injectFilterRef.current[key]  // 过滤完成，后续不再干预
+    return result
   }, [])
 
   // 统一清理单个会话 key 持有的 ref（纯 delete + 可选 cancelAnimationFrame）。
