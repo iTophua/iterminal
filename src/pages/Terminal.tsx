@@ -1622,10 +1622,19 @@ const handlePointerUp = () => {
       out.push(line)
     }
 
-    // 处理暂存的不完整行：在过滤中就留着等下次；否则若包含起点也进入过滤模式
-    if (state.lineBuf && !state.buffering && state.lineBuf.includes('__iterminal_cwd_report')) {
-      state.buffering = true
-      state.lineBuf = ''
+    // 处理暂存的不完整行
+    if (state.lineBuf) {
+      if (state.buffering) {
+        // 过滤中：暂留等下次拼上完整行判断
+      } else if (state.lineBuf.includes('__iterminal_cwd_report')) {
+        // 未完成行就是起点 → 进入过滤模式
+        state.buffering = true
+        state.lineBuf = ''
+      } else {
+        // 正常内容 → 立即输出，不能等下次再拼（如 prompt 可能不会再有后续 chunk）
+        out.push(state.lineBuf)
+        state.lineBuf = ''
+      }
     }
 
     // 还原末尾换行（保持 xterm 行为一致）
