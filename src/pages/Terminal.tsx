@@ -1596,9 +1596,9 @@ const handlePointerUp = () => {
       return ''
     }
 
-    // 找到脚本起点后，在剩余内容中匹配结束行 fi（可能带 PS2 提示符 "> "）
+    // 找到脚本起点后，在剩余内容中匹配结束行 fi（可能带 PS2 "> "，之间可能有 ANSI）
     const after = state.buf.substring(idx)
-    const fiRe = /\n(?:>[ \t]*)?fi(?:\r)?\n/
+    const fiRe = /\n(?:>[ \t]*)?(?:\x1b\[[0-9;]*[a-zA-Z])*fi(?:\r)?\n/
     const fiMatch = fiRe.exec(after)
     if (!fiMatch) {
       // 脚本块未结束（可能还在传输中），继续缓冲
