@@ -1,4 +1,4 @@
-import { useEffect, useRef, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
@@ -19,32 +19,90 @@ import {
 } from '@codemirror/view'
 import { lintGutter } from '@codemirror/lint'
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
-
-// 语言包
-import { json } from '@codemirror/lang-json'
-import { yaml } from '@codemirror/lang-yaml'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { javascript } from '@codemirror/lang-javascript'
-import { python } from '@codemirror/lang-python'
-import { sql } from '@codemirror/lang-sql'
-import { markdown } from '@codemirror/lang-markdown'
-import { xml } from '@codemirror/lang-xml'
-import { php } from '@codemirror/lang-php'
-import { java } from '@codemirror/lang-java'
-import { rust } from '@codemirror/lang-rust'
-import { go } from '@codemirror/lang-go'
-import { StreamLanguage } from '@codemirror/language'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
-import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
-import { properties } from '@codemirror/legacy-modes/mode/properties'
-import { nginx } from '@codemirror/legacy-modes/mode/nginx'
-import { diff } from '@codemirror/legacy-modes/mode/diff'
-import { toml } from '@codemirror/legacy-modes/mode/toml'
-
-// 主题
 import { oneDark } from '@codemirror/theme-one-dark'
 import { useThemeStore } from '../stores/themeStore'
+
+// 语言包按需加载：启动时不 import 任何语言包，打开文件时按扩展名动态 import。
+// 这样 vite 会把每个语言包拆成独立 chunk，降低 WebContent 空闲内存。
+type LangLoader = () => Promise<Extension[]>
+const langCache = new Map<string, Extension[]>()
+
+// legacy 模式（StreamLanguage 封装）：每个模式显式 import，便于 vite 拆分 chunk
+async function legacyLoad(mode: string): Promise<Extension[]> {
+  const [{ StreamLanguage }, mod] = await Promise.all([
+    import('@codemirror/language'),
+    (async () => {
+      switch (mode) {
+        case 'shell': return (await import('@codemirror/legacy-modes/mode/shell')).shell
+        case 'dockerFile': return (await import('@codemirror/legacy-modes/mode/dockerfile')).dockerFile
+        case 'properties': return (await import('@codemirror/legacy-modes/mode/properties')).properties
+        case 'nginx': return (await import('@codemirror/legacy-modes/mode/nginx')).nginx
+        case 'diff': return (await import('@codemirror/legacy-modes/mode/diff')).diff
+        case 'toml': return (await import('@codemirror/legacy-modes/mode/toml')).toml
+        default: return null
+      }
+    })(),
+  ])
+  if (!mod) return []
+  return [StreamLanguage.define(mod as any)]
+}
+
+// 扩展名 → 动态加载函数 的映射表
+const LANG_LOADERS: Record<string, LangLoader> = {
+  // 原生语言包
+  json: async () => [await import('@codemirror/lang-json').then(m => m.json())],
+  yaml: async () => [await import('@codemirror/lang-yaml').then(m => m.yaml())],
+  yml: async () => [await import('@codemirror/lang-yaml').then(m => m.yaml())],
+  html: async () => [await import('@codemirror/lang-html').then(m => m.html())],
+  htm: async () => [await import('@codemirror/lang-html').then(m => m.html())],
+  css: async () => [await import('@codemirror/lang-css').then(m => m.css())],
+  scss: async () => [await import('@codemirror/lang-css').then(m => m.css())],
+  less: async () => [await import('@codemirror/lang-css').then(m => m.css())],
+  js: async () => [await import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true }))],
+  jsx: async () => [await import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true }))],
+  mjs: async () => [await import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true }))],
+  cjs: async () => [await import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true }))],
+  ts: async () => [await import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true, typescript: true }))],
+  tsx: async () => [await import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true, typescript: true }))],
+  py: async () => [await import('@codemirror/lang-python').then(m => m.python())],
+  sql: async () => [await import('@codemirror/lang-sql').then(m => m.sql())],
+  md: async () => [await import('@codemirror/lang-markdown').then(m => m.markdown())],
+  markdown: async () => [await import('@codemirror/lang-markdown').then(m => m.markdown())],
+  php: async () => [await import('@codemirror/lang-php').then(m => m.php())],
+  java: async () => [await import('@codemirror/lang-java').then(m => m.java())],
+  rs: async () => [await import('@codemirror/lang-rust').then(m => m.rust())],
+  go: async () => [await import('@codemirror/lang-go').then(m => m.go())],
+  xml: async () => [await import('@codemirror/lang-xml').then(m => m.xml())],
+  svg: async () => [await import('@codemirror/lang-xml').then(m => m.xml())],
+  // legacy 模式（StreamLanguage 封装）
+  sh: async () => legacyLoad('shell'),
+  bash: async () => legacyLoad('shell'),
+  zsh: async () => legacyLoad('shell'),
+  dockerfile: async () => legacyLoad('dockerFile'),
+  ini: async () => legacyLoad('properties'),
+  conf: async () => legacyLoad('properties'),
+  cfg: async () => legacyLoad('properties'),
+  properties: async () => legacyLoad('properties'),
+  env: async () => legacyLoad('properties'),
+  nginx: async () => legacyLoad('nginx'),
+  diff: async () => legacyLoad('diff'),
+  patch: async () => legacyLoad('diff'),
+  toml: async () => legacyLoad('toml'),
+}
+
+/** 根据文件名异步加载对应的 CodeMirror 语言扩展（带缓存） */
+async function loadLanguageExtension(filename?: string): Promise<Extension[]> {
+  if (!filename) return []
+  const ext = filename.includes('.')
+    ? filename.split('.').pop()!.toLowerCase()
+    : filename.toLowerCase()
+  if (langCache.has(ext)) return langCache.get(ext)!
+  const loader = LANG_LOADERS[ext]
+  if (!loader) return []
+  const result = await loader()
+  langCache.set(ext, result)
+  return result
+}
 
 export interface CodeEditorHandle {
   view: EditorView | null
@@ -59,75 +117,6 @@ interface CodeEditorProps {
   /** Cmd/Ctrl+S 回调 */
   onSave?: () => void
   style?: React.CSSProperties
-}
-
-/** 根据文件扩展名返回 CodeMirror 语言扩展 */
-function getLanguageExtension(filename?: string): Extension[] {
-  if (!filename) return []
-  const ext = filename.includes('.')
-    ? filename.split('.').pop()!.toLowerCase()
-    : filename.toLowerCase()
-
-  // StreamLanguage 封装的遗留模式
-  const legacyMap: Record<string, () => Extension> = {
-    sh: () => StreamLanguage.define(shell),
-    bash: () => StreamLanguage.define(shell),
-    zsh: () => StreamLanguage.define(shell),
-    dockerfile: () => StreamLanguage.define(dockerFile),
-    ini: () => StreamLanguage.define(properties),
-    conf: () => StreamLanguage.define(properties),
-    cfg: () => StreamLanguage.define(properties),
-    properties: () => StreamLanguage.define(properties),
-    env: () => StreamLanguage.define(properties),
-    nginx: () => StreamLanguage.define(nginx),
-    diff: () => StreamLanguage.define(diff),
-    patch: () => StreamLanguage.define(diff),
-    toml: () => StreamLanguage.define(toml),
-  }
-
-  // 原生语言包
-  switch (ext) {
-    case 'json':
-      return [json()]
-    case 'yaml':
-    case 'yml':
-      return [yaml()]
-    case 'html':
-    case 'htm':
-    case 'xml':
-    case 'svg':
-      return ext === 'xml' || ext === 'svg' ? [xml()] : [html()]
-    case 'css':
-    case 'scss':
-    case 'less':
-      return [css()]
-    case 'js':
-    case 'jsx':
-    case 'mjs':
-    case 'cjs':
-      return [javascript({ jsx: true })]
-    case 'ts':
-    case 'tsx':
-      return [javascript({ jsx: true, typescript: true })]
-    case 'py':
-      return [python()]
-    case 'sql':
-      return [sql()]
-    case 'md':
-    case 'markdown':
-      return [markdown()]
-    case 'php':
-      return [php()]
-    case 'java':
-      return [java()]
-    case 'rs':
-      return [rust()]
-    case 'go':
-      return [go()]
-    default:
-      if (legacyMap[ext]) return [legacyMap[ext]() ]
-      return []
-  }
 }
 
 /** 亮色主题：用项目 CSS 变量 */
@@ -202,7 +191,15 @@ export default function CodeEditor({
   const appTheme = useThemeStore(s => s.appTheme)
   const isDark = appTheme === 'dark'
 
-  const langExtensions = useMemo(() => getLanguageExtension(language), [language])
+  // 语言扩展异步加载：打开文件时按扩展名动态 import 对应语言包（首次 <50ms，带缓存）
+  const [langExtensions, setLangExtensions] = useState<Extension[]>([])
+  useEffect(() => {
+    let cancelled = false
+    loadLanguageExtension(language).then(exts => {
+      if (!cancelled) setLangExtensions(exts)
+    })
+    return () => { cancelled = true }
+  }, [language])
 
   // 自定义快捷键：Cmd/Ctrl+S 保存
   // 用 ref 读最新 onSave，keymap 只建一次避免 editor 重建
