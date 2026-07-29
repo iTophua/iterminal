@@ -1604,9 +1604,14 @@ const handlePointerUp = () => {
     const out: string[] = []
     for (const line of lines) {
       if (state.buffering) {
-        // 脚本块内：检测结束行 fi（去掉 ANSI/空白后单独成行）
-        const cleaned = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim()
-        if (cleaned === 'fi') state.buffering = false
+        // 脚本块内：检测结束行 fi（去掉 ANSI/PS2 提示符后单独成行）
+        // PS2 提示符（bash 默认 "> "）会回显在续行前，如 "> fi"，须一并剔除
+        const cleaned = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/^\s*>\s*/, '').trim()
+        if (cleaned === 'fi' || /[$#❯>]\s*$/.test(cleaned)) {
+          // fi 行或新提示符出现 → 脚本块已结束
+          state.buffering = false
+          if (cleaned !== 'fi') out.push(line) // 提示符行保留
+        }
         continue // 块内所有行（含结束行）都丢弃
       }
       // 块外：检测起点
