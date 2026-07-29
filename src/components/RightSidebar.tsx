@@ -1,9 +1,7 @@
 import { Button, Tooltip } from 'antd'
-import { useNavigate } from 'react-router-dom'
 import {
   DashboardOutlined,
   FolderOutlined,
-  ApiOutlined,
   FullscreenOutlined,
   FullscreenExitOutlined,
   ThunderboltOutlined,
@@ -23,7 +21,6 @@ interface RightSidebarProps {
   aiChatVisible: boolean
   aiChatEnabled: boolean
   dockerVisible: boolean
-  mcpEnabled: boolean
   isFullscreen?: boolean
   showFullscreen?: boolean
   onMonitorToggle: () => void
@@ -46,7 +43,6 @@ export function RightSidebar({
   aiChatVisible,
   aiChatEnabled,
   dockerVisible,
-  mcpEnabled,
   isFullscreen,
   showFullscreen,
   onMonitorToggle,
@@ -57,7 +53,6 @@ export function RightSidebar({
   onDockerToggle,
   onFullscreenToggle,
 }: RightSidebarProps) {
-  const navigate = useNavigate()
   return (
     <div
       className="right-sidebar"
@@ -136,16 +131,6 @@ export function RightSidebar({
                 onClick={onDockerToggle}
               />
             </Tooltip>
-            {mcpEnabled && (
-              <Tooltip title="MCP 日志" placement="left">
-                <Button
-                  type="text"
-                  size="small"
-                  icon={<ApiOutlined />}
-                  onClick={() => navigate('/logs')}
-                />
-              </Tooltip>
-            )}
             {snippetsEnabled && (
               <Tooltip title="命令片段库（Pro）" placement="left">
                 <Button

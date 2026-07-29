@@ -48,7 +48,6 @@ import PortForwardPanel from '../components/PortForwardPanel'
 import AiChatPanel from '../components/AiChatPanel'
 import DockerPanel from '../components/DockerPanel'
 import type { TerminalContext } from '../services/ai'
-import { STORAGE_KEYS } from '../config/constants'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
 import { SortableTab, LeafPane } from './terminal/components'
 import { ShortcutHelpModal } from './terminal/components/ShortcutHelpModal'
@@ -545,11 +544,6 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     document.body.style.userSelect = 'none'
   }, [])
 
-  const [mcpEnabled, setMcpEnabled] = useState(() => {
-    const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
-    return saved ? saved === 'true' : false
-  })
-
   const [draggedSession, setDraggedSession] = useState<{ sessionId: string; connectionId: string; title: string } | null>(null)
   const [dropTarget, setDropTarget] = useState<{ paneId: string; connectionId: string; direction: 'left' | 'right' | 'top' | 'bottom' } | null>(null)
   const [dragPosition, setDragPosition] = useState<{ x: number; y: number } | null>(null)
@@ -675,27 +669,6 @@ const handlePointerUp = () => {
     }
   }, [connectedConnections, splitPaneWithPosition, moveSessionToSplitPane, message])
 
-  // MCP 状态同步
-  useEffect(() => {
-    const handleMcpStatusChange = (e: CustomEvent<boolean>) => {
-      setMcpEnabled(e.detail)
-    }
-
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === STORAGE_KEYS.MCP_ENABLED && e.newValue !== null) {
-        setMcpEnabled(e.newValue === 'true')
-      }
-    }
-
-    window.addEventListener('mcp-status-change', handleMcpStatusChange as EventListener)
-    window.addEventListener('storage', handleStorageChange)
-
-    return () => {
-      window.removeEventListener('mcp-status-change', handleMcpStatusChange as EventListener)
-      window.removeEventListener('storage', handleStorageChange)
-    }
-  }, [])
-  
   const currentThemeColors = useMemo(
     () => resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey),
     [selectedTheme, appTheme, terminalThemeKey]
@@ -2617,7 +2590,6 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         aiChatVisible={aiChatVisible}
         aiChatEnabled={aiEnabled}
         dockerVisible={dockerVisible}
-        mcpEnabled={mcpEnabled}
         isFullscreen={isFullscreen}
         showFullscreen={singleConnectionMode}
         onFullscreenToggle={() => handleToggleFullscreen('')}
