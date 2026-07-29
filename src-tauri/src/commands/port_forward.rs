@@ -168,6 +168,25 @@ pub async fn stop_port_forward(forward_id: String) -> Result<bool, String> {
     }
 }
 
+/// 连接断开时统一清理该连接的所有端口转发。
+///
+/// disconnect_ssh → cleanup_connection 调用此函数，确保该连接的所有 accept loop
+/// 被终止并释放其持有的 Arc<Handle> 克隆。否则 SESSIONS.remove 后底层 SSH 连接
+/// 因转发任务仍持有 Handle 副本（Arc 引用计数 > 0）而无法真正关闭，造成资源泄漏。
+pub async fn cleanup_forwards(connection_id: &str) {
+    let mut forwards = FORWARDS.write().await;
+    let ids: Vec<String> = forwards
+        .iter()
+        .filter(|(_, f)| f.connection_id == connection_id)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in ids {
+        if let Some(fwd) = forwards.remove(&id) {
+            fwd.listener_task.abort();
+        }
+    }
+}
+
 /// 列出活跃的端口转发
 #[tauri::command]
 pub async fn list_port_forwards() -> Vec<PortForwardInfo> {

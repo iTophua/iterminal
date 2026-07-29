@@ -142,6 +142,10 @@ async fn cleanup_connection(connection_id: &str) {
     }
     
     super::sftp::close_sftp_session(connection_id).await;
+
+    // 清理该连接的所有端口转发：accept loop 持有 Arc<Handle> 副本，
+    // 必须在此 abort 并移除，否则 SESSIONS.remove 后底层连接因引用计数 > 0 不会真正关闭。
+    super::port_forward::cleanup_forwards(connection_id).await;
 }
 
 #[tauri::command]

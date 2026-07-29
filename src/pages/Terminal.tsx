@@ -1556,6 +1556,24 @@ const handlePointerUp = () => {
     return () => { unlisten.then(fn => fn()) }
   }, [])
 
+  // 统一清理单个会话 key 持有的 ref（纯 delete + 可选 cancelAnimationFrame）。
+  // 只收集「6 项会话级 ref」——这些项此前在 4 个关闭路径里重复手写，曾因漏写导致
+  // handleCloseConnection 不对称清理、连接关闭后 ~118M 不释放（未取消的 rAF 持有 term 闭包）。
+  // 注：terminalInstances/fitAddons/searchAddons/resizeObserversRef/unlistenersRef/initializedRef
+  // 这些「需要先 dispose/unlisten/disconnect 再 delete」的项不在此处，各路径就地处理，避免掩盖副作用。
+  const cleanupSessionRef = useCallback((key: string) => {
+    delete commandTrackersRef.current[key]
+    delete xtermDomRefs.current[key]
+    delete writeQueueRef.current[key]
+    delete writeDrainingRef.current[key]
+    delete ghostPendingInputRef.current[key]
+    const ghostRafId = ghostRafIdRef.current[key]
+    if (ghostRafId !== null && ghostRafId !== undefined) {
+      cancelAnimationFrame(ghostRafId)
+    }
+    delete ghostRafIdRef.current[key]
+  }, [])
+
   const handleCloseSession = useCallback(async (connId: string, sessId: string, paneId?: string) => {
     const conn = connectedConnections.find(c => c.connectionId === connId)
     if (!conn) return
@@ -1584,20 +1602,9 @@ const handlePointerUp = () => {
       resizeObserver.disconnect()
     }
     delete resizeObserversRef.current[key]
-    delete commandTrackersRef.current[key]
-    delete xtermDomRefs.current[key]
-    // 清理写入队列，避免会话关闭后残留状态
-    delete writeQueueRef.current[key]
-    delete writeDrainingRef.current[key]
-    // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
-    delete ghostPendingInputRef.current[key]
-    const ghostRafId = ghostRafIdRef.current[key]
-    if (ghostRafId !== null && ghostRafId !== undefined) {
-      cancelAnimationFrame(ghostRafId)
-    }
-    delete ghostRafIdRef.current[key]
+    cleanupSessionRef(key)
     initializedRef.current.delete(key)
-    
+
     if (allSessions.length === 1) {
       await invoke('disconnect_ssh', { id: connId }).catch(() => {})
       closeConnection(connId)
@@ -1638,6 +1645,7 @@ const handlePointerUp = () => {
         resizeObserver.disconnect()
       }
       delete resizeObserversRef.current[key]
+      cleanupSessionRef(key)
       initializedRef.current.delete(key)
     }
 
@@ -1879,18 +1887,7 @@ const handlePointerUp = () => {
         resizeObserver.disconnect()
       }
       delete resizeObserversRef.current[key]
-      delete commandTrackersRef.current[key]
-      delete xtermDomRefs.current[key]
-      // 清理写入队列，避免会话关闭后残留状态
-      delete writeQueueRef.current[key]
-      delete writeDrainingRef.current[key]
-      // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
-      delete ghostPendingInputRef.current[key]
-      const ghostRafId = ghostRafIdRef.current[key]
-      if (ghostRafId !== null && ghostRafId !== undefined) {
-        cancelAnimationFrame(ghostRafId)
-      }
-      delete ghostRafIdRef.current[key]
+      cleanupSessionRef(key)
       initializedRef.current.delete(key)
     }
     closePane(connId, pane.id)
@@ -2094,18 +2091,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         resizeObserver.disconnect()
       }
       delete resizeObserversRef.current[key]
-      delete commandTrackersRef.current[key]
-      delete xtermDomRefs.current[key]
-      // 清理写入队列，避免会话关闭后残留状态
-      delete writeQueueRef.current[key]
-      delete writeDrainingRef.current[key]
-      // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
-      delete ghostPendingInputRef.current[key]
-      const ghostRafId = ghostRafIdRef.current[key]
-      if (ghostRafId !== null && ghostRafId !== undefined) {
-        cancelAnimationFrame(ghostRafId)
-      }
-      delete ghostRafIdRef.current[key]
+      cleanupSessionRef(key)
       initializedRef.current.delete(key)
     }
     closePane(connectionId, paneId)
