@@ -40,13 +40,15 @@ import { resolveTerminalTheme } from '../styles/themes/terminal-themes'
 
 
 import { RightSidebar } from '../components/RightSidebar'
-import MonitorPanel from '../components/MonitorPanel'
-import FileManagerPanel from '../components/FileManagerPanel'
-import SnippetsPanel from '../components/SnippetsPanel'
-import AiAssistantModal from '../components/AiAssistantModal'
-import PortForwardPanel from '../components/PortForwardPanel'
-import AiChatPanel from '../components/AiChatPanel'
-import DockerPanel from '../components/DockerPanel'
+// 右侧重型面板懒加载：只有用户打开对应面板时才解析对应代码，减小启动内存。
+import { lazy, Suspense } from 'react'
+const MonitorPanel = lazy(() => import('../components/MonitorPanel'))
+const FileManagerPanel = lazy(() => import('../components/FileManagerPanel'))
+const SnippetsPanel = lazy(() => import('../components/SnippetsPanel'))
+const PortForwardPanel = lazy(() => import('../components/PortForwardPanel'))
+const AiChatPanel = lazy(() => import('../components/AiChatPanel'))
+const DockerPanel = lazy(() => import('../components/DockerPanel'))
+const AiAssistantModal = lazy(() => import('../components/AiAssistantModal'))
 import type { TerminalContext } from '../services/ai'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
 import { SortableTab, LeafPane } from './terminal/components'
@@ -2472,17 +2474,22 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           />
         )}
         {monitorVisible && (
-          <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
+          <Suspense fallback={null}>
+            <MonitorPanel visible={monitorVisible} connectionId={activeConnectionId || ''} onClose={() => setMonitorVisible(false)} />
+          </Suspense>
         )}
         {activeConnectionId && fileManagerVisible[activeConnectionId] && (
-          <FileManagerPanel
-            connectionId={activeConnectionId}
-            visible={true}
-            onClose={() => setFileManagerVisible(activeConnectionId, false)}
-          />
+          <Suspense fallback={null}>
+            <FileManagerPanel
+              connectionId={activeConnectionId}
+              visible={true}
+              onClose={() => setFileManagerVisible(activeConnectionId, false)}
+            />
+          </Suspense>
         )}
         {snippetsVisible && snippetsEnabled && (
-          <SnippetsPanel
+          <Suspense fallback={null}>
+            <SnippetsPanel
             onClose={() => setSnippetsVisible(false)}
             onInsert={(cmd) => {
               // 插入到当前活动终端：拼接活动连接+活动 session 的 key
@@ -2494,14 +2501,18 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               enqueueWrite(key, cmd)
             }}
           />
+          </Suspense>
         )}
         {portForwardVisible && portForwardEnabled && activeConnectionId && (
-          <PortForwardPanel
-            connectionId={activeConnectionId}
-            onClose={() => setPortForwardVisible(false)}
-          />
+          <Suspense fallback={null}>
+            <PortForwardPanel
+              connectionId={activeConnectionId}
+              onClose={() => setPortForwardVisible(false)}
+            />
+          </Suspense>
         )}
         {aiChatVisible && aiEnabled && (
+          <Suspense fallback={null}>
           <AiChatPanel
             connectionId={activeConnectionId}
             onClose={() => setAiChatVisible(false)}
@@ -2548,8 +2559,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               return ctx
             }}
           />
+          </Suspense>
         )}
         {dockerVisible && activeConnectionId && (
+          <Suspense fallback={null}>
           <DockerPanel
             connectionId={activeConnectionId}
             onClose={() => setDockerVisible(false)}
@@ -2562,6 +2575,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd + '\r')
             }}
           />
+          </Suspense>
         )}
       </div>
 
@@ -2723,6 +2737,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       <DragToNewWindowOverlay visible={!singleConnectionMode && isDragToNewWindow} />
 
       {aiModalVisible && (
+        <Suspense fallback={null}>
         <AiAssistantModal
           visible={aiModalVisible}
           initialText={aiInitialText}
@@ -2735,6 +2750,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
           }}
         />
+        </Suspense>
       )}
 
       {historyModalVisible && historyModalKey && (

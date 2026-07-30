@@ -1,15 +1,18 @@
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
-import { Layout, Modal, Button, Space, message } from 'antd'
+import { Layout, Modal, Button, Space, Spin, message } from 'antd'
 import Sidebar from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
+// Connections 是首屏页面，保持静态 import；其余页面懒加载以减小启动 bundle。
 import Connections from './pages/Connections'
-import Terminal from './pages/Terminal'
-import TerminalWindowPage from './pages/TerminalWindow'
-import Transfers from './pages/Transfers'
-import McpLogs from './pages/McpLogs'
+import { lazy, Suspense, useEffect, useState, useRef } from 'react'
+// 非首屏页面：按需加载（首次访问对应路由才解析、挂载）。
+// 主 bundle 里因此不再包含 xterm.js、antd Panel、各页面组件。
+const Terminal = lazy(() => import('./pages/Terminal'))
+const Transfers = lazy(() => import('./pages/Transfers'))
+const McpLogs = lazy(() => import('./pages/McpLogs'))
+const TerminalWindowPage = lazy(() => import('./pages/TerminalWindow'))
 import { useTerminalStore, type SplitPane } from './stores/terminalStore'
 import { invoke } from '@tauri-apps/api/core'
-import { useEffect, useState, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
@@ -388,10 +391,29 @@ function AnimatedPage({ show, children, padding = false }: { show: boolean; chil
   )
 }
 
+// 页面懒加载时的占位（居中 Spin）。
+function PageSpin() {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+      <Spin />
+    </div>
+  )
+}
+
 // 主内容组件 - 处理终端的持久化
+// 采用 mount-on-first-visit：首次访问某路由才挂载对应页面，之后保持挂载（用 CSS 显隐）。
+// 这样启动停在连接列表页时不会解析 xterm/面板等重型代码，显著降低启动内存；
+// 一旦访问过终端页即保持挂载，之后切换不会重连，体验与改动前一致。
 function MainContent() {
   const location = useLocation()
-  
+  const [visited, setVisited] = useState<Set<string>>(new Set(['/connections']))
+
+  useEffect(() => {
+    setVisited(prev => prev.has(location.pathname)
+      ? prev
+      : new Set(prev).add(location.pathname))
+  }, [location.pathname])
+
   return (
     <Content style={{
       margin: 0,
@@ -403,23 +425,35 @@ function MainContent() {
       flexDirection: 'column',
       position: 'relative'
     }}>
-      {/* 终端组件始终挂载，用 CSS 控制显示/隐藏 */}
-      <AnimatedPage show={location.pathname === '/terminal'}>
-        <Terminal />
-      </AnimatedPage>
-      
-      {/* 连接管理组件始终挂载，用 CSS 控制显示/隐藏 */}
+      {/* 终端组件：首次进入 /terminal 才挂载，之后保持挂载，用 CSS 控制显示/隐藏 */}
+      {visited.has('/terminal') && (
+        <AnimatedPage show={location.pathname === '/terminal'}>
+          <Suspense fallback={<PageSpin />}>
+            <Terminal />
+          </Suspense>
+        </AnimatedPage>
+      )}
+
+      {/* 连接管理组件始终挂载（首屏），用 CSS 控制显示/隐藏 */}
       <AnimatedPage show={location.pathname === '/connections'} padding>
         <Connections />
       </AnimatedPage>
-      
-      <AnimatedPage show={location.pathname === '/transfers'} padding>
-        <Transfers />
-      </AnimatedPage>
 
-      <AnimatedPage show={location.pathname === '/logs'} padding>
-        <McpLogs />
-      </AnimatedPage>
+      {visited.has('/transfers') && (
+        <AnimatedPage show={location.pathname === '/transfers'} padding>
+          <Suspense fallback={<PageSpin />}>
+            <Transfers />
+          </Suspense>
+        </AnimatedPage>
+      )}
+
+      {visited.has('/logs') && (
+        <AnimatedPage show={location.pathname === '/logs'} padding>
+          <Suspense fallback={<PageSpin />}>
+            <McpLogs />
+          </Suspense>
+        </AnimatedPage>
+      )}
 
       {/* 路由仅用于 URL 导航 */}
       <Routes>
@@ -429,7 +463,7 @@ function MainContent() {
         <Route path="/logs" element={null} />
         <Route path="/terminal" element={null} />
       </Routes>
-    
+
     </Content>
   )
 }
@@ -438,7 +472,11 @@ function App() {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/terminal-window" element={<TerminalWindowPage />} />
+        <Route path="/terminal-window" element={
+          <Suspense fallback={<PageSpin />}>
+            <TerminalWindowPage />
+          </Suspense>
+        } />
         <Route path="/*" element={<MainApp />} />
       </Routes>
     </HashRouter>
