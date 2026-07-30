@@ -167,10 +167,6 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const commandTrackersRef = useRef<{ [key: string]: CommandTracker }>({})
   const initializingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
   const xtermDomRefs = useRef<{ [key: string]: { screen: HTMLElement | null } }>({})
-  // CWD 上报钩子注入过滤：后端在 shell 启动时通过 data() 注入一段 bash/zsh 脚本设置
-  // PROMPT_COMMAND/precmd，PTY 回显会把这段脚本源码显示出来并误入命令历史。
-  // 用累积 buffer + 正则方式匹配并移除脚本块，比行状态机更简单可靠。
-  const injectFilterRef = useRef<{ [key: string]: { buf: string } }>({})
   // ghost text 按帧合并：快速输入时多次 onData 在同一帧内只算一次 ghost text，
   // 避免每个按键都触发同步 DOM 操作导致主线程阻塞、WKWebView 丢弃按键事件。
   // pendingInputRef 记录最新待处理的 input；rafIdRef 保证一帧只调度一次 rAF。
@@ -1231,8 +1227,6 @@ const handlePointerUp = () => {
           fitAddons.current[key] = fitAddon
           shellIdsRef.current[key] = shellId
           commandTrackersRef.current[key] = createCommandTracker()
-          // 开启 CWD 钩子注入回显过滤（buffer 累积 + 正则匹配脚本块后自动关闭）
-          injectFilterRef.current[key] = { buf: '' }
 
           const searchAddon = new SearchAddon()
           terminal.loadAddon(searchAddon)
@@ -1246,17 +1240,11 @@ const handlePointerUp = () => {
                 return
               }
 
-              // 过滤 CWD 钩子注入脚本的 PTY 回显（同时避免其误入命令历史）
-              const payload = injectFilterRef.current[key]
-                ? filterInjectEcho(key, event.payload)
-                : event.payload
-              if (!payload) return
-
-              term.write(payload)
+              term.write(event.payload)
 
               const tracker = commandTrackersRef.current[key]
-              if (tracker && typeof payload === 'string') {
-                const result = tracker.processOutput(payload, term)
+              if (tracker && typeof event.payload === 'string') {
+                const result = tracker.processOutput(event.payload, term)
                 if (result.command) {
                   const [connId] = key.split('_')
                   addCommand(connId, result.command)
@@ -1399,8 +1387,6 @@ const handlePointerUp = () => {
         const newShellId = await invoke<string>('get_shell', { id: connectionId })
         updateSessionShellId(connectionId, session.id, newShellId)
         shellIdsRef.current[key] = newShellId
-        // 重连后后端会再次注入 CWD 钩子脚本，重新开启过滤
-        injectFilterRef.current[key] = { buf: '' }
 
         const eventName = `shell-output-${newShellId}`
         const unlisten = await listen<string>(eventName, (event) => {
@@ -1410,17 +1396,11 @@ const handlePointerUp = () => {
               return
             }
 
-            // 过滤 CWD 钩子注入脚本的 PTY 回显（同时避免其误入命令历史）
-            const payload = injectFilterRef.current[key]
-              ? filterInjectEcho(key, event.payload)
-              : event.payload
-            if (!payload) return
-
-            term.write(payload)
+            term.write(event.payload)
 
             const tracker = commandTrackersRef.current[key]
-            if (tracker && typeof payload === 'string') {
-              const result = tracker.processOutput(payload, term)
+            if (tracker && typeof event.payload === 'string') {
+              const result = tracker.processOutput(event.payload, term)
               if (result.command) {
                 const [connId] = key.split('_')
                 addCommand(connId, result.command)
@@ -1576,48 +1556,6 @@ const handlePointerUp = () => {
     return () => { unlisten.then(fn => fn()) }
   }, [])
 
-  // 过滤 CWD 钩子注入脚本的 PTY 回显。
-  // 脚本固定以 __iterminal_cwd_report 开头、以 fi 结尾（中间行不含换行符时可能跨 chunk）。
-  // 用 buffer 累积输出直到匹配到完整的脚本块再移除，比行状态机更可靠。
-  const filterInjectEcho = useCallback((key: string, data: string): string => {
-    const state = injectFilterRef.current[key]
-    if (!state) return data
-
-    state.buf += data
-    const START = '__iterminal_cwd_report'
-    const idx = state.buf.indexOf(START)
-    if (idx < 0) {
-      // 脚本尚未出现，若 buffer 已超过安全阈值仍未出现则释放并关闭过滤
-      if (state.buf.length > 4096) {
-        const result = state.buf
-        delete injectFilterRef.current[key]
-        return result
-      }
-      return ''
-    }
-
-    // 找到脚本起点后，在剩余内容中匹配结束行 fi（可能带 PS2 "> "，之间可能有 ANSI）
-    const after = state.buf.substring(idx)
-    const fiRe = /\n(?:>[ \t]*)?(?:\x1b\[[0-9;]*[a-zA-Z])*fi(?:\r)?\n/
-    const fiMatch = fiRe.exec(after)
-    if (!fiMatch) {
-      // 脚本块未结束（可能还在传输中），继续缓冲
-      if (state.buf.length > 8192) {
-        // 超过安全阈值仍未结束 → 可能字节序列异常，全部释放
-        const result = state.buf
-        delete injectFilterRef.current[key]
-        return result
-      }
-      return ''
-    }
-
-    // 脚本块完整匹配：移除起点到 fi 结束的部分，两侧内容拼接输出
-    const endPos = idx + fiMatch.index + fiMatch[0].length
-    const result = state.buf.substring(0, idx) + state.buf.substring(endPos)
-    delete injectFilterRef.current[key]  // 过滤完成，后续不再干预
-    return result
-  }, [])
-
   // 统一清理单个会话 key 持有的 ref（纯 delete + 可选 cancelAnimationFrame）。
   // 只收集「6 项会话级 ref」——这些项此前在 4 个关闭路径里重复手写，曾因漏写导致
   // handleCloseConnection 不对称清理、连接关闭后 ~118M 不释放（未取消的 rAF 持有 term 闭包）。
@@ -1625,7 +1563,6 @@ const handlePointerUp = () => {
   // 这些「需要先 dispose/unlisten/disconnect 再 delete」的项不在此处，各路径就地处理，避免掩盖副作用。
   const cleanupSessionRef = useCallback((key: string) => {
     delete commandTrackersRef.current[key]
-    delete injectFilterRef.current[key]
     delete xtermDomRefs.current[key]
     delete writeQueueRef.current[key]
     delete writeDrainingRef.current[key]

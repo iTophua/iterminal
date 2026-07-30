@@ -391,8 +391,11 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     drop(sessions);
 
+    // 请求 PTY 时关闭 ECHO（终端模式 opcode 53），使 shell 启动时不回显 stdin。
+    // 这样后端通过 data() 注入的 CWD 钩子脚本不会被回显到终端，注入后再用
+    // stty echo 恢复正常回显。比前端过滤 PTY 回显更可靠（VS Code 同款做法）。
     channel
-        .request_pty(true, "xterm", 80, 24, 0, 0, &[])
+        .request_pty(true, "xterm", 80, 24, 0, 0, &[(russh::Pty::ECHO, 0)])
         .await
         .map_err(|e| e.to_string())?;
     channel
@@ -410,6 +413,7 @@ if [ -n "$BASH_VERSION" ]; then
 elif [ -n "$ZSH_VERSION" ]; then
   precmd_functions+=(__iterminal_cwd_report)
 fi
+stty echo 2>/dev/null
 "#;
     let _ = channel.data(cwd_hook.as_bytes()).await;
 
