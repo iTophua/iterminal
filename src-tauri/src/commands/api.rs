@@ -1444,17 +1444,15 @@ fn write_token_file(token: &str) {
 }
 
 /// 确保 token 存在：DB 有则读，没有则生成并存 DB + 写文件。
+/// 每次启动 API 服务（打开 MCP 开关）都会无条件用 DB 的 token 覆盖文件，
+/// 保证 DB 与文件始终一致，避免 MCP 服务器读到过期 token 而鉴权失败。
 fn ensure_mcp_token() -> Option<String> {
     // 尝试从 DB 读
     if let Ok(Some(stored)) = super::db::get_setting_inner(MCP_TOKEN_SETTING_KEY) {
         if !stored.is_empty() {
-            // 确保 token 文件存在（应用可能换了机器）
-            if mcp_token_file_path()
-                .map(|p| !p.exists())
-                .unwrap_or(false)
-            {
-                write_token_file(&stored);
-            }
+            // 无条件回写：确保文件内容与 DB 一致
+            // （之前只在文件不存在时写，一旦两者脱节就永远修复不了，导致 401）
+            write_token_file(&stored);
             return Some(stored);
         }
     }
