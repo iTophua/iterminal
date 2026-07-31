@@ -406,10 +406,11 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
     // 注入 OSC 7 CWD 上报钩子：每次提示符出现前，shell 发送当前目录给终端。
     // 前端解析 OSC 7 (file://host/path) 后更新文件管理面板路径，实现终端 cd 后面板跟随。
     // bash 用 PROMPT_COMMAND，zsh 用 precmd，sh/fish 兜底不注入（不影响功能）。
+    // PROMPT_COMMAND 用 ${PROMPT_COMMAND:+;$PROMPT_COMMAND} 追加（而非覆盖）用户已有配置。
     let cwd_hook = r#"
 __iterminal_cwd_report() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }
 if [ -n "$BASH_VERSION" ]; then
-  PROMPT_COMMAND="__iterminal_cwd_report;$PROMPT_COMMAND"
+  PROMPT_COMMAND="__iterminal_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 elif [ -n "$ZSH_VERSION" ]; then
   precmd_functions+=(__iterminal_cwd_report)
 fi

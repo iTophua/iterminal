@@ -159,6 +159,12 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
     }
   }, [visible, connectionId])
 
+  // 记录"上次跟随终端 cd 跳转到的路径"，仅在跟随 effect 实际加载后更新。
+  // 不能用 currentPathRef 做比较基准——它会在每次渲染同步成最新 currentPath，
+  // 导致跟随 effect 执行时 newPath === currentPathRef.current 永远成立而被短路，
+  // 终端 cd 后面板不跳转。
+  const lastFollowedPathRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!visible || !connectionId) return
     const newPath = store.currentPaths[connectionId] || '/'
@@ -167,8 +173,9 @@ export function useFileManager({ connectionId, visible, viewMode, showHidden }: 
       panelNavigatedPathRef.current = null
       return
     }
-    // 路径没变也不重复加载
-    if (newPath === currentPathRef.current) return
+    // 与上次跟随跳转的路径比较，没变就不重复加载
+    if (newPath === lastFollowedPathRef.current) return
+    lastFollowedPathRef.current = newPath
     // 终端 cd 触发的路径变化 → 面板跟随切换目录
     setPathInput(newPath)
     loadDirectoryRef.current(newPath, true)
