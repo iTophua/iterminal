@@ -281,7 +281,48 @@ export class CommandTracker {
    * 用计数而非布尔：一次 MCP 活动可能跨越多个 shell-output chunk（提示符可能分多次到达）。
    */
   private suppressCount: number = 0
+  /**
+   * OSC 7 跨 chunk 缓冲。SSH 的 shell-output 事件可能把一个 OSC 7 序列
+   * 拆到多个 chunk（前一个 chunk 结尾 \x1b]7;file://host，下一个 chunk 开头 /path\x07），
+   * 单 chunk 正则匹配会漏掉。这里暂存未闭合的 OSC 7 头部，跨 chunk 拼接后再匹配。
+   */
+  private osc7Buffer: string = ''
   
+  /**
+   * 从（可能跨 chunk 的）输出中提取 OSC 7 上报的当前目录。
+   * 把当前 chunk 追加到缓冲，匹配完整的 OSC 7 序列；
+   * 匹配失败时若缓冲里有未闭合的 \x1b]7; 头部，则保留到下次拼接，
+   * 否则清空缓冲避免无限增长。
+   * @returns 路径如 "/home/admin"，提取失败返回 null
+   */
+  private extractOsc7(output: string): string | null {
+    const combined = this.osc7Buffer + output
+    const match = combined.match(OSC7_REGEX)
+    if (match) {
+      const path = match[1]
+      // 匹配位置之后可能还有新的未闭合 OSC 7 头部
+      // （同一个 chunk 里先 cd 到 A，紧接着又 cd 到 B，第二个序列被截断）。
+      // 用 lastIndexOf 在匹配尾部之后查找，保留它到下次拼接，避免丢失。
+      const afterMatch = combined.slice(match.index! + match[0].length)
+      const headIdx = afterMatch.lastIndexOf('\x1b]7;')
+      this.osc7Buffer = headIdx >= 0 && afterMatch.length < 4096
+        ? afterMatch.slice(headIdx)
+        : ''
+      return path ? decodeURIComponent(path) : '/'
+    }
+    // 未匹配：若含 OSC 7 头部（\x1b]7;）但未闭合（缺结尾 \x07 或 \x1b\\），
+    // 保留从最后一个头部开始的部分到下次拼接。
+    const headIdx = combined.lastIndexOf('\x1b]7;')
+    if (headIdx >= 0) {
+      // 防止缓冲无限增长：限制保留长度（OSC 7 路径通常 < 4KB）
+      const tail = combined.slice(headIdx)
+      this.osc7Buffer = tail.length < 4096 ? tail : ''
+    } else {
+      this.osc7Buffer = ''
+    }
+    return null
+  }
+
   recordInput(data: string): void {
     if (data.startsWith('\x1b')) return
     
@@ -324,9 +365,11 @@ export class CommandTracker {
     }
 
     // OSC 7 CWD 上报检测（在 stripAnsi 之前，否则 payload 被删）
-    // 高频路径上大部分 chunk 不含 ESC 序列，includes 快速短路
-    if (output.includes('\x1b]7;')) {
-      const cwd = extractCwdFromOsc7(output)
+    // 跨 chunk 处理：先把当前 chunk 追加到缓冲，再从缓冲里提取。
+    // SSH 流式输出可能把一个 OSC 7 序列拆到多个 shell-output 事件，
+    // 单 chunk 正则匹配会漏掉，导致 cd 后文件管理面板不跟随跳转。
+    if (output.includes('\x1b]7;') || this.osc7Buffer) {
+      const cwd = this.extractOsc7(output)
       if (cwd) {
         result.cwd = cwd
       }
