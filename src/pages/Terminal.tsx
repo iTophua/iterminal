@@ -972,6 +972,21 @@ const handlePointerUp = () => {
               e.preventDefault()
               e.stopPropagation()
             }, true)
+            // 拦截 Option 组合键产生的 dead-key 字符泄漏进 PTY。
+            // 根因：xterm.js 的 macOptionIsMeta 把 Option 当 Meta，但 macOS 对 Option+字母
+            // 组合（如 Option+H=˙）会通过 composition 路径生成 dead-key 字符，
+            // 经 textarea 的 beforeinput（insertText）写进 PTY。
+            // attachCustomKeyEventHandler 只拦 keydown，拦不住 beforeinput（xterm 上游
+            // issue #2831，至今未修，6.0.0 最新版仍在）。
+            // 在事件源头（textarea capture）拦截：altKey 按下期间的 insertText 一律拒绝。
+            // 不影响中文输入——真实 IME 组合期间 inputType 是 insertCompositionText，不是 insertText。
+            textarea.addEventListener('beforeinput', (e: Event) => {
+              const ie = e as InputEvent & { altKey: boolean }
+              if (ie.inputType === 'insertText' && ie.altKey) {
+                e.preventDefault()
+                e.stopPropagation()
+              }
+            }, true)
           }
 
           terminal.attachCustomKeyEventHandler(event => {
