@@ -442,6 +442,9 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
     const key = historyModalKey
     if (shellIdsRef.current[key]) {
       // 走统一写入队列，保证与随后按键的顺序（避免选历史命令后立刻回车产生乱序）
+      // 先发 Ctrl+U 清空当前行：弹出历史弹窗的快捷键（macOptionIsMeta 下 Option 组合键）
+      // 可能在 PTY 里留下一个 dead-key 回显字符（如 ˙），直接写命令会拼到脏字符后面。
+      enqueueWriteRef.current(key, '\x15')
       enqueueWriteRef.current(key, command)
       currentInputRef.current[key] = command
     }
