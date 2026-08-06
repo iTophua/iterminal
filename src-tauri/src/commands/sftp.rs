@@ -1507,8 +1507,9 @@ pub async fn upload_file_sync(
         .unwrap_or("/");
     ensure_remote_directory(&sftp, remote_parent).await?;
 
+    use russh_sftp::protocol::OpenFlags;
     let mut remote_file = sftp
-        .open(&remote_path)
+        .open_with_flags(&remote_path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
         .await
         .map_err(|e| format!("无法创建远程文件: {}", e))?;
 
