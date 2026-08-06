@@ -43,6 +43,7 @@ fn main() {
             iterminal::commands::sftp::read_file_content,
             iterminal::commands::sftp::write_file_content,
             iterminal::commands::sftp::upload_file,
+            iterminal::commands::sftp::upload_file_sudo,
             iterminal::commands::sftp::download_file,
             iterminal::commands::sftp::download_folder,
             iterminal::commands::sftp::upload_folder,

@@ -6,6 +6,7 @@ use russh::{ChannelMsg, Disconnect};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
+use std::time::Duration;
 use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Emitter;
@@ -308,6 +309,83 @@ pub async fn execute_command(id: String, command: String) -> Result<CommandResul
         output: String::from_utf8_lossy(&output).to_string(),
         error: if error_output.is_empty() { None } else { Some(String::from_utf8_lossy(&error_output).to_string()) },
     })
+}
+
+/// 带 stdin 写入的 exec，用于 sudo -S 通过 stdin 喂密码。
+/// exec 后若有 input，通过 channel.data() 写入；整体包 30s 超时，防 sudo 卡死。
+/// 不改 execute_command 本身（docker/ai 在用，防回归），新增独立函数。
+pub async fn execute_command_with_input(
+    id: String,
+    command: String,
+    input: Option<String>,
+) -> Result<CommandResult, String> {
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let sessions = SESSIONS.read().await;
+        let session = sessions.get(&id).ok_or("Session not found")?;
+        let mut channel = session
+            .handle
+            .channel_open_session()
+            .await
+            .map_err(|e| e.to_string())?;
+        drop(sessions);
+
+        channel
+            .exec(true, command.as_str())
+            .await
+            .map_err(|e| e.to_string())?;
+
+        // exec 后立即写 stdin（sudo -S 会从 stdin 读密码）
+        if let Some(input_data) = &input {
+            // 略微延迟，让远程进程（sudo）启动并准备好读 stdin
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            channel
+                .data(input_data.as_bytes())
+                .await
+                .map_err(|e| e.to_string())?;
+            // 写完关闭 stdin，让 sudo 知道密码输入结束
+            let _ = channel.eof().await;
+        }
+
+        let mut output = Vec::new();
+        let mut error_output = Vec::new();
+        let mut exit_code: Option<u32> = None;
+        while let Some(msg) = channel.wait().await {
+            match msg {
+                ChannelMsg::Data { data } => output.extend_from_slice(&data),
+                ChannelMsg::ExtendedData { data, ext } => {
+                    if ext == 1 {
+                        error_output.extend_from_slice(&data);
+                    }
+                }
+                ChannelMsg::ExitStatus { exit_status } => {
+                    exit_code = Some(exit_status);
+                }
+                ChannelMsg::Eof => break,
+                ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+
+        let _ = channel.eof();
+        let _ = channel.close().await;
+
+        let success = exit_code.map(|c| c == 0).unwrap_or(true);
+        Ok(CommandResult {
+            success,
+            output: String::from_utf8_lossy(&output).to_string(),
+            error: if error_output.is_empty() {
+                None
+            } else {
+                Some(String::from_utf8_lossy(&error_output).to_string())
+            },
+        })
+    })
+    .await;
+
+    match result {
+        Ok(inner) => inner,
+        Err(_) => Err("命令执行超时（30s），可能 sudo 需要密码但未配置或密码错误".to_string()),
+    }
 }
 
 #[tauri::command]

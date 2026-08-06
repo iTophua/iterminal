@@ -554,9 +554,14 @@ pub async fn upload_file(
         {
             Ok(f) => f,
             Err(e) => {
+                let err_str = format!("Failed to create remote file: {}", e);
                 let _ = app.emit(
                     &format!("transfer-complete-{}", task_id_clone),
-                    serde_json::json!({ "success": false, "error": format!("Failed to create remote file: {}", e) }),
+                    serde_json::json!({
+                        "success": false,
+                        "error": &err_str,
+                        "permission_denied": is_permission_error(&err_str),
+                    }),
                 );
                 return;
             }
@@ -619,9 +624,14 @@ pub async fn upload_file(
             };
 
             if let Err(e) = remote_file.write_all(&buffer[..n]).await {
+                let err_str = format!("Failed to write: {}", e);
                 let _ = app.emit(
                     &format!("transfer-complete-{}", task_id_clone),
-                    serde_json::json!({ "success": false, "error": format!("Failed to write: {}", e) }),
+                    serde_json::json!({
+                        "success": false,
+                        "error": &err_str,
+                        "permission_denied": is_permission_error(&err_str),
+                    }),
                 );
                 return;
             }
@@ -1532,6 +1542,312 @@ pub async fn upload_file_sync(
     }
 
     Ok(transferred)
+}
+
+/// 单引号转义：把路径安全地包进 shell 单引号。
+/// 单引号内的单引号用 '\'' 结束当前引号、转义单引号、再重新开引号。
+fn shell_quote(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{}'", escaped)
+}
+
+/// 判断 SFTP 错误是否为权限不足（供前端弹窗 sudo 询问用）
+pub fn is_permission_error(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("permission denied")
+        || e.contains("denied")
+        || e.contains("failure (ssh_fx")
+        || e.contains("failure (bad")
+}
+
+/// sudo 旁路上传（同步版，MCP/Tauri 共用核心）：
+/// 1. sftp 上传到 /tmp/iterminal_<ts>_<filename>
+/// 2. sudo mv 临时文件到目标路径（密码通过 stdin 喂入 sudo -S）
+/// 3. 清理临时文件
+pub async fn upload_file_sudo_sync(
+    connection_id: String,
+    local_path: String,
+    remote_path: String,
+) -> Result<u64, String> {
+    let remote_path = validate_path(&remote_path)?;
+    let sftp = get_sftp_session(&connection_id).await?;
+
+    // 1. 打开本地文件
+    let mut local_file = tokio::fs::File::open(&local_path)
+        .await
+        .map_err(|e| format!("无法打开本地文件: {}", e))?;
+
+    // 2. 生成临时路径 /tmp/iterminal_<ts>_<filename>
+    let filename = local_path
+        .rsplit('/')
+        .next()
+        .unwrap_or("upload");
+    let timestamp = chrono::Utc::now().timestamp_millis();
+    let tmp_path = format!("/tmp/iterminal_{}_{}", timestamp, filename);
+
+    // 3. sftp 上传到临时路径（/tmp 当前用户可写）
+    // 注意：必须用 CREATE|TRUNCATE|WRITE，sftp.open() 默认是 READ only！
+    use russh_sftp::protocol::OpenFlags;
+    let mut remote_file = sftp
+        .open_with_flags(&tmp_path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+        .await
+        .map_err(|e| format!("无法创建临时文件 {}: {}", tmp_path, e))?;
+
+    let mut buffer = vec![0u8; 65536];
+    let mut transferred: u64 = 0;
+    loop {
+        let n = local_file
+            .read(&mut buffer)
+            .await
+            .map_err(|e| format!("读取失败: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        remote_file
+            .write_all(&buffer[..n])
+            .await
+            .map_err(|e| format!("写入临时文件失败: {}", e))?;
+        transferred += n as u64;
+    }
+    // 显式关闭 remote_file，确保 flush 到磁盘
+    drop(remote_file);
+
+    // 4. sudo mv 临时文件到目标路径
+    // 从主 session 拿密码（sudo -S 通过 stdin 喂入）
+    let password = {
+        let sessions = super::ssh::SESSIONS.read().await;
+        sessions
+            .get(&connection_id)
+            .and_then(|s| s.connection.password.clone())
+    };
+
+    let mv_cmd = format!(
+        "mv -- {} {}",
+        shell_quote(&tmp_path),
+        shell_quote(&remote_path)
+    );
+
+    let sudo_result = if let Some(pwd) = password {
+        // 有密码：sudo -S 通过 stdin 喂密码
+        let full_cmd = format!("sudo -S sh -c {}", shell_quote(&mv_cmd));
+        super::ssh::execute_command_with_input(
+            connection_id.clone(),
+            full_cmd,
+            Some(format!("{}\n", pwd)),
+        )
+        .await
+    } else {
+        // 无密码：尝试 sudo -n（NOPASSWD 免密）
+        let full_cmd = format!("sudo -n sh -c {}", shell_quote(&mv_cmd));
+        super::ssh::execute_command_with_input(connection_id.clone(), full_cmd, None).await
+    };
+
+    // 5. 无论 mv 成功失败都清理临时文件（当前用户对 /tmp 有权，不需 sudo）
+    let cleanup_cmd = format!("rm -f {}", shell_quote(&tmp_path));
+    let _ = super::ssh::execute_command(connection_id, cleanup_cmd).await;
+
+    match sudo_result {
+        Ok(cmd_result) if cmd_result.success => Ok(transferred),
+        Ok(cmd_result) => {
+            let err = cmd_result
+                .error
+                .unwrap_or_else(|| "sudo 执行失败（未知原因）".to_string());
+            // 过滤掉 sudo 密码提示噪声
+            let clean_err = err
+                .lines()
+                .filter(|l| !l.contains("password for") && !l.contains("[sudo]"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Err(if clean_err.is_empty() {
+                "sudo 提权失败，密码错误或用户不在 sudoers".to_string()
+            } else {
+                format!("sudo 提权失败: {}", clean_err)
+            })
+        }
+        Err(e) => Err(format!("sudo 提权失败: {}", e)),
+    }
+}
+
+/// sudo 旁路上传（Tauri 命令版，发 progress/complete 事件）。
+/// 流程：sftp 上传 /tmp（带进度）→ sudo mv 到目标 → 清理临时文件。
+#[tauri::command]
+pub async fn upload_file_sudo(
+    connection_id: String,
+    local_path: String,
+    remote_path: String,
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let remote_path = validate_path(&remote_path)?;
+    let sftp = get_sftp_session(&connection_id).await?;
+    let task_id_clone = task_id.clone();
+
+    tokio::spawn(async move {
+        use tauri::Emitter;
+
+        // 1. 打开本地文件
+        let mut local_file = match tokio::fs::File::open(&local_path).await {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to open local file: {}", e) }),
+                );
+                return;
+            }
+        };
+
+        let total_size = match local_file.metadata().await {
+            Ok(m) => m.len(),
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("Failed to get metadata: {}", e) }),
+                );
+                return;
+            }
+        };
+
+        // 2. 生成临时路径
+        let filename = local_path.rsplit('/').next().unwrap_or("upload");
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let tmp_path = format!("/tmp/iterminal_{}_{}", timestamp, filename);
+
+        // 3. sftp 上传到 /tmp（带进度）。必须用 CREATE|TRUNCATE|WRITE。
+        use russh_sftp::protocol::OpenFlags;
+        let mut remote_file = match sftp
+            .open_with_flags(&tmp_path, OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE)
+            .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("无法创建临时文件: {}", e) }),
+                );
+                return;
+            }
+        };
+
+        let mut buffer = vec![0u8; 65536];
+        let mut transferred: u64 = 0;
+        let mut last_progress = std::time::Instant::now();
+        let mut upload_failed = false;
+
+        loop {
+            let n = match local_file.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(e) => {
+                    let _ = app.emit(
+                        &format!("transfer-complete-{}", task_id_clone),
+                        serde_json::json!({ "success": false, "error": format!("读取失败: {}", e) }),
+                    );
+                    upload_failed = true;
+                    break;
+                }
+            };
+
+            if let Err(e) = remote_file.write_all(&buffer[..n]).await {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("写入临时文件失败: {}", e) }),
+                );
+                upload_failed = true;
+                break;
+            }
+
+            transferred += n as u64;
+
+            // 每 200ms 发一次进度
+            if last_progress.elapsed() >= std::time::Duration::from_millis(200) {
+                let _ = app.emit(
+                    &format!("transfer-progress-{}", task_id_clone),
+                    serde_json::json!({ "transferred": transferred, "total": total_size }),
+                );
+                last_progress = std::time::Instant::now();
+            }
+        }
+        drop(remote_file);
+
+        if upload_failed {
+            // 清理临时文件
+            let cleanup = format!("rm -f {}", shell_quote(&tmp_path));
+            let _ = super::ssh::execute_command(connection_id.clone(), cleanup).await;
+            return;
+        }
+
+        // 发送 100% 进度
+        let _ = app.emit(
+            &format!("transfer-progress-{}", task_id_clone),
+            serde_json::json!({ "transferred": total_size, "total": total_size }),
+        );
+
+        // 4. sudo mv 临时文件到目标
+        let password = {
+            let sessions = super::ssh::SESSIONS.read().await;
+            sessions
+                .get(&connection_id)
+                .and_then(|s| s.connection.password.clone())
+        };
+
+        let mv_cmd = format!(
+            "mv -- {} {}",
+            shell_quote(&tmp_path),
+            shell_quote(&remote_path)
+        );
+
+        let sudo_result = if let Some(pwd) = password {
+            let full_cmd = format!("sudo -S sh -c {}", shell_quote(&mv_cmd));
+            super::ssh::execute_command_with_input(
+                connection_id.clone(),
+                full_cmd,
+                Some(format!("{}\n", pwd)),
+            )
+            .await
+        } else {
+            let full_cmd = format!("sudo -n sh -c {}", shell_quote(&mv_cmd));
+            super::ssh::execute_command_with_input(connection_id.clone(), full_cmd, None).await
+        };
+
+        // 5. 清理临时文件（无论 mv 成败）
+        let cleanup = format!("rm -f {}", shell_quote(&tmp_path));
+        let _ = super::ssh::execute_command(connection_id, cleanup).await;
+
+        match sudo_result {
+            Ok(cmd_result) if cmd_result.success => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": true, "bytes_transferred": transferred }),
+                );
+            }
+            Ok(cmd_result) => {
+                let err = cmd_result.error.unwrap_or_else(|| "sudo 执行失败".to_string());
+                let clean_err = err
+                    .lines()
+                    .filter(|l| !l.contains("password for") && !l.contains("[sudo]"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let msg = if clean_err.is_empty() {
+                    "sudo 提权失败，密码错误或用户不在 sudoers".to_string()
+                } else {
+                    format!("sudo 提权失败: {}", clean_err)
+                };
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": msg }),
+                );
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    &format!("transfer-complete-{}", task_id_clone),
+                    serde_json::json!({ "success": false, "error": format!("sudo 提权失败: {}", e) }),
+                );
+            }
+        }
+    });
+
+    Ok(task_id)
 }
 
 pub async fn download_file_sync(

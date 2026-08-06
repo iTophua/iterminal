@@ -769,6 +769,7 @@ async fn write_file_handler(
 pub struct UploadRequest {
     pub local_path: String,
     pub remote_path: String,
+    pub use_sudo: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -785,13 +786,22 @@ async fn upload_file_handler(
 ) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
     let task_id = format!("mcp-upload-{}", chrono::Utc::now().timestamp_millis());
 
-    let result = sftp::upload_file_sync(
-        id.clone(),
-        task_id.clone(),
-        payload.local_path.clone(),
-        payload.remote_path.clone(),
-    )
-    .await;
+    let result = if payload.use_sudo.unwrap_or(false) {
+        sftp::upload_file_sudo_sync(
+            id.clone(),
+            payload.local_path.clone(),
+            payload.remote_path.clone(),
+        )
+        .await
+    } else {
+        sftp::upload_file_sync(
+            id.clone(),
+            task_id.clone(),
+            payload.local_path.clone(),
+            payload.remote_path.clone(),
+        )
+        .await
+    };
 
     let details = format!("{} -> {}", payload.local_path, payload.remote_path);
 
@@ -1291,6 +1301,7 @@ async fn search_files_handler(
 pub struct UploadFolderRequest {
     pub local_path: String,
     pub remote_path: String,
+    pub use_sudo: Option<bool>,
 }
 
 async fn upload_folder_handler(

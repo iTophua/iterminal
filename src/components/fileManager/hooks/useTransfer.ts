@@ -23,7 +23,7 @@ export function useTransfer({
   selectedNode,
   refreshDirectory,
 }: UseTransferOptions) {
-  const { message } = App.useApp()
+  const { message, modal } = App.useApp()
   const connection = useTerminalStore((s) =>
     s.connectedConnections.find((c) => c.connectionId === connectionId)?.connection
   )
@@ -116,6 +116,87 @@ export function useTransfer({
     return checkInterval
   }, [])
 
+  const performSudoUpload = useCallback(
+    async (localPath: string, remotePath: string, fileName: string, targetDir: string) => {
+      const taskId = generateTaskId()
+      const now = Date.now()
+      const conn = connection
+
+      useTransferStore.getState().addRecord({
+        id: taskId,
+        connectionId,
+        connectionName: conn?.name || 'Unknown',
+        connectionHost: conn?.host || '',
+        type: 'upload',
+        localPath,
+        remotePath,
+        fileName,
+        fileSize: 0,
+        transferred: 0,
+        status: 'pending',
+        startTime: now,
+      })
+
+      useTransferStore.getState().updateRecord(taskId, { status: 'transferring', error: 'sudo 提权上传中...' })
+
+      listen<{ transferred: number; total: number; totalFiles?: number; completedFiles?: number }>(
+        `transfer-progress-${taskId}`,
+        (event) => {
+          const state = useTransferStore.getState()
+          const record = state.records.find(r => r.id === taskId)
+          const speed = record ? calculateSpeed(event.payload.transferred, record.startTime) : 0
+          state.updateProgress(
+            taskId,
+            event.payload.transferred,
+            event.payload.total,
+            event.payload.totalFiles,
+            event.payload.completedFiles,
+            speed
+          )
+        }
+      ).then((unlistenProgress) => {
+        listen<{ success: boolean; cancelled: boolean; error?: string }>(
+          `transfer-complete-${taskId}`,
+          (event) => {
+            unlistenProgress()
+            const result = event.payload
+            if (result.cancelled) {
+              useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
+            } else if (result.success) {
+              useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
+              message.success(`sudo 上传完成: ${fileName}`)
+              refreshDirectory(targetDir)
+            } else {
+              useTransferStore.getState().updateRecord(taskId, {
+                status: 'failed',
+                error: result.error || 'Unknown error',
+              })
+              message.error(`sudo 上传失败: ${result.error}`)
+            }
+          }
+        ).then((unlistenComplete) => {
+          const failWithError = (err: string) => {
+            useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: err })
+            message.error(`sudo 上传失败: ${err}`)
+          }
+
+          const timeoutInterval = setupTransferTimeout(taskId, unlistenProgress, unlistenComplete, failWithError)
+
+          invoke('upload_file_sudo', { taskId, connectionId, localPath, remotePath }).catch((err) => {
+            clearInterval(timeoutInterval)
+            unlistenProgress()
+            unlistenComplete()
+            useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
+            message.error(`sudo 上传失败: ${err}`)
+          }).finally(() => {
+            clearInterval(timeoutInterval)
+          })
+        })
+      })
+    },
+    [connectionId, connection, message, refreshDirectory, calculateSpeed, setupTransferTimeout]
+  )
+
   const performUpload = useCallback(
     async (localPath: string, remotePath: string, fileName: string, targetDir: string) => {
       const taskId = generateTaskId()
@@ -155,7 +236,7 @@ export function useTransfer({
           )
         }
       ).then((unlistenProgress) => {
-        listen<{ success: boolean; cancelled: boolean; error?: string }>(
+        listen<{ success: boolean; cancelled: boolean; error?: string; permission_denied?: boolean }>(
           `transfer-complete-${taskId}`,
           (event) => {
             unlistenProgress()
@@ -167,11 +248,29 @@ export function useTransfer({
               message.success(`上传完成: ${fileName}`)
               refreshDirectory(targetDir)
             } else {
-              useTransferStore.getState().updateRecord(taskId, {
-                status: 'failed',
-                error: result.error || 'Unknown error',
-              })
-              message.error(`上传失败: ${result.error}`)
+              // 权限不足时弹窗询问是否 sudo 提权重试
+              if (result.permission_denied) {
+                modal.confirm({
+                  title: '权限不足',
+                  content: `目标目录无写权限（${result.error}）。是否使用 sudo 提权重新上传？`,
+                  okText: 'sudo 上传',
+                  cancelText: '取消',
+                  onOk: () => {
+                    performSudoUpload(localPath, remotePath, fileName, targetDir)
+                  },
+                })
+                // 标记原任务为 failed（已发起 sudo 重试）
+                useTransferStore.getState().updateRecord(taskId, {
+                  status: 'failed',
+                  error: '权限不足，等待 sudo 重试',
+                })
+              } else {
+                useTransferStore.getState().updateRecord(taskId, {
+                  status: 'failed',
+                  error: result.error || 'Unknown error',
+                })
+                message.error(`上传失败: ${result.error}`)
+              }
             }
           }
         ).then((unlistenComplete) => {
@@ -194,7 +293,7 @@ export function useTransfer({
         })
       })
     },
-    [connectionId, connection, message, refreshDirectory, calculateSpeed, setupTransferTimeout]
+    [connectionId, connection, message, modal, refreshDirectory, calculateSpeed, setupTransferTimeout, performSudoUpload]
   )
 
   const uploadFile = useCallback(
@@ -264,27 +363,41 @@ export function useTransfer({
               event.payload.completedFiles
             )
         }
-      ).then((unlisten) => {
-        invoke<{ success: boolean; cancelled: boolean }>('upload_folder', {
-          taskId,
-          connectionId,
-          localPath,
-          remotePath,
-        })
-          .then((result) => {
+      ).then((unlistenProgress) => {
+        // 监听 transfer-complete 事件：后端 upload_folder 在 spawn 后立即返回 Ok，
+        // 真正的成功/失败通过 transfer-complete 事件传递（此前未监听，导致失败时误报成功）
+        listen<{ success: boolean; cancelled: boolean; error?: string; permission_denied?: boolean }>(
+          `transfer-complete-${taskId}`,
+          (event) => {
+            unlistenProgress()
+            const result = event.payload
             if (result.cancelled) {
               useTransferStore.getState().updateRecord(taskId, { status: 'cancelled', endTime: Date.now() })
-            } else {
+            } else if (result.success) {
               useTransferStore.getState().updateRecord(taskId, { status: 'completed', endTime: Date.now() })
               message.success(`上传完成: ${folderName}`)
               refreshDirectory(dir)
+            } else {
+              useTransferStore.getState().updateRecord(taskId, {
+                status: 'failed',
+                error: result.error || 'Unknown error',
+              })
+              message.error(`上传失败: ${result.error}`)
             }
-          })
-          .catch((err) => {
+          }
+        ).then((unlistenComplete) => {
+          invoke('upload_folder', {
+            taskId,
+            connectionId,
+            localPath,
+            remotePath,
+          }).catch((err) => {
+            unlistenProgress()
+            unlistenComplete()
             useTransferStore.getState().updateRecord(taskId, { status: 'failed', error: String(err) })
             message.error(`上传失败: ${err}`)
           })
-          .finally(() => unlisten())
+        })
       })
     },
     [connectionId, connection, message, refreshDirectory]

@@ -319,13 +319,14 @@ const tools: Tool[] = [
   },
   {
     name: "iter_upload_file",
-    description: "上传本地文件到远程服务器。参数: id(连接标识), local_path(本地文件路径), remote_path(远程目标路径)",
+    description: "上传本地文件到远程服务器。参数: id(连接标识), local_path(本地文件路径), remote_path(远程目标路径)。可选 use_sudo: 目标目录无写权限时用 sudo 提权上传（默认 false）",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "连接标识符" },
         local_path: { type: "string", description: "本地文件路径" },
         remote_path: { type: "string", description: "远程目标路径" },
+        use_sudo: { type: "boolean", description: "权限不足时用 sudo 提权上传（默认 false）" },
       },
       required: ["id", "local_path", "remote_path"],
     },
@@ -453,13 +454,14 @@ const tools: Tool[] = [
   },
   {
     name: "iter_upload_folder",
-    description: "上传本地文件夹到远程服务器。参数: id(连接标识), local_path(本地文件夹路径), remote_path(远程目标路径)",
+    description: "上传本地文件夹到远程服务器。参数: id(连接标识), local_path(本地文件夹路径), remote_path(远程目标路径)。可选 use_sudo: 目标目录无写权限时用 sudo 提权上传（默认 false）",
     inputSchema: {
       type: "object",
       properties: {
         id: { type: "string", description: "连接标识符" },
         local_path: { type: "string", description: "本地文件夹路径" },
         remote_path: { type: "string", description: "远程目标路径" },
+        use_sudo: { type: "boolean", description: "权限不足时用 sudo 提权上传（默认 false）" },
       },
       required: ["id", "local_path", "remote_path"],
     },
@@ -611,6 +613,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             local_path: params.local_path,
             remote_path: params.remote_path,
+            ...(params.use_sudo === true ? { use_sudo: true } : {}),
           }
         );
         break;
@@ -705,6 +708,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             local_path: params.local_path,
             remote_path: params.remote_path,
+            ...(params.use_sudo === true ? { use_sudo: true } : {}),
           }
         );
         break;
