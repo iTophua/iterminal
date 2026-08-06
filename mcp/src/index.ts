@@ -125,12 +125,16 @@ interface ConnectionRecord {
 async function apiCall<T>(
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  timeoutMs: number = 30000
 ): Promise<ApiResponse<T>> {
   const url = `${API_BASE}${path}`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
-  
+  // timeoutMs <= 0 表示不限时（上传/下载大文件可能耗时很久）
+  const timeoutId = timeoutMs > 0
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : undefined;
+
   const options: RequestInit = {
     method,
     headers: {
@@ -142,7 +146,7 @@ async function apiCall<T>(
   if (body) {
     options.body = JSON.stringify(body);
   }
-  
+
   try {
     const response = await fetch(url, options);
     if (!response.ok) {
@@ -156,7 +160,9 @@ async function apiCall<T>(
     if (error instanceof Error && error.name === 'AbortError') {
       return {
         success: false,
-        error: 'Request timeout after 30 seconds',
+        error: timeoutMs > 0
+          ? `请求超时（${Math.round(timeoutMs / 1000)} 秒），文件可能过大或网络较慢`
+          : '请求被中断',
       };
     }
     return {
@@ -164,7 +170,7 @@ async function apiCall<T>(
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    clearTimeout(timeoutId);
+    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 
@@ -614,7 +620,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             local_path: params.local_path,
             remote_path: params.remote_path,
             ...(params.use_sudo === true ? { use_sudo: true } : {}),
-          }
+          },
+          0  // 不限时（大文件上传/下载）
         );
         break;
       }
@@ -626,7 +633,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           {
             remote_path: params.remote_path,
             local_path: params.local_path,
-          }
+          },
+          0  // 不限时（大文件上传/下载）
         );
         break;
       }
@@ -678,18 +686,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "iter_compress": {
-        result = await apiCall<{ success: boolean; error?: string }>("POST", `/api/connections/${params.id}/compress`, {
-          source_path: params.source_path,
-          target_path: params.target_path,
-        });
+        result = await apiCall<{ success: boolean; error?: string }>(
+          "POST",
+          `/api/connections/${params.id}/compress`,
+          {
+            source_path: params.source_path,
+            target_path: params.target_path,
+          },
+          0  // 不限时（大文件压缩耗时久）
+        );
         break;
       }
 
       case "iter_extract": {
-        result = await apiCall<{ success: boolean; error?: string }>("POST", `/api/connections/${params.id}/extract`, {
-          file_path: params.file_path,
-          target_dir: params.target_dir,
-        });
+        result = await apiCall<{ success: boolean; error?: string }>(
+          "POST",
+          `/api/connections/${params.id}/extract`,
+          {
+            file_path: params.file_path,
+            target_dir: params.target_dir,
+          },
+          0  // 不限时（大文件解压耗时久）
+        );
         break;
       }
 
@@ -709,7 +727,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             local_path: params.local_path,
             remote_path: params.remote_path,
             ...(params.use_sudo === true ? { use_sudo: true } : {}),
-          }
+          },
+          0  // 不限时（大文件上传/下载）
         );
         break;
       }
