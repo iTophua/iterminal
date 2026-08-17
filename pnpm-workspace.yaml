@@ -1,3 +1,7 @@
+# packages 必须声明：CI 的 pnpm 9 遇到无 packages 字段的 workspace 文件会报
+# "packages field missing or empty" 直接失败（本文件只为携带 allowBuilds 等配置）
+packages:
+  - '.'
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
