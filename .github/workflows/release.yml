@@ -216,7 +216,7 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./mcp
-        run: pnpm install
+        run: pnpm install --ignore-workspace
 
       - name: Build
         working-directory: ./mcp
