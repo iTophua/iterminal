@@ -113,8 +113,32 @@ fn emit_operation(
         result: result.map(|s| s.to_string()),
     };
 
-    // 持久化到 DB（供独立日志页面查询历史）
-    db::save_mcp_log(operation, connection_id, details, success, error, result);
+    // 持久化到 DB（供独立日志页面查询历史）。
+    // spawn_blocking 异步写：SQLite 单写者 + 每次事务 fsync，同步写在请求路径上会把
+    // 高频调用（多智能体轮询）串行排队并阻塞 tokio worker。日志允许偶尔丢失，不等结果。
+    // 无 tokio runtime 的上下文（理论上不存在）退回同步写。
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let op = operation.to_string();
+            let cid = connection_id.map(|s| s.to_string());
+            let det = details.to_string();
+            let err = error.map(|s| s.to_string());
+            let res = result.map(|s| s.to_string());
+            handle.spawn_blocking(move || {
+                db::save_mcp_log(
+                    &op,
+                    cid.as_deref(),
+                    &det,
+                    success,
+                    err.as_deref(),
+                    res.as_deref(),
+                );
+            });
+        }
+        Err(_) => {
+            db::save_mcp_log(operation, connection_id, details, success, error, result);
+        }
+    }
 
     let _ = app.emit("api-operation", &log);
 
@@ -478,7 +502,12 @@ async fn execute_command_handler(
                     result.output.clone()
                 };
                 Some(if combined.len() > 2000 {
-                    format!("{}…\n(截断，完整输出共 {} 字符)", &combined[..2000], combined.chars().count())
+                    // 按字符边界截断，防止切在 UTF-8 多字节字符中间 panic
+                    format!(
+                        "{}…\n(截断，完整输出共 {} 字符)",
+                        sftp::truncate_chars(&combined, 2000),
+                        combined.chars().count()
+                    )
                 } else {
                     combined
                 })
@@ -507,6 +536,12 @@ async fn execute_command_handler(
                         activity.push('\n');
                     }
                 }
+            }
+            if result.timed_out {
+                activity.push_str("\x1b[33m[MCP] 命令超时被终止（60s），以上为超时前已收到的输出\x1b[0m\r\n");
+            }
+            if result.output_truncated {
+                activity.push_str("\x1b[33m[MCP] 输出超过 1MB 已截断\x1b[0m\r\n");
             }
             activity.push_str(&format!(
                 "\x1b[{}m[MCP] exit code: {}\x1b[0m\r\n",

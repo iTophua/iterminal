@@ -58,6 +58,10 @@ interface CommandResult {
   success: boolean;
   output: string;
   error?: string;
+  /** 命令超时被强制终止（如 tail -f），output 含超时前已收到的输出 */
+  timed_out?: boolean;
+  /** stdout/stderr 超过 1MB 上限被截断 */
+  output_truncated?: boolean;
 }
 
 interface FileEntry {
@@ -227,7 +231,8 @@ const tools: Tool[] = [
   },
   {
     name: "iter_exec",
-    description: "在远程服务器执行命令。参数: id(连接标识), command(要执行的命令)",
+    description:
+      "在远程服务器执行命令（同步等待结束，最长 60 秒，输出上限 1MB）。查看日志请用 tail -n 200 等有限条数，不要用 tail -f / journalctl -f 等持续输出命令——它们不会结束，60 秒后被强制终止（此时返回 timed_out: true 及超时前的输出）。要看新输出就再次执行有限条数命令。参数: id(连接标识), command(要执行的命令)",
     inputSchema: {
       type: "object",
       properties: {

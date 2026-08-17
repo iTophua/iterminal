@@ -28,6 +28,12 @@ pub struct CommandResult {
     pub success: bool,
     pub output: String,
     pub error: Option<String>,
+    /// 命令超时被强制终止（如 tail -f），output 含超时前已收到的输出
+    #[serde(default)]
+    pub timed_out: bool,
+    /// stdout/stderr 超过 1MB 上限被截断
+    #[serde(default)]
+    pub output_truncated: bool,
 }
 
 pub struct SshClientHandler {
@@ -261,6 +267,61 @@ pub async fn disconnect_ssh(id: String) -> Result<bool, String> {
     Ok(true)
 }
 
+/// exec 默认超时：tail -f / journalctl -f 等不退出的命令会永久占用 channel
+/// （泄漏 session 配额、内存无限增长），超时后强制收 channel 返回已收到的输出。
+const EXEC_TIMEOUT_SECS: u64 = 60;
+
+/// 单个输出流的上限（stdout / stderr 各 1MB）。超出部分继续消费但丢弃：
+/// 若不消费，TCP 背压会卡住远端命令导致永远等不到 EOF；若全收，内存会随输出无限增长。
+const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
+
+/// 从 channel 收集 stdout/stderr 直到 EOF/Close，返回 (exit_code, 是否截断)。
+/// 数据写入调用方传入的 Vec，超时被取消时已收数据不丢失。
+async fn collect_channel_output(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    output: &mut Vec<u8>,
+    error_output: &mut Vec<u8>,
+) -> (Option<u32>, bool) {
+    fn append_capped(buf: &mut Vec<u8>, data: &[u8]) -> bool {
+        if buf.len() >= MAX_OUTPUT_BYTES {
+            return true;
+        }
+        let room = MAX_OUTPUT_BYTES - buf.len();
+        if data.len() > room {
+            buf.extend_from_slice(&data[..room]);
+            true
+        } else {
+            buf.extend_from_slice(data);
+            false
+        }
+    }
+
+    let mut exit_code: Option<u32> = None;
+    let mut truncated = false;
+    while let Some(msg) = channel.wait().await {
+        match msg {
+            ChannelMsg::Data { data } => {
+                if append_capped(output, &data) {
+                    truncated = true;
+                }
+            }
+            ChannelMsg::ExtendedData { data, ext } => {
+                if ext == 1 && append_capped(error_output, &data) {
+                    truncated = true;
+                }
+            }
+            ChannelMsg::ExitStatus { exit_status } => {
+                exit_code = Some(exit_status);
+                // 不直接 return：继续等 EOF，确保 channel 完整关闭
+            }
+            ChannelMsg::Eof => break,
+            ChannelMsg::Close => break,
+            _ => {}
+        }
+    }
+    (exit_code, truncated)
+}
+
 #[tauri::command]
 pub async fn execute_command(id: String, command: String) -> Result<CommandResult, String> {
     let sessions = SESSIONS.read().await;
@@ -280,34 +341,34 @@ pub async fn execute_command(id: String, command: String) -> Result<CommandResul
     let mut output = Vec::new();
     let mut error_output = Vec::new();
     let mut exit_code: Option<u32> = None;
-    while let Some(msg) = channel.wait().await {
-        match msg {
-            ChannelMsg::Data { data } => output.extend_from_slice(&data),
-            ChannelMsg::ExtendedData { data, ext } => {
-                if ext == 1 {
-                    error_output.extend_from_slice(&data);
-                }
-            }
-            ChannelMsg::ExitStatus { exit_status } => {
-                exit_code = Some(exit_status);
-                // 不直接 return：继续等 EOF，确保 channel 完整关闭
-            }
-            ChannelMsg::Eof => break,
-            ChannelMsg::Close => break,
-            _ => {}
+    let mut truncated = false;
+    let timed_out = match tokio::time::timeout(
+        Duration::from_secs(EXEC_TIMEOUT_SECS),
+        collect_channel_output(&mut channel, &mut output, &mut error_output),
+    )
+    .await
+    {
+        Ok((ec, tr)) => {
+            exit_code = ec;
+            truncated = tr;
+            false
         }
-    }
+        Err(_) => true,
+    };
 
     // 显式关闭 channel，确保远程 sshd 侧资源释放
     // （Docker 轮询等高频 exec 场景下，不关闭会累积半关闭 channel 导致泄漏）
     let _ = channel.eof();
     let _ = channel.close().await;
 
-    let success = exit_code.map(|c| c == 0).unwrap_or(true);
+    // 超时 = 命令未正常结束，success 报 false；exit_code 缺失时维持原语义（报 true）
+    let success = !timed_out && exit_code.map(|c| c == 0).unwrap_or(true);
     Ok(CommandResult {
         success,
         output: String::from_utf8_lossy(&output).to_string(),
         error: if error_output.is_empty() { None } else { Some(String::from_utf8_lossy(&error_output).to_string()) },
+        timed_out,
+        output_truncated: truncated,
     })
 }
 
@@ -348,23 +409,8 @@ pub async fn execute_command_with_input(
 
         let mut output = Vec::new();
         let mut error_output = Vec::new();
-        let mut exit_code: Option<u32> = None;
-        while let Some(msg) = channel.wait().await {
-            match msg {
-                ChannelMsg::Data { data } => output.extend_from_slice(&data),
-                ChannelMsg::ExtendedData { data, ext } => {
-                    if ext == 1 {
-                        error_output.extend_from_slice(&data);
-                    }
-                }
-                ChannelMsg::ExitStatus { exit_status } => {
-                    exit_code = Some(exit_status);
-                }
-                ChannelMsg::Eof => break,
-                ChannelMsg::Close => break,
-                _ => {}
-            }
-        }
+        let (exit_code, truncated) =
+            collect_channel_output(&mut channel, &mut output, &mut error_output).await;
 
         let _ = channel.eof();
         let _ = channel.close().await;
@@ -378,6 +424,8 @@ pub async fn execute_command_with_input(
             } else {
                 Some(String::from_utf8_lossy(&error_output).to_string())
             },
+            timed_out: false,
+            output_truncated: truncated,
         })
     })
     .await;

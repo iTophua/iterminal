@@ -130,19 +130,47 @@ async fn create_sftp_connection(
     Ok(Arc::new(sftp))
 }
 
+/// 每个连接的 SFTP 建连锁：多请求（多智能体）并发首次访问同一连接时，
+/// 只有一个请求真正建连，其余等它完成后直接用缓存。
+/// 之前 read-miss 后无锁建连再 insert，后写覆盖先写，被覆盖的连接成为
+/// 永不关闭的孤儿 sshd 会话。锁粒度到 connection：A 建连不阻塞 B 的缓存查询。
+static SFTP_CONNECT_LOCKS: Lazy<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    Lazy::new(|| tokio::sync::Mutex::new(HashMap::new()));
+
 async fn get_sftp_session(connection_id: &str) -> Result<Arc<SftpSession>, String> {
-    let sessions = SFTP_SESSIONS.read().await;
-    if let Some(state) = sessions.get(connection_id) {
-        return Ok(state.session.clone());
+    {
+        let sessions = SFTP_SESSIONS.read().await;
+        if let Some(state) = sessions.get(connection_id) {
+            return Ok(state.session.clone());
+        }
     }
-    drop(sessions);
 
-    let ssh_sessions = super::ssh::SESSIONS.read().await;
-    let ssh_session = ssh_sessions
-        .get(connection_id)
-        .ok_or("SSH session not found")?;
+    let connect_lock = {
+        let mut locks = SFTP_CONNECT_LOCKS.lock().await;
+        locks
+            .entry(connection_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    let _guard = connect_lock.lock().await;
 
-    let sftp = create_sftp_connection(&ssh_session.connection).await?;
+    // double-check：等锁期间可能已被首个请求建好
+    {
+        let sessions = SFTP_SESSIONS.read().await;
+        if let Some(state) = sessions.get(connection_id) {
+            return Ok(state.session.clone());
+        }
+    }
+
+    let connection = {
+        let ssh_sessions = super::ssh::SESSIONS.read().await;
+        let ssh_session = ssh_sessions
+            .get(connection_id)
+            .ok_or("SSH session not found")?;
+        ssh_session.connection.clone()
+    };
+
+    let sftp = create_sftp_connection(&connection).await?;
 
     SFTP_SESSIONS.write().await.insert(
         connection_id.to_string(),
@@ -446,10 +474,19 @@ pub async fn read_file_content(
         .open(&path)
         .await
         .map_err(|e| format!("打开文件失败: {}", e))?;
-    let bytes_read = file
-        .read(&mut buffer)
-        .await
-        .map_err(|e| format!("读取文件失败: {}", e))?;
+    // 循环读满：单次 read 只返回一个 SFTP packet（约 32KB），
+    // 只调一次会导致大于 32KB 的文件静默只返回开头一小段
+    let mut bytes_read = 0usize;
+    while bytes_read < read_size {
+        let n = file
+            .read(&mut buffer[bytes_read..])
+            .await
+            .map_err(|e| format!("读取文件失败: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        bytes_read += n;
+    }
     buffer.truncate(bytes_read);
 
     let (content, encoding) = if is_binary(&buffer) {
@@ -469,6 +506,18 @@ pub async fn read_file_content(
     })
 }
 
+/// 按字符边界安全截断（避免按字节切在 UTF-8 多字节字符中间导致 panic）
+pub fn truncate_chars(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 fn is_binary(data: &[u8]) -> bool {
     if data.is_empty() {
         return false;
@@ -480,10 +529,17 @@ fn is_binary(data: &[u8]) -> bool {
 }
 
 fn hex_encode(data: &[u8]) -> String {
-    data.iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<_>>()
-        .join(" ")
+    // 一次预分配 + 查表，替代每字节一次 format!（1MB 文件省掉百万次堆分配）
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity(data.len().saturating_mul(3));
+    for (i, b) in data.iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    s
 }
 
 #[tauri::command]
@@ -1986,8 +2042,8 @@ pub async fn search_files(
 
     let output_str = String::from_utf8_lossy(&output);
     let stderr_str = String::from_utf8_lossy(&stderr);
-    eprintln!("[search_files] stdout: {}", output_str);
-    eprintln!("[search_files] stderr: {}", stderr_str);
+    eprintln!("[search_files] stdout: {}", truncate_chars(&output_str, 500));
+    eprintln!("[search_files] stderr: {}", truncate_chars(&stderr_str, 500));
     let mut results: Vec<SearchResult> = Vec::new();
 
     for line in output_str.lines() {
