@@ -521,7 +521,7 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
                         fontWeight: 500,
                       }}
                     >
-                      {disk.used} GB / {disk.total} GB
+                      {formatMemory(disk.used)} / {formatMemory(disk.total)}
                     </span>
                   </div>
                   <Progress
@@ -532,7 +532,7 @@ function MonitorPanel({ visible, connectionId, onClose }: MonitorPanelProps) {
                     size="small"
                   />
                 </div>
-                <InfoRow label="可用" value={`${disk.available} GB`} />
+                <InfoRow label="可用" value={formatMemory(disk.available)} />
               </div>
             ))}
           </MonitorCard>

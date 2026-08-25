@@ -823,21 +823,22 @@ fn parse_disk_size(s: &str) -> u64 {
     if s.is_empty() {
         return 0;
     }
+    // df -h 对小于 10G 的容量输出一位小数（如 "1.9G"），必须用 f64 解析再取整
     let num_str = s.trim_end_matches(|c| c == 'K' || c == 'M' || c == 'G' || c == 'T');
-    let num = num_str.parse::<u64>().unwrap_or(0);
+    let num: f64 = num_str.parse().unwrap_or(0.0);
 
     let mb = if s.ends_with('T') {
-        num * 1024 * 1024
+        num * 1024.0 * 1024.0
     } else if s.ends_with('G') {
-        num * 1024
+        num * 1024.0
     } else if s.ends_with('M') {
         num
     } else if s.ends_with('K') {
-        num / 1024
+        num / 1024.0
     } else {
-        num * 1024
+        num * 1024.0
     };
-    mb
+    mb.round() as u64
 }
 
 #[tauri::command]
