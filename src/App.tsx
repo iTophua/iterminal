@@ -117,6 +117,29 @@ function MenuActionHandler() {
 }
 
 /**
+ * 从已保存的连接里找回凭据。connection-opened 事件不带密码（MCP 建连），
+ * 但断线重连时需要凭据，缺失会报"未提供认证信息"。
+ * 匹配顺序：id 精确匹配 → host+port+username 匹配。
+ */
+async function findSavedCredentials(conn: {
+  id: string
+  host: string
+  port: number
+  username: string
+}): Promise<{ password?: string; keyFile?: string; group?: string; tags?: string[] } | undefined> {
+  try {
+    const { getConnections } = await import('./services/database')
+    const all = await getConnections()
+    return (
+      all.find(c => c.id === conn.id) ||
+      all.find(c => c.host === conn.host && c.port === conn.port && c.username === conn.username)
+    )
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 监听 MCP/API 发来的 connection-opened 事件，自动在 UI 中打开终端。
  *
  * 当外部 AI 通过 HTTP API 建立连接时，后端 emit 此事件，前端收到后：
@@ -146,16 +169,18 @@ function McpConnectionHandler() {
         try {
           // AI 建立的连接已有 SSH session 但没 shell，补创建
           const shellId = await invoke<string>('get_shell', { id: connectionId })
+          // 从保存的连接里找回凭据，断线重连要用（事件本身不带密码）
+          const saved = await findSavedCredentials(conn)
           addConnection({
             id: conn.id,
             name: conn.name,
             host: conn.host,
             port: conn.port,
             username: conn.username,
-            password: undefined,
-            keyFile: undefined,
-            group: '',
-            tags: [],
+            password: saved?.password,
+            keyFile: saved?.keyFile,
+            group: saved?.group || '',
+            tags: saved?.tags || [],
             status: 'online',
           }, shellId)
           navigate('/terminal')

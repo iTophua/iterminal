@@ -1367,14 +1367,34 @@ const handlePointerUp = () => {
     try {
       await invoke('disconnect_ssh', { id: connectionId }).catch(() => {})
 
+      // store 里没凭据时（如 MCP 建连早期版本留下的连接对象），从保存的连接里找回，
+      // 否则后端报"未提供认证信息"
+      let password = conn.connection.password
+      let keyFile = conn.connection.keyFile
+      if (!password && !keyFile) {
+        try {
+          const { getConnections } = await import('../services/database')
+          const all = await getConnections()
+          const saved =
+            all.find(c => c.id === connectionId) ||
+            all.find(c => c.host === conn.connection.host && c.port === conn.connection.port && c.username === conn.connection.username)
+          if (saved) {
+            password = saved.password
+            keyFile = saved.keyFile
+          }
+        } catch {
+          // 查询失败则按原样尝试（保持旧行为）
+        }
+      }
+
       await invoke('connect_ssh', {
         id: connectionId,
         connection: {
           host: conn.connection.host,
           port: conn.connection.port,
           username: conn.connection.username,
-          password: conn.connection.password,
-          key_file: conn.connection.keyFile,
+          password,
+          key_file: keyFile,
         }
       })
 
