@@ -42,6 +42,7 @@ export function SortableTab({ id, label, connectionName }: SortableTabProps) {
       style={style}
       {...attributes}
       {...listeners}
+      title={connectionName || undefined}
       data-connection-tab-id={id}
       data-connection-name={connectionName}
       className="sortable-tab-wrapper"
