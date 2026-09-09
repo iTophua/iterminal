@@ -533,14 +533,12 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
     // 前端解析 OSC 7 (file://host/path) 后更新文件管理面板路径，实现终端 cd 后面板跟随。
     // bash 用 PROMPT_COMMAND，zsh 用 precmd，sh/fish 兜底不注入（不影响功能）。
     // PROMPT_COMMAND 用 ${PROMPT_COMMAND:+;$PROMPT_COMMAND} 追加（而非覆盖）用户已有配置。
-    let cwd_hook = r#"
-__iterminal_cwd_report() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }
-if [ -n "$BASH_VERSION" ]; then
-  PROMPT_COMMAND="__iterminal_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
-elif [ -n "$ZSH_VERSION" ]; then
-  precmd_functions+=(__iterminal_cwd_report)
-fi
-stty echo 2>/dev/null
+    //
+    // 必须单行注入：多行脚本会让 bash 对每个未完结行输出 PS2 续行提示符（">"）。
+    // PS2 是 shell 主动输出，PTY 关 ECHO 只能抑制输入回显、拦不住它，
+    // 表现为连接后终端出现一串 "> > > >"。单行 + 末尾换行让 bash 一次读完
+    // 整条命令，只输出一个新提示符；开头不带换行，避免额外空行提示符。
+    let cwd_hook = r#"__iterminal_cwd_report() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }; if [ -n "$BASH_VERSION" ]; then PROMPT_COMMAND="__iterminal_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; elif [ -n "$ZSH_VERSION" ]; then precmd_functions+=(__iterminal_cwd_report); fi; stty echo 2>/dev/null
 "#;
     let _ = channel.data(cwd_hook.as_bytes()).await;
 
