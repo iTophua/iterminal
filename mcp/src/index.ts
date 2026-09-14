@@ -531,7 +531,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           username: params.username,
           password: params.password,
         };
-        result = await apiCall<string>("POST", "/api/connections", body);
+        result = await apiCall<string>("POST", "/api/connections", body, 60000); // 慢认证服务器（PAM/GSSAPI）后端最长等 30s
         break;
       }
 
@@ -548,7 +548,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           username: params.username,
           password: params.password,
         };
-        result = await apiCall<boolean>("POST", "/api/connections/test", body);
+        result = await apiCall<boolean>("POST", "/api/connections/test", body, 60000);
         break;
       }
 

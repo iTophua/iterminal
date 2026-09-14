@@ -199,9 +199,12 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
         Err(_) => return Err("连接超时，请检查网络或服务器地址".to_string()),
     };
 
+    // 认证超时 20s：企业服务器认证栈可能很慢（PAM/sssd/LDAP、GSSAPI 等 DNS 反查），
+    // 实测有服务器 password 认证响应需要 10s+。5s 会把"慢"误判为"超时"。
+    // OpenSSH 客户端 LoginGraceTime 默认 120s，20s 已足够保守。
     let auth_success = if let Some(password) = &connection.password {
         let auth_result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(20),
             handle.authenticate_password(&connection.username, password),
         )
         .await;
@@ -223,7 +226,7 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
         let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
 
         let auth_result = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(20),
             handle.authenticate_publickey(&connection.username, key_with_hash),
         )
         .await;
