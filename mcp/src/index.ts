@@ -330,7 +330,8 @@ const tools: Tool[] = [
   },
   {
     name: "iter_upload_file",
-    description: "上传本地文件到远程服务器。参数: id(连接标识), local_path(本地文件路径), remote_path(远程目标路径)。可选 use_sudo: 目标目录无写权限时用 sudo 提权上传（默认 false）",
+    description:
+      "上传本地文件到远程服务器（后台执行，立即返回 task_id，不等传输完成）。发起后必须用 iter_transfer_status 轮询（间隔 2-5 秒）直到 state 为 done（成功，含 bytes_transferred）或 failed（失败，含 error）。不要假定调用返回即上传完成。可选 use_sudo: 目标目录无写权限时用 sudo 提权上传（默认 false）",
     inputSchema: {
       type: "object",
       properties: {
@@ -344,7 +345,8 @@ const tools: Tool[] = [
   },
   {
     name: "iter_download_file",
-    description: "从远程服务器下载文件到本地。参数: id(连接标识), remote_path(远程文件路径), local_path(本地保存路径)",
+    description:
+      "从远程服务器下载文件到本地（后台执行，立即返回 task_id，不等传输完成）。大文件（如数百 MB 日志/备份）下载需数分钟，发起后必须用 iter_transfer_status 轮询（间隔 2-5 秒）直到 state 为 done 或 failed。不要假定调用返回即下载完成",
     inputSchema: {
       type: "object",
       properties: {
@@ -353,6 +355,18 @@ const tools: Tool[] = [
         local_path: { type: "string", description: "本地保存路径" },
       },
       required: ["id", "remote_path", "local_path"],
+    },
+  },
+  {
+    name: "iter_transfer_status",
+    description:
+      "查询后台传输任务（iter_upload_file / iter_download_file / iter_upload_folder 发起的）的进度。返回 state(running/done/failed)、transferred 和 total（字节，total 为 0 表示未知）、error。建议每 2-5 秒轮询一次直到 done/failed",
+    inputSchema: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "传输发起时返回的任务 ID" },
+      },
+      required: ["task_id"],
     },
   },
   {
@@ -465,7 +479,8 @@ const tools: Tool[] = [
   },
   {
     name: "iter_upload_folder",
-    description: "上传本地文件夹到远程服务器。参数: id(连接标识), local_path(本地文件夹路径), remote_path(远程目标路径)。可选 use_sudo: 目标目录无写权限时用 sudo 提权上传（默认 false）",
+    description:
+      "上传本地文件夹到远程服务器（后台执行，立即返回 task_id）。发起后用 iter_transfer_status 轮询（间隔 2-5 秒）直到 state 为 done 或 failed。可选 use_sudo: 目标目录无写权限时用 sudo 提权上传（默认 false）",
     inputSchema: {
       type: "object",
       properties: {
@@ -618,29 +633,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "iter_upload_file": {
-        result = await apiCall<{ success: boolean; bytes_transferred: number; error?: string }>(
+        result = await apiCall<{ success: boolean; task_id: string; state: string }>(
           "POST",
           `/api/connections/${params.id}/upload`,
           {
             local_path: params.local_path,
             remote_path: params.remote_path,
             ...(params.use_sudo === true ? { use_sudo: true } : {}),
-          },
-          0  // 不限时（大文件上传/下载）
+          }
         );
         break;
       }
 
       case "iter_download_file": {
-        result = await apiCall<{ success: boolean; bytes_transferred: number; error?: string }>(
+        result = await apiCall<{ success: boolean; task_id: string; state: string }>(
           "POST",
           `/api/connections/${params.id}/download`,
           {
             remote_path: params.remote_path,
             local_path: params.local_path,
-          },
-          0  // 不限时（大文件上传/下载）
+          }
         );
+        break;
+      }
+
+      case "iter_transfer_status": {
+        result = await apiCall<{
+          kind: string;
+          state: string;
+          transferred: number;
+          total: number;
+          error: string | null;
+        }>("GET", `/api/transfers/${params.task_id}`);
         break;
       }
 
@@ -725,15 +749,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "iter_upload_folder": {
-        result = await apiCall<{ success: boolean; bytes_transferred: number; error?: string }>(
+        result = await apiCall<{ success: boolean; task_id: string; state: string }>(
           "POST",
           `/api/connections/${params.id}/upload-folder`,
           {
             local_path: params.local_path,
             remote_path: params.remote_path,
             ...(params.use_sudo === true ? { use_sudo: true } : {}),
-          },
-          0  // 不限时（大文件上传/下载）
+          }
         );
         break;
       }

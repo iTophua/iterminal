@@ -68,6 +68,61 @@ static TRANSFER_CANCELLED: Lazy<RwLock<HashMap<String, bool>>> =
 static TRANSFER_PAUSED: Lazy<RwLock<HashMap<String, bool>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// MCP 传输任务状态（后台任务 + 轮询模式）。
+/// 大文件传输耗时数分钟，同步等完成会撞 agent host 的工具调用超时，
+/// 因此 HTTP 端点立即返回 task_id，传输在后台跑，agent 轮询此表拿进度。
+#[derive(Debug, Clone, Serialize)]
+pub struct McpTransferStatus {
+    pub kind: String, // upload / download / upload_folder / upload_sudo
+    pub state: String, // running / done / failed
+    pub transferred: u64,
+    pub total: u64, // 已知时填充，未知为 0
+    pub error: Option<String>,
+    pub started_at: i64,
+    pub updated_at: i64,
+}
+
+static MCP_TRANSFER_STATUS: Lazy<RwLock<HashMap<String, McpTransferStatus>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+pub async fn set_transfer_running(task_id: &str, kind: &str, total: u64) {
+    let now = chrono::Utc::now().timestamp_millis();
+    MCP_TRANSFER_STATUS.write().await.insert(
+        task_id.to_string(),
+        McpTransferStatus {
+            kind: kind.to_string(),
+            state: "running".to_string(),
+            transferred: 0,
+            total,
+            error: None,
+            started_at: now,
+            updated_at: now,
+        },
+    );
+}
+
+pub async fn set_transfer_progress(task_id: &str, transferred: u64) {
+    let mut status = MCP_TRANSFER_STATUS.write().await;
+    if let Some(s) = status.get_mut(task_id) {
+        s.transferred = transferred;
+        s.updated_at = chrono::Utc::now().timestamp_millis();
+    }
+}
+
+pub async fn finish_transfer(task_id: &str, ok: bool, error: Option<String>, transferred: u64) {
+    let mut status = MCP_TRANSFER_STATUS.write().await;
+    if let Some(s) = status.get_mut(task_id) {
+        s.state = if ok { "done" } else { "failed" }.to_string();
+        s.transferred = transferred;
+        s.error = error;
+        s.updated_at = chrono::Utc::now().timestamp_millis();
+    }
+}
+
+pub async fn get_mcp_transfer_status(task_id: &str) -> Option<McpTransferStatus> {
+    MCP_TRANSFER_STATUS.read().await.get(task_id).cloned()
+}
+
 async fn create_sftp_connection(
     connection: &super::ssh::SSHConnection,
 ) -> Result<Arc<SftpSession>, String> {
@@ -1555,7 +1610,8 @@ pub async fn upload_file_sync(
         .metadata()
         .await
         .map_err(|e| format!("无法获取文件信息: {}", e))?;
-    let _total_size = metadata.len();
+    let total_size = metadata.len();
+    set_transfer_running(&task_id, "upload", total_size).await;
 
     let remote_parent = remote_path
         .rfind('/')
@@ -1596,6 +1652,7 @@ pub async fn upload_file_sync(
             .map_err(|e| format!("写入失败: {}", e))?;
 
         transferred += n as u64;
+        set_transfer_progress(&task_id, transferred).await;
     }
 
     Ok(transferred)
@@ -1920,6 +1977,15 @@ pub async fn download_file_sync(
         .await
         .map_err(|e| format!("无法打开远程文件: {}", e))?;
 
+    // 总量从 SFTP metadata 获取（失败则 0 = 未知）
+    let total_size = sftp
+        .metadata(&remote_path)
+        .await
+        .ok()
+        .and_then(|m| m.size)
+        .unwrap_or(0);
+    set_transfer_running(&task_id, "download", total_size).await;
+
     let local_parent = std::path::Path::new(&local_path)
         .parent()
         .map(|p| p.to_path_buf())
@@ -1958,6 +2024,7 @@ pub async fn download_file_sync(
             .map_err(|e| format!("写入失败: {}", e))?;
 
         transferred += n as u64;
+        set_transfer_progress(&task_id, transferred).await;
     }
 
     Ok(transferred)

@@ -243,6 +243,10 @@ pub fn create_api_router(app_handle: AppHandle, token: Option<String>) -> Router
             "/api/connections/{id}/download",
             post(download_file_handler),
         )
+        .route(
+            "/api/transfers/{task_id}",
+            get(get_transfer_status_handler),
+        )
         .route("/api/saved-connections", get(list_saved_connections))
         .route("/api/saved-connections", post(save_and_connect_handler))
         .route(
@@ -814,54 +818,70 @@ pub struct TransferResult {
     pub error: Option<String>,
 }
 
+/// 传输发起响应：后台任务模式，立即返回 task_id 供轮询。
+/// 大文件同步等完成会撞 agent host 的工具调用超时（329MB 传输数分钟），
+/// 故改为 spawn 后台执行 + GET /api/transfers/{task_id} 轮询进度。
+#[derive(Debug, Serialize)]
+pub struct TransferInitiated {
+    pub success: bool,
+    pub task_id: String,
+    pub state: String,
+}
+
 async fn upload_file_handler(
     axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
     Json(payload): Json<UploadRequest>,
-) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
+) -> Result<Json<ApiResponse<TransferInitiated>>, (StatusCode, Json<ApiResponse<TransferInitiated>>)> {
     let task_id = format!("mcp-upload-{}", chrono::Utc::now().timestamp_millis());
-
-    let result = if payload.use_sudo.unwrap_or(false) {
-        sftp::upload_file_sudo_sync(
-            id.clone(),
-            payload.local_path.clone(),
-            payload.remote_path.clone(),
-        )
-        .await
+    let kind = if payload.use_sudo.unwrap_or(false) {
+        "upload_sudo"
     } else {
-        sftp::upload_file_sync(
-            id.clone(),
-            task_id.clone(),
-            payload.local_path.clone(),
-            payload.remote_path.clone(),
-        )
-        .await
+        "upload"
     };
+    // 先建状态条目（total=0），后台任务内部的 set_transfer_running 会带准确 total 覆盖；
+    // 本地文件打不开等早期失败也能落到这个条目上，轮询方不会拿到"任务不存在"
+    sftp::set_transfer_running(&task_id, kind, 0).await;
+    let task_id_for_response = task_id.clone();
 
     let details = format!("{} -> {}", payload.local_path, payload.remote_path);
+    let app_handle = state.app_handle.clone();
 
-    match result {
-        Ok(bytes) => {
-            emit_operation(&state.app_handle, "upload", Some(&id), &details, true, None, None);
-            Ok(Json(ApiResponse::success(TransferResult {
-                success: true,
-                bytes_transferred: bytes,
-                error: None,
-            })))
+    tokio::spawn(async move {
+        let result = if kind == "upload_sudo" {
+            sftp::upload_file_sudo_sync(
+                id.clone(),
+                payload.local_path.clone(),
+                payload.remote_path.clone(),
+            )
+            .await
+        } else {
+            sftp::upload_file_sync(
+                id.clone(),
+                task_id.clone(),
+                payload.local_path.clone(),
+                payload.remote_path.clone(),
+            )
+            .await
+        };
+
+        match result {
+            Ok(bytes) => {
+                sftp::finish_transfer(&task_id, true, None, bytes).await;
+                emit_operation(&app_handle, "upload", Some(&id), &details, true, None, None);
+            }
+            Err(e) => {
+                sftp::finish_transfer(&task_id, false, Some(e.clone()), 0).await;
+                emit_operation(&app_handle, "upload", Some(&id), &details, false, Some(&e), None);
+            }
         }
-        Err(e) => {
-            emit_operation(
-                &state.app_handle,
-                "upload",
-                Some(&id),
-                &details,
-                false,
-                Some(&e),
-        None,
-            );
-            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
-        }
-    }
+    });
+
+    Ok(Json(ApiResponse::success(TransferInitiated {
+        success: true,
+        task_id: task_id_for_response,
+        state: "running".to_string(),
+    })))
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -874,48 +894,61 @@ async fn download_file_handler(
     axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
     Json(payload): Json<DownloadRequest>,
-) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
+) -> Result<Json<ApiResponse<TransferInitiated>>, (StatusCode, Json<ApiResponse<TransferInitiated>>)> {
     let task_id = format!("mcp-download-{}", chrono::Utc::now().timestamp_millis());
-
-    let result = sftp::download_file_sync(
-        id.clone(),
-        task_id.clone(),
-        payload.remote_path.clone(),
-        payload.local_path.clone(),
-    )
-    .await;
+    // 先建条目；download_file_sync 内部会带准确 total 覆盖
+    sftp::set_transfer_running(&task_id, "download", 0).await;
+    let task_id_for_response = task_id.clone();
 
     let details = format!("{} -> {}", payload.remote_path, payload.local_path);
+    let app_handle = state.app_handle.clone();
 
-    match result {
-        Ok(bytes) => {
-            emit_operation(
-                &state.app_handle,
-                "download",
-                Some(&id),
-                &details,
-                true,
-                None,
-        None,
-            );
-            Ok(Json(ApiResponse::success(TransferResult {
-                success: true,
-                bytes_transferred: bytes,
-                error: None,
-            })))
+    tokio::spawn(async move {
+        let result = sftp::download_file_sync(
+            id.clone(),
+            task_id.clone(),
+            payload.remote_path.clone(),
+            payload.local_path.clone(),
+        )
+        .await;
+
+        match result {
+            Ok(bytes) => {
+                sftp::finish_transfer(&task_id, true, None, bytes).await;
+                emit_operation(&app_handle, "download", Some(&id), &details, true, None, None);
+            }
+            Err(e) => {
+                sftp::finish_transfer(&task_id, false, Some(e.clone()), 0).await;
+                emit_operation(
+                    &app_handle,
+                    "download",
+                    Some(&id),
+                    &details,
+                    false,
+                    Some(&e),
+                    None,
+                );
+            }
         }
-        Err(e) => {
-            emit_operation(
-                &state.app_handle,
-                "download",
-                Some(&id),
-                &details,
-                false,
-                Some(&e),
-        None,
-            );
-            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
-        }
+    });
+
+    Ok(Json(ApiResponse::success(TransferInitiated {
+        success: true,
+        task_id: task_id_for_response,
+        state: "running".to_string(),
+    })))
+}
+
+/// 查询 MCP 后台传输任务状态（轮询端点）
+async fn get_transfer_status_handler(
+    Path(task_id): Path<String>,
+) -> Result<Json<ApiResponse<sftp::McpTransferStatus>>, (StatusCode, Json<ApiResponse<sftp::McpTransferStatus>>)> {
+    match sftp::get_mcp_transfer_status(&task_id).await {
+        Some(s) => Ok(Json(ApiResponse::success(s))),
+        None => Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::error("传输任务不存在")),
+        )),
     }
 }
 
@@ -1343,51 +1376,67 @@ async fn upload_folder_handler(
     axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
     Json(payload): Json<UploadFolderRequest>,
-) -> Result<Json<ApiResponse<TransferResult>>, (StatusCode, Json<ApiResponse<TransferResult>>)> {
+) -> Result<Json<ApiResponse<TransferInitiated>>, (StatusCode, Json<ApiResponse<TransferInitiated>>)> {
     let task_id = format!(
         "mcp-upload-folder-{}",
         chrono::Utc::now().timestamp_millis()
     );
-    let app_handle = state.app_handle.clone();
+    // 文件夹总量未知，total=0；upload_folder 内部不发细粒度状态，只有 running/done/failed
+    sftp::set_transfer_running(&task_id, "upload_folder", 0).await;
+    let task_id_for_response = task_id.clone();
 
-    match sftp::upload_folder(
-        id,
-        payload.local_path.clone(),
-        payload.remote_path.clone(),
-        task_id,
-        app_handle,
-    )
-    .await
-    {
-        Ok(result) => {
-            emit_operation(
-                &state.app_handle,
-                "upload_folder",
-                None,
-                &format!("{} -> {}", payload.local_path, payload.remote_path),
-                result.success,
-                result.error.as_deref(),
-        None,
-            );
-            Ok(Json(ApiResponse::success(TransferResult {
-                success: result.success,
-                bytes_transferred: result.bytes_transferred,
-                error: result.error,
-            })))
+    let app_handle = state.app_handle.clone();
+    let details = format!("{} -> {}", payload.local_path, payload.remote_path);
+
+    tokio::spawn(async move {
+        let result = sftp::upload_folder(
+            id.clone(),
+            payload.local_path.clone(),
+            payload.remote_path.clone(),
+            task_id.clone(),
+            app_handle.clone(),
+        )
+        .await;
+
+        match result {
+            Ok(r) => {
+                sftp::finish_transfer(
+                    &task_id,
+                    r.success,
+                    r.error.clone(),
+                    r.bytes_transferred,
+                )
+                .await;
+                emit_operation(
+                    &app_handle,
+                    "upload_folder",
+                    Some(&id),
+                    &details,
+                    r.success,
+                    r.error.as_deref(),
+                    None,
+                );
+            }
+            Err(e) => {
+                sftp::finish_transfer(&task_id, false, Some(e.clone()), 0).await;
+                emit_operation(
+                    &app_handle,
+                    "upload_folder",
+                    Some(&id),
+                    &details,
+                    false,
+                    Some(&e),
+                    None,
+                );
+            }
         }
-        Err(e) => {
-            emit_operation(
-                &state.app_handle,
-                "upload_folder",
-                None,
-                &format!("{} -> {}", payload.local_path, payload.remote_path),
-                false,
-                Some(&e),
-        None,
-            );
-            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
-        }
-    }
+    });
+
+    Ok(Json(ApiResponse::success(TransferInitiated {
+        success: true,
+        task_id: task_id_for_response,
+        state: "running".to_string(),
+    })))
 }
 
 async fn create_file_handler(
