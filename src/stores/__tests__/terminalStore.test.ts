@@ -39,6 +39,8 @@ describe('terminalStore', () => {
     useTerminalStore.setState({
       connectedConnections: [],
       activeConnectionId: null,
+      connectionSplitIds: [],
+      connectionSplitDirection: 'horizontal',
       sidebarCollapsed: false,
       fileManagerVisible: {},
       transferManagerVisible: {},
@@ -841,6 +843,166 @@ describe('terminalStore', () => {
       const state = useTerminalStore.getState()
       const session = state.connectedConnections[0].rootPane.sessions[0]
       expect(session.shellId).toBe('shell-new')
+    })
+  })
+
+  describe('connectionSplitView', () => {
+    const mockConnection2: Connection = { ...mockConnection, id: 'conn-2', host: '192.168.1.2' }
+    const mockConnection3: Connection = { ...mockConnection, id: 'conn-3', host: '192.168.1.3' }
+
+    function connectThree() {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().addConnection(mockConnection2, 'shell-2')
+      useTerminalStore.getState().addConnection(mockConnection3, 'shell-3')
+    }
+
+    it('首次加入分屏时应带上当前活动连接', () => {
+      connectThree()
+      // 当前活动是 conn-3，把 conn-1 加进分屏 → [conn-3, conn-1]
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual(['conn-3', 'conn-1'])
+      expect(state.connectionSplitDirection).toBe('horizontal')
+      expect(state.activeConnectionId).toBe('conn-1')
+    })
+
+    it('分屏已激活时继续追加连接', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      useTerminalStore.getState().addConnectionToSplitView('conn-2')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual(['conn-3', 'conn-1', 'conn-2'])
+    })
+
+    it('重复加入同一连接不应产生重复', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      useTerminalStore.getState().addConnectionToSplitView('conn-1')
+
+      expect(useTerminalStore.getState().connectionSplitIds).toEqual(['conn-3', 'conn-1'])
+    })
+
+    it('removeConnectionFromSplitView 剩 1 个时应退出分屏并激活剩余连接', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'vertical')
+      useTerminalStore.getState().removeConnectionFromSplitView('conn-1')
+      // [conn-3, conn-1] 移除 conn-1 → 只剩 conn-3 → 退出分屏
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual([])
+      expect(state.activeConnectionId).toBe('conn-3')
+    })
+
+    it('removeConnectionFromSplitView 剩多个时应保留分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      useTerminalStore.getState().addConnectionToSplitView('conn-2')
+      useTerminalStore.getState().removeConnectionFromSplitView('conn-3')
+
+      expect(useTerminalStore.getState().connectionSplitIds).toEqual(['conn-1', 'conn-2'])
+    })
+
+    it('移除的若是活动连接且分屏仍剩多个，应聚焦到剩余成员保持分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      // addConnectionToSplitView 会激活新加入的连接，此时活动是 conn-2
+      useTerminalStore.getState().addConnectionToSplitView('conn-2')
+      expect(useTerminalStore.getState().activeConnectionId).toBe('conn-2')
+      // 把活动连接 conn-2 从分屏移除，剩 [conn-3, conn-1]
+      useTerminalStore.getState().removeConnectionFromSplitView('conn-2')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual(['conn-3', 'conn-1'])
+      // 活动连接必须仍在分屏内，否则视图会退回单连接
+      expect(state.activeConnectionId).toBe('conn-3')
+    })
+
+    it('关闭活动分屏成员且分屏仍剩多个时，应保持分屏并优先聚焦剩余分屏成员', () => {
+      // 列表顺序 [conn-2, conn-3, conn-4, conn-1]，conn-2 不进分屏；
+      // 分屏 [conn-1, conn-3, conn-4]，活动 conn-1。
+      // 关闭 conn-1 时兜底会选列表第一个 conn-2（不在分屏内），
+      // 应被覆盖为分屏剩余成员，否则整个分屏视图会塌缩
+      const conn2: Connection = { ...mockConnection, id: 'conn-2', host: '192.168.1.2' }
+      const conn3: Connection = { ...mockConnection, id: 'conn-3', host: '192.168.1.3' }
+      const conn4: Connection = { ...mockConnection, id: 'conn-4', host: '192.168.1.4' }
+      useTerminalStore.getState().addConnection(conn2, 'shell-2')
+      useTerminalStore.getState().addConnection(conn3, 'shell-3')
+      useTerminalStore.getState().addConnection(conn4, 'shell-4')
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().addConnectionToSplitView('conn-3', 'horizontal')
+      useTerminalStore.getState().addConnectionToSplitView('conn-4')
+      // 重复加入已存在的成员仅激活它
+      useTerminalStore.getState().addConnectionToSplitView('conn-1')
+      useTerminalStore.getState().closeConnection('conn-1')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual(['conn-3', 'conn-4'])
+      expect(state.activeConnectionId).toBe('conn-3')
+    })
+
+    it('clearConnectionSplitView 应清空分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      useTerminalStore.getState().clearConnectionSplitView()
+
+      expect(useTerminalStore.getState().connectionSplitIds).toEqual([])
+    })
+
+    it('切换到分屏外的连接时应退出分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      // conn-2 不在分屏里
+      useTerminalStore.getState().setActiveConnection('conn-2')
+
+      const state = useTerminalStore.getState()
+      expect(state.activeConnectionId).toBe('conn-2')
+      expect(state.connectionSplitIds).toEqual([])
+    })
+
+    it('切换到分屏内的连接时应保留分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      // conn-3 在分屏里（首次加入时自动带入）
+      useTerminalStore.getState().setActiveConnection('conn-3')
+
+      const state = useTerminalStore.getState()
+      expect(state.activeConnectionId).toBe('conn-3')
+      expect(state.connectionSplitIds).toEqual(['conn-3', 'conn-1'])
+    })
+
+    it('新连接接入时应退出分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+
+      const conn4: Connection = { ...mockConnection, id: 'conn-4', host: '192.168.1.4' }
+      useTerminalStore.getState().addConnection(conn4, 'shell-4')
+
+      const state = useTerminalStore.getState()
+      expect(state.activeConnectionId).toBe('conn-4')
+      expect(state.connectionSplitIds).toEqual([])
+    })
+
+    it('关闭分屏中的连接时应从分屏剔除', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      useTerminalStore.getState().addConnectionToSplitView('conn-2')
+      // 关闭 conn-1（分屏变 [conn-3, conn-2]）
+      useTerminalStore.getState().closeConnection('conn-1')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual(['conn-3', 'conn-2'])
+    })
+
+    it('关闭分屏连接导致剩 1 个时应退出分屏', () => {
+      connectThree()
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      // 分屏 [conn-3, conn-1]，关闭 conn-3 → 剩 conn-1 → 退出分屏
+      useTerminalStore.getState().closeConnection('conn-3')
+
+      const state = useTerminalStore.getState()
+      expect(state.connectionSplitIds).toEqual([])
+      expect(state.connectedConnections.map(c => c.connectionId)).toEqual(['conn-1', 'conn-2'])
     })
   })
 })

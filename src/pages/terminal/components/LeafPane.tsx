@@ -33,6 +33,7 @@ interface LeafPaneProps {
   onSetSearchMode: (mode: 'normal' | 'regex' | 'wholeWord') => void
   onSessionDragStart: (sessionId: string, connectionId: string, title: string) => void
   onCloseSplitPane: (connectionId: string, paneId: string, paneSessions: { id: string; shellId?: string }[]) => void
+  onSessionTabContextMenu: (e: React.MouseEvent, connectionId: string, paneId: string, sessionId: string) => void
 }
 
 function areEqual(prevProps: LeafPaneProps, nextProps: LeafPaneProps): boolean {
@@ -92,6 +93,7 @@ export const LeafPane = React.memo(function LeafPane({
   onSetSearchMode,
   onSessionDragStart,
   onCloseSplitPane,
+  onSessionTabContextMenu,
 }: LeafPaneProps) {
   const { message } = App.useApp()
   const terminalSettings = useTerminalStore((state: any) => state.terminalSettings)
@@ -199,6 +201,7 @@ export const LeafPane = React.memo(function LeafPane({
         title={s.title}
         onClose={() => onCloseSession(connectionId, s.id, pane.id)}
         onDragStart={onSessionDragStart}
+        onContextMenu={(e) => onSessionTabContextMenu(e, connectionId, pane.id, s.id)}
         isDisconnected={connection?.disconnected}
       />
     ),

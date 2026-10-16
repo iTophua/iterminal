@@ -18,6 +18,11 @@ import {
   HistoryOutlined,
   BulbOutlined,
   MessageOutlined,
+  LeftOutlined,
+  RightOutlined,
+  CloseCircleOutlined,
+  MinusCircleOutlined,
+  ShrinkOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -51,7 +56,8 @@ const DockerPanel = lazy(() => import('../components/DockerPanel'))
 const AiAssistantModal = lazy(() => import('../components/AiAssistantModal'))
 import type { TerminalContext } from '../services/ai'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
-import { SortableTab, LeafPane } from './terminal/components'
+import { SortableTab, LeafPane, TabContextMenu, ConnectionPaneHeader } from './terminal/components'
+import type { TabMenuEntry } from './terminal/components'
 import { ShortcutHelpModal } from './terminal/components/ShortcutHelpModal'
 import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOverlay'
 import { useConnectionDragToNewWindow } from './terminal/hooks/useConnectionDrag'
@@ -82,6 +88,11 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const navigate = useNavigate()
   const connectedConnections = useTerminalStore(state => state.connectedConnections)
   const activeConnectionId = useTerminalStore(state => state.activeConnectionId)
+  const connectionSplitIds = useTerminalStore(state => state.connectionSplitIds)
+  const connectionSplitDirection = useTerminalStore(state => state.connectionSplitDirection)
+  const addConnectionToSplitView = useTerminalStore(state => state.addConnectionToSplitView)
+  const removeConnectionFromSplitView = useTerminalStore(state => state.removeConnectionFromSplitView)
+  const clearConnectionSplitView = useTerminalStore(state => state.clearConnectionSplitView)
   const broadcastEnabled = useTerminalStore(state => state.broadcastEnabled)
   const setActiveConnection = useTerminalStore(state => state.setActiveConnection)
   const isFeatureAvailable = useLicenseStore(state => state.isFeatureAvailable)
@@ -680,24 +691,39 @@ const handlePointerUp = () => {
   )
   
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
-  const visibleSessionsKey = activeConnection
-    ? getVisibleSessions(activeConnection.rootPane).map(s => `${s.connectionId}_${s.id}_${s.shellId ?? ''}`).join('|')
-    : ''
+  // 连接分屏：分屏列表 >= 2 且包含当前活动连接时生效；否则退回单连接视图
+  const connectionSplitActive = !singleConnectionMode
+    && connectionSplitIds.length >= 2
+    && connectionSplitIds.includes(activeConnectionId || '')
+  const splitConnections = useMemo(() => {
+    if (!connectionSplitActive) return []
+    return connectionSplitIds
+      .map(id => connectedConnections.find(c => c.connectionId === id))
+      .filter((c): c is NonNullable<typeof c> => !!c)
+  }, [connectionSplitActive, connectionSplitIds, connectedConnections])
+  // 当前实际渲染的连接：分屏时为分屏列表，否则为活动连接
+  const renderedConnections = connectionSplitActive && splitConnections.length >= 2
+    ? splitConnections
+    : (activeConnection ? [activeConnection] : [])
+  const visibleSessionsKey = renderedConnections
+    .flatMap(c => getVisibleSessions(c.rootPane).map(s => `${s.connectionId}_${s.id}_${s.shellId ?? ''}`))
+    .join('|')
   const visibleSessions = useMemo(
-    () => activeConnection ? getVisibleSessions(activeConnection.rootPane) : [],
+    () => renderedConnections.flatMap(c => getVisibleSessions(c.rootPane)),
     [visibleSessionsKey]
   )
 
   const paneStructureKey = useMemo(() => {
-    if (!activeConnection) return ''
+    if (renderedConnections.length === 0) return ''
     const getKey = (pane: SplitPane): string => {
       if (pane.children && pane.children.length > 0) {
         return `${pane.id}-[${pane.children.map(getKey).join(',')}]`
       }
       return pane.id
     }
-    return getKey(activeConnection.rootPane)
-  }, [activeConnection?.rootPane])
+    return renderedConnections.map(c => getKey(c.rootPane)).join('||')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleSessionsKey, connectionSplitActive, connectionSplitIds, activeConnectionId, connectedConnections])
   
   useEffect(() => {
     const instances = Object.values(terminalInstances.current)
@@ -1600,11 +1626,16 @@ const handlePointerUp = () => {
   }, [])
 
   const handleCloseSession = useCallback(async (connId: string, sessId: string, paneId?: string) => {
-    const conn = connectedConnections.find(c => c.connectionId === connId)
+    // 用 getState 实时读取：批量关闭（关所有/左侧/右侧/其他）时上一次关闭已改写 store，
+    // 闭包里的 connectedConnections 是旧引用，会导致“最后一个会话”判断失准
+    const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === connId)
     if (!conn) return
-    
+
     const allSessions = getAllSessions(conn.rootPane)
     const sess = allSessions.find(s => s.id === sessId)
+    // 目标会话已被关闭（如菜单打开期间被 agent/其他窗口关闭）时直接返回；
+    // 否则下方"仅剩 1 个会话即断开连接"的分支会误杀剩下的无关会话
+    if (!sess) return
     const key = `${connId}_${sessId}`
 
     if (unlistenersRef.current[key]) {
@@ -1643,10 +1674,10 @@ const handlePointerUp = () => {
     } else {
       closeSession(connId, sessId)
     }
-  }, [connectedConnections, closeSession, closeConnection, closeSessionInPane, closePane])
+  }, [closeSession, closeConnection, closeSessionInPane, closePane])
 
   const handleCloseConnection = useCallback(async (connId: string) => {
-    const conn = connectedConnections.find(c => c.connectionId === connId)
+    const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === connId)
     if (!conn) return
 
     const allSessions = getAllSessions(conn.rootPane)
@@ -1677,7 +1708,47 @@ const handlePointerUp = () => {
     await invoke('disconnect_ssh', { id: connId }).catch(() => {})
     closeConnection(connId)
     disconnectHandledRef.current.delete(connId)
-  }, [connectedConnections, closeConnection])
+  }, [closeConnection])
+
+  // ===== 连接 tab / 会话 tab 右键菜单 =====
+  const [tabMenu, setTabMenu] = useState<{
+    visible: boolean
+    x: number
+    y: number
+    scope: 'connection' | 'session'
+    connectionId: string
+    paneId?: string
+    sessionId?: string
+  }>({ visible: false, x: 0, y: 0, scope: 'connection', connectionId: '' })
+
+  const hideTabMenu = useCallback(() => {
+    setTabMenu(prev => (prev.visible ? { ...prev, visible: false } : prev))
+  }, [])
+
+  const handleConnectionTabContextMenu = useCallback((e: React.MouseEvent, connectionId: string) => {
+    setTabMenu({ visible: true, x: e.clientX, y: e.clientY, scope: 'connection', connectionId })
+  }, [])
+
+  const handleSessionTabContextMenu = useCallback((e: React.MouseEvent, connectionId: string, paneId: string, sessionId: string) => {
+    setTabMenu({ visible: true, x: e.clientX, y: e.clientY, scope: 'session', connectionId, paneId, sessionId })
+  }, [])
+
+  // 批量关闭连接（关闭所有 / 左侧 / 右侧 / 其他）
+  const handleCloseConnections = useCallback(async (connIds: string[]) => {
+    for (const id of connIds) {
+      await handleCloseConnection(id)
+    }
+  }, [handleCloseConnection])
+
+  // 批量关闭同一面板内的会话（关闭所有 / 左侧 / 右侧 / 其他）
+  const handleCloseSessions = useCallback(async (connId: string, paneId: string, sessionIds: string[]) => {
+    for (const sid of sessionIds) {
+      // 最后一个会话关闭时连接会被整体关闭，后续迭代需感知
+      const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === connId)
+      if (!conn) break
+      await handleCloseSession(connId, sid, paneId)
+    }
+  }, [handleCloseSession])
 
   // 清理所有事件监听
   useEffect(() => {
@@ -1724,14 +1795,15 @@ const handlePointerUp = () => {
     }
   }, [])
 
-  // 性能：切换活动连接时，只让活动连接的终端闪烁光标，非活动连接的关掉
+  // 性能：切换活动连接时，只让活动连接（含连接分屏中的连接）的终端闪烁光标，其余关掉
   useEffect(() => {
     Object.entries(terminalInstances.current).forEach(([key, term]) => {
       if (!term) return
       const [connId] = key.split('_')
-      term.options.cursorBlink = (connId === activeConnectionId) && terminalSettingsRef.current.cursorBlink
+      const isActive = connId === activeConnectionId || connectionSplitIds.includes(connId)
+      term.options.cursorBlink = isActive && terminalSettingsRef.current.cursorBlink
     })
-  }, [activeConnectionId])
+  }, [activeConnectionId, connectionSplitIds])
 
   // 性能：焦点离开终端区域时（如点击 AI 面板输入框）关闭活动终端光标闪烁
   // 光标闪烁是 xterm 的 setInterval 驱动的持续重绘，是空闲 CPU 的大头
@@ -1744,8 +1816,9 @@ const handlePointerUp = () => {
       Object.entries(terminalInstances.current).forEach(([key, term]) => {
         if (!term) return
         const [connId] = key.split('_')
-        // 非活动连接始终关掉；活动连接仅在焦点在终端内时闪烁
-        term.options.cursorBlink = (connId === activeConnectionId) && blink
+        // 非活动（且不在连接分屏中）的连接始终关掉；活动连接仅在焦点在终端内时闪烁
+        const isActive = connId === activeConnectionId || connectionSplitIds.includes(connId)
+        term.options.cursorBlink = isActive && blink
       })
     }
     // 用 focusin/focusout（冒泡）检测焦点进出终端
@@ -1755,7 +1828,7 @@ const handlePointerUp = () => {
       document.removeEventListener('focusin', updateBlink)
       document.removeEventListener('focusout', updateBlink)
     }
-  }, [activeConnectionId])
+  }, [activeConnectionId, connectionSplitIds])
 
   // 复制选中内容
   const handleCopy = useCallback(async () => {
@@ -2191,9 +2264,59 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         onSetSearchMode={setSearchMode}
         onSessionDragStart={handleSessionDragStart}
         onCloseSplitPane={handleCloseSplitPane}
+        onSessionTabContextMenu={handleSessionTabContextMenu}
       />
     )
   }
+
+  // 右键菜单条目：连接 scope 提供 分屏/关闭类操作，会话 scope 提供 关闭类操作
+  const tabMenuItems: TabMenuEntry[] = useMemo(() => {
+    if (!tabMenu.visible) return []
+
+    if (tabMenu.scope === 'connection') {
+      const idx = connectedConnections.findIndex(c => c.connectionId === tabMenu.connectionId)
+      if (idx === -1) return []
+
+      const splitEntries: TabMenuEntry[] = connectionSplitActive
+        ? [
+            { key: 'split-remove', label: '从分屏移除', icon: <MinusCircleOutlined />, onClick: () => removeConnectionFromSplitView(tabMenu.connectionId) },
+            { key: 'split-exit', label: '退出连接分屏', icon: <ShrinkOutlined />, onClick: () => clearConnectionSplitView() },
+          ]
+        : [
+            { key: 'split-h', label: '分屏显示（左右）', icon: <BorderHorizontalOutlined />, onClick: () => addConnectionToSplitView(tabMenu.connectionId, 'horizontal') },
+            { key: 'split-v', label: '分屏显示（上下）', icon: <BorderVerticleOutlined />, onClick: () => addConnectionToSplitView(tabMenu.connectionId, 'vertical') },
+          ]
+
+      return [
+        { key: 'close', label: '关闭', icon: <CloseOutlined />, onClick: () => handleCloseConnection(tabMenu.connectionId) },
+        { separator: true },
+        ...splitEntries,
+        { separator: true },
+        { key: 'close-left', label: '关闭左侧连接', icon: <LeftOutlined />, disabled: idx === 0, onClick: () => handleCloseConnections(connectedConnections.slice(0, idx).map(c => c.connectionId)) },
+        { key: 'close-right', label: '关闭右侧连接', icon: <RightOutlined />, disabled: idx === connectedConnections.length - 1, onClick: () => handleCloseConnections(connectedConnections.slice(idx + 1).map(c => c.connectionId)) },
+        { key: 'close-others', label: '关闭其他连接', icon: <CloseCircleOutlined />, disabled: connectedConnections.length <= 1, onClick: () => handleCloseConnections(connectedConnections.filter(c => c.connectionId !== tabMenu.connectionId).map(c => c.connectionId)) },
+        { key: 'close-all', label: '关闭所有连接', icon: <CloseCircleOutlined />, danger: true, disabled: connectedConnections.length === 0, onClick: () => handleCloseConnections(connectedConnections.map(c => c.connectionId)) },
+      ]
+    }
+
+    // session scope：作用于右键的会话所在面板
+    const conn = connectedConnections.find(c => c.connectionId === tabMenu.connectionId)
+    if (!conn || !tabMenu.paneId || !tabMenu.sessionId) return []
+    const pane = findPaneBySessionId(conn.rootPane, tabMenu.sessionId)
+    if (!pane || pane.id !== tabMenu.paneId) return []
+    const sIdx = pane.sessions.findIndex(s => s.id === tabMenu.sessionId)
+    if (sIdx === -1) return []
+    const ids = pane.sessions.map(s => s.id)
+
+    return [
+      { key: 'close', label: '关闭', icon: <CloseOutlined />, onClick: () => handleCloseSession(tabMenu.connectionId, tabMenu.sessionId!, tabMenu.paneId) },
+      { separator: true },
+      { key: 'close-left', label: '关闭左侧会话', icon: <LeftOutlined />, disabled: sIdx === 0, onClick: () => handleCloseSessions(tabMenu.connectionId, tabMenu.paneId!, ids.slice(0, sIdx)) },
+      { key: 'close-right', label: '关闭右侧会话', icon: <RightOutlined />, disabled: sIdx === ids.length - 1, onClick: () => handleCloseSessions(tabMenu.connectionId, tabMenu.paneId!, ids.slice(sIdx + 1)) },
+      { key: 'close-others', label: '关闭其他会话', icon: <CloseCircleOutlined />, disabled: ids.length <= 1, onClick: () => handleCloseSessions(tabMenu.connectionId, tabMenu.paneId!, ids.filter(id => id !== tabMenu.sessionId)) },
+      { key: 'close-all', label: '关闭所有会话', icon: <CloseCircleOutlined />, danger: true, onClick: () => handleCloseSessions(tabMenu.connectionId, tabMenu.paneId!, ids) },
+    ]
+  }, [tabMenu, connectedConnections, connectionSplitActive, removeConnectionFromSplitView, clearConnectionSplitView, addConnectionToSplitView, handleCloseConnection, handleCloseConnections, handleCloseSession, handleCloseSessions])
 
   const connectionItems = useMemo(() => connectedConnections.map(conn => ({
     key: conn.connectionId,
@@ -2201,6 +2324,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       <SortableTab
         id={conn.connectionId}
         connectionName={conn.connection.name}
+        onContextMenu={handleConnectionTabContextMenu}
         label={
           <span className={getGroupClass(conn.connection.group)} style={{ color: conn.disconnected ? 'var(--color-error)' : 'var(--group-accent-color, var(--color-text))', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 2px' }}>
             {conn.disconnected && <DisconnectOutlined style={{ fontSize: 10, flexShrink: 0 }} />}
@@ -2328,29 +2452,24 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     setIsDragToNewWindow(false)
   }
 
-  // 切换连接时清理非活动连接的 ResizeObserver，避免内存泄漏
+  // 切换连接时清理不再渲染连接的 ResizeObserver，避免内存泄漏
+  // （连接分屏中的连接即使非活动也在渲染，需保留 observer）
   useEffect(() => {
-    if (!activeConnectionId) return
-    const activeKeys = new Set<string>()
-    const activeConn = connectedConnectionsRef.current.find(c => c.connectionId === activeConnectionId)
-    if (activeConn) {
-      const sessions = getAllSessions(activeConn.rootPane)
-      sessions.forEach(s => activeKeys.add(`${activeConnectionId}_${s.id}`))
-    }
-    
+    const renderedIds = new Set<string>()
+    if (activeConnectionId) renderedIds.add(activeConnectionId)
+    connectionSplitIds.forEach(id => renderedIds.add(id))
+
     Object.keys(resizeObserversRef.current).forEach(key => {
-      if (!activeKeys.has(key)) {
-        const [connId] = key.split('_')
-        if (connId !== activeConnectionId) {
-          const observer = resizeObserversRef.current[key]
-          if (observer) {
-            observer.disconnect()
-            delete resizeObserversRef.current[key]
-          }
+      const [connId] = key.split('_')
+      if (!renderedIds.has(connId)) {
+        const observer = resizeObserversRef.current[key]
+        if (observer) {
+          observer.disconnect()
+          delete resizeObserversRef.current[key]
         }
       }
     })
-  }, [activeConnectionId])
+  }, [activeConnectionId, connectionSplitIds])
 
   const historyModalData = useMemo(() => {
     if (!historyModalKey) return []
@@ -2453,16 +2572,74 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           </div>
         )}
         <div style={{ flex: 1, overflow: 'hidden' }}>
-          {connectedConnections
-            .filter(c => singleConnectionMode || activeConnectionId === c.connectionId)
-            .map(conn => (
-              <div 
-                key={conn.connectionId} 
-                style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
-              >
-                {renderSplitPane(conn.rootPane, conn.connectionId)}
-              </div>
-            ))}
+          {connectionSplitActive && splitConnections.length >= 2 ? (
+            <Group
+              // key 绑定分屏成员和方向：成员变化时整体重建，保证 Panel 尺寸重新均分
+              key={`csplit-${connectionSplitDirection}-${connectionSplitIds.join('|')}`}
+              orientation={connectionSplitDirection === 'vertical' ? 'vertical' : 'horizontal'}
+              style={{ height: '100%', width: '100%' }}
+            >
+              {splitConnections.flatMap((conn, index) => {
+                const elements: React.ReactNode[] = []
+                const isHorizontal = connectionSplitDirection !== 'vertical'
+                if (index > 0) {
+                  elements.push(
+                    <Separator
+                      key={`conn-sep-${conn.connectionId}`}
+                      style={{
+                        background: 'var(--color-border)',
+                        width: isHorizontal ? 1 : undefined,
+                        height: isHorizontal ? undefined : 1,
+                      }}
+                    />
+                  )
+                }
+                elements.push(
+                  <Panel
+                    key={conn.connectionId}
+                    defaultSize={100 / splitConnections.length}
+                    minSize={20}
+                    onResize={() => {
+                      requestAnimationFrame(() => {
+                        Object.values(fitAddons.current).forEach(addon => {
+                          try { addon?.fit() } catch {}
+                        })
+                      })
+                    }}
+                  >
+                    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                      <ConnectionPaneHeader
+                        connectionName={conn.connection.name}
+                        username={conn.connection.username}
+                        host={conn.connection.host}
+                        isActive={activeConnectionId === conn.connectionId}
+                        disconnected={conn.disconnected}
+                        reconnecting={conn.reconnecting}
+                        onActivate={() => setActiveConnection(conn.connectionId)}
+                        onRemoveFromSplit={() => removeConnectionFromSplitView(conn.connectionId)}
+                        onCloseConnection={() => handleCloseConnection(conn.connectionId)}
+                      />
+                      <div style={{ flex: 1, overflow: 'hidden' }}>
+                        {renderSplitPane(conn.rootPane, conn.connectionId)}
+                      </div>
+                    </div>
+                  </Panel>
+                )
+                return elements
+              })}
+            </Group>
+          ) : (
+            connectedConnections
+              .filter(c => singleConnectionMode || activeConnectionId === c.connectionId)
+              .map(conn => (
+                <div
+                  key={conn.connectionId}
+                  style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+                >
+                  {renderSplitPane(conn.rootPane, conn.connectionId)}
+                </div>
+              ))
+          )}
         </div>
       </div>
 
@@ -2623,6 +2800,17 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         onAiChatToggle={toggleAiChat}
         onDockerToggle={toggleDocker}
         />
+
+      {createPortal(
+        <TabContextMenu
+          x={tabMenu.x}
+          y={tabMenu.y}
+          visible={tabMenu.visible && tabMenuItems.length > 0}
+          items={tabMenuItems}
+          onClose={hideTabMenu}
+        />,
+        document.body
+      )}
 
       {contextMenu.visible && createPortal(
         <div

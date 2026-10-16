@@ -168,6 +168,10 @@ export function formatShortcutForDisplay(shortcut: string): string {
 interface TerminalState {
   connectedConnections: ConnectedConnection[]
   activeConnectionId: string | null
+  // 连接分屏：长度 >= 2 且包含当前活动连接时，终端区按此列表同时显示多个连接
+  connectionSplitIds: string[]
+  // 连接分屏方向：horizontal 左右排 / vertical 上下排
+  connectionSplitDirection: 'horizontal' | 'vertical'
   // 所有连接列表（启动时预加载）
   allConnections: Connection[]
   // 连接列表加载状态
@@ -225,6 +229,12 @@ interface TerminalState {
   removeConnectionFromStore: (connectionId: string) => void
   // 设置激活的连接
   setActiveConnection: (connectionId: string | null) => void
+  // 把连接加入连接分屏视图（第一次加入时会带上当前活动连接）
+  addConnectionToSplitView: (connectionId: string, direction?: 'horizontal' | 'vertical') => void
+  // 从连接分屏视图中移除某个连接（剩余不足 2 个时自动退出分屏）
+  removeConnectionFromSplitView: (connectionId: string) => void
+  // 退出连接分屏，恢复单连接视图
+  clearConnectionSplitView: () => void
   // 设置激活的会话
   setActiveSession: (connectionId: string, sessionId: string) => void
   // 获取当前激活的会话
@@ -283,9 +293,25 @@ interface TerminalState {
   setConnectionInitializing: (connectionId: string, initializing: boolean) => void
 }
 
+// 切换活动连接时：目标连接不在连接分屏视图内则退出分屏（恢复单连接视图）
+function splitAfterActivate(state: { connectionSplitIds: string[] }, activeId: string | null): string[] {
+  const ids = state.connectionSplitIds
+  if (ids.length < 2) return ids
+  if (activeId && ids.includes(activeId)) return ids
+  return []
+}
+
+// 移除连接后：从连接分屏视图剔除该连接，剩余不足 2 个时退出分屏
+function splitAfterRemove(state: { connectionSplitIds: string[] }, removedId: string): string[] {
+  const ids = state.connectionSplitIds
+  if (!ids.includes(removedId)) return ids
+  const kept = ids.filter(id => id !== removedId)
+  return kept.length >= 2 ? kept : []
+}
+
 function getNextSessionNumber(pane: SplitPane): number {
   const numbers: number[] = []
-  
+
   const collectNumbers = (p: SplitPane) => {
     for (const s of p.sessions) {
       const match = s.title.match(/^会话(\d+)$/)
@@ -299,9 +325,9 @@ function getNextSessionNumber(pane: SplitPane): number {
       }
     }
   }
-  
+
   collectNumbers(pane)
-  
+
   if (numbers.length === 0) return 1
   return Math.max(...numbers) + 1
 }
@@ -309,6 +335,8 @@ function getNextSessionNumber(pane: SplitPane): number {
 export const useTerminalStore = create<TerminalState>((set, get) => ({
   connectedConnections: [],
   activeConnectionId: null,
+  connectionSplitIds: [],
+  connectionSplitDirection: 'horizontal',
   allConnections: [],
   connectionsLoading: true,
   sidebarCollapsed: false,
@@ -414,6 +442,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         }
       ],
       activeConnectionId: connection.id,
+      connectionSplitIds: splitAfterActivate(state, connection.id),
       currentPaths: {
         ...state.currentPaths,
         [connection.id]: '/home/' + connection.username
@@ -423,7 +452,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     return sessionId
   },
 
-restoreConnection: (connection, rootPane) => {
+  restoreConnection: (connection, rootPane) => {
     set((state) => ({
       connectedConnections: [
         ...state.connectedConnections,
@@ -435,6 +464,7 @@ restoreConnection: (connection, rootPane) => {
         }
       ],
       activeConnectionId: connection.id,
+      connectionSplitIds: splitAfterActivate(state, connection.id),
       currentPaths: {
         ...state.currentPaths,
         [connection.id]: '/home/' + connection.username
@@ -551,9 +581,20 @@ restoreConnection: (connection, rootPane) => {
   closeConnection: (connectionId) => {
     set((state) => {
       const newConnections = state.connectedConnections.filter(c => c.connectionId !== connectionId)
-      const newActiveId = state.activeConnectionId === connectionId
+      const afterSplitRemove = splitAfterRemove(state, connectionId)
+      let newActiveId = state.activeConnectionId === connectionId
         ? (newConnections.length > 0 ? newConnections[0].connectionId : null)
         : state.activeConnectionId
+      // 活动连接被关闭且分屏仍保留 >= 2 个成员时，优先聚焦到剩余分屏成员，
+      // 避免兜底的"列表第一个连接"落在分屏外，导致整个分屏视图塌缩
+      if (
+        state.activeConnectionId === connectionId &&
+        afterSplitRemove.length >= 2 &&
+        (newActiveId === null || !afterSplitRemove.includes(newActiveId))
+      ) {
+        newActiveId = afterSplitRemove.find(id => newConnections.some(c => c.connectionId === id)) || newActiveId
+      }
+      const newSplitIds = splitAfterActivate({ connectionSplitIds: afterSplitRemove }, newActiveId)
 
       const newTransferTasks = { ...state.transferTasks }
       delete newTransferTasks[connectionId]
@@ -569,6 +610,7 @@ restoreConnection: (connection, rootPane) => {
       return {
         connectedConnections: newConnections,
         activeConnectionId: newActiveId,
+        connectionSplitIds: newSplitIds,
         transferTasks: newTransferTasks,
         fileManagerVisible: newFileManagerVisible,
         transferManagerVisible: newTransferManagerVisible,
@@ -581,9 +623,20 @@ restoreConnection: (connection, rootPane) => {
   removeConnectionFromStore: (connectionId) => {
     set((state) => {
       const newConnections = state.connectedConnections.filter(c => c.connectionId !== connectionId)
-      const newActiveId = state.activeConnectionId === connectionId
+      const afterSplitRemove = splitAfterRemove(state, connectionId)
+      let newActiveId = state.activeConnectionId === connectionId
         ? (newConnections.length > 0 ? newConnections[0].connectionId : null)
         : state.activeConnectionId
+      // 活动连接被关闭且分屏仍保留 >= 2 个成员时，优先聚焦到剩余分屏成员，
+      // 避免兜底的"列表第一个连接"落在分屏外，导致整个分屏视图塌缩
+      if (
+        state.activeConnectionId === connectionId &&
+        afterSplitRemove.length >= 2 &&
+        (newActiveId === null || !afterSplitRemove.includes(newActiveId))
+      ) {
+        newActiveId = afterSplitRemove.find(id => newConnections.some(c => c.connectionId === id)) || newActiveId
+      }
+      const newSplitIds = splitAfterActivate({ connectionSplitIds: afterSplitRemove }, newActiveId)
 
       const newTransferTasks = { ...state.transferTasks }
       delete newTransferTasks[connectionId]
@@ -599,6 +652,7 @@ restoreConnection: (connection, rootPane) => {
       return {
         connectedConnections: newConnections,
         activeConnectionId: newActiveId,
+        connectionSplitIds: newSplitIds,
         transferTasks: newTransferTasks,
         fileManagerVisible: newFileManagerVisible,
         transferManagerVisible: newTransferManagerVisible,
@@ -609,7 +663,59 @@ restoreConnection: (connection, rootPane) => {
   },
 
   setActiveConnection: (connectionId) => {
-    set({ activeConnectionId: connectionId })
+    set((state) => ({
+      activeConnectionId: connectionId,
+      connectionSplitIds: splitAfterActivate(state, connectionId),
+    }))
+  },
+
+  addConnectionToSplitView: (connectionId, direction) => {
+    set((state) => {
+      // 先剔除已不存在的连接，防御历史残留
+      const ids = state.connectionSplitIds.filter(id =>
+        state.connectedConnections.some(c => c.connectionId === id)
+      )
+      let newIds = ids
+      if (ids.length === 0) {
+        // 第一次进入分屏：当前活动连接 + 目标连接一起进分屏
+        const base = state.activeConnectionId && state.activeConnectionId !== connectionId
+          ? [state.activeConnectionId]
+          : []
+        newIds = [...base, connectionId]
+      } else if (!ids.includes(connectionId)) {
+        newIds = [...ids, connectionId]
+      }
+      return {
+        connectionSplitIds: newIds,
+        connectionSplitDirection: direction || state.connectionSplitDirection,
+        activeConnectionId: connectionId,
+      }
+    })
+  },
+
+  removeConnectionFromSplitView: (connectionId) => {
+    set((state) => {
+      const kept = state.connectionSplitIds.filter(id => id !== connectionId)
+      // 剩不足 2 个时退出分屏，恢复单连接视图
+      if (kept.length >= 2) {
+        return {
+          connectionSplitIds: kept,
+          // 被移除的若是活动连接，聚焦到剩余第一个；
+          // 否则活动连接落在分屏外会导致视图退回单连接
+          activeConnectionId: state.activeConnectionId === connectionId
+            ? kept[0]
+            : state.activeConnectionId,
+        }
+      }
+      if (kept.length === 1) {
+        return { connectionSplitIds: [], activeConnectionId: kept[0] }
+      }
+      return { connectionSplitIds: [] }
+    })
+  },
+
+  clearConnectionSplitView: () => {
+    set({ connectionSplitIds: [] })
   },
 
   setActiveSession: (connectionId, sessionId) => {
@@ -620,6 +726,7 @@ restoreConnection: (connection, rootPane) => {
           : c
       ),
       activeConnectionId: connectionId,
+      connectionSplitIds: splitAfterActivate(state, connectionId),
     }))
   },
 
@@ -1051,14 +1158,17 @@ restoreConnection: (connection, rootPane) => {
       return {
         connectedConnections: state.connectedConnections.map(c =>
           c.connectionId === connectionId
-            ? { 
-                ...c, 
-                rootPane: hasChildren 
+            ? {
+                ...c,
+                rootPane: hasChildren
                   ? { ...newRootPane, activePaneId: paneId }
                   : newRootPane
               }
             : c
         ),
+        // 连接分屏下点击某面板的终端/会话时，把该连接设为活动连接
+        activeConnectionId: connectionId,
+        connectionSplitIds: splitAfterActivate(state, connectionId),
       }
     })
   },

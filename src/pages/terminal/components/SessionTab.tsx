@@ -6,6 +6,7 @@ interface DraggableSessionTabProps {
   title: string
   onClose: () => void
   onDragStart: (sessionId: string, connectionId: string, title: string) => void
+  onContextMenu?: (e: React.MouseEvent) => void
   isDisconnected?: boolean
 }
 
@@ -15,6 +16,7 @@ export function DraggableSessionTab({
   title,
   onClose,
   onDragStart,
+  onContextMenu,
   isDisconnected = false,
 }: DraggableSessionTabProps) {
   return (
@@ -36,6 +38,11 @@ export function DraggableSessionTab({
         e.stopPropagation()
         e.preventDefault()
         onDragStart(sessionId, connectionId, title)
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        onContextMenu?.(e)
       }}
     >
       {isDisconnected && (

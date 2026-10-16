@@ -1,5 +1,8 @@
 export { TerminalToolbar } from './TerminalToolbar'
 export { ContextMenu } from './ContextMenu'
+export { TabContextMenu } from './TabContextMenu'
+export type { TabContextMenuItem, TabMenuEntry } from './TabContextMenu'
+export { ConnectionPaneHeader } from './ConnectionPaneHeader'
 export { EmptyView } from './EmptyView'
 export { PaneToolbar } from './PaneToolbar'
 export { ConnectionTab, SortableTab } from './ConnectionTab'

@@ -8,13 +8,14 @@ interface SortableTabProps {
   id: string
   label: React.ReactNode
   connectionName?: string
+  onContextMenu?: (e: React.MouseEvent, connectionId: string) => void
 }
 
 /**
  * 可拖拽排序的标签组件
  * 用于连接标签的拖拽排序
  */
-export function SortableTab({ id, label, connectionName }: SortableTabProps) {
+export function SortableTab({ id, label, connectionName, onContextMenu }: SortableTabProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id })
 
   const style: React.CSSProperties = {
@@ -46,6 +47,12 @@ export function SortableTab({ id, label, connectionName }: SortableTabProps) {
       data-connection-tab-id={id}
       data-connection-name={connectionName}
       className="sortable-tab-wrapper"
+      onContextMenu={(e) => {
+        // 右键不参与拖拽，弹出自定义菜单
+        e.preventDefault()
+        e.stopPropagation()
+        onContextMenu?.(e, id)
+      }}
     >
       <HolderOutlined className="sortable-tab-handle" style={{ fontSize: 10, color: 'var(--color-text-quaternary)', marginRight: 2, opacity: 0.6, transition: 'opacity 0.2s' }} />
       {label}
