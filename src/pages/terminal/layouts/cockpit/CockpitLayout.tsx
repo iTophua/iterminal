@@ -324,12 +324,15 @@ export function CockpitLayout({
   }, [focusKey, enqueueWrite])
 
   const isMac = typeof navigator !== 'undefined' && navigator.platform.toUpperCase().indexOf('MAC') >= 0
+  // 独立终端窗口使用系统标题栏（红绿灯在系统栏内），webview 无需避让；
+  // 主窗口为 Overlay 无边框，红绿灯悬浮在 webview 左上角，需留 78px
+  const isStandaloneWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/terminal-window')
 
   return (
     <div className="ck-root" style={themeVars}>
       {/* 顶条：兼作窗口拖拽区（驾驶舱模式不渲染独立标题栏），
           macOS 红绿灯悬浮在左上角，左侧留出安全宽度 */}
-      <div className="ck-top" data-tauri-drag-region style={isMac ? { paddingLeft: 78 } : undefined}>
+      <div className="ck-top" data-tauri-drag-region style={isMac && !isStandaloneWindow ? { paddingLeft: 78 } : undefined}>
         <div className="ck-logo">&gt;_</div>
         <div className="ck-crumb">
           <span className={`ck-dot${focusedConn ? (focusedConn.reconnecting ? ' warn' : '') : ' off'}`} />

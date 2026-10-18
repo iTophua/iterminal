@@ -73,10 +73,8 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
 
   // 驾驶舱布局：用驾驶舱主题接管整条主题管线（CSS 变量 / antd tokens / 窗口底色），
   // 应用主页面、设置弹窗、工具面板全量换肤；驾驶舱为暗色系，强制 dark 模式。
-  // 拖出的独立终端窗口（#/terminal-window）是经典 UI 且 layoutMode 读取自同一 localStorage，
-  // 必须排除，否则独立窗口会被驾驶舱主题错配。
-  const isTerminalWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/terminal-window')
-  const cockpitActive = layoutMode === 'cockpit' && !isTerminalWindow
+  // 独立终端窗口（#/terminal-window）跟随布局设置：驾驶舱模式下同样由驾驶舱主题接管
+  const cockpitActive = layoutMode === 'cockpit'
   const baseThemeDef = themes[selectedTheme] ?? themes.default
   // memo：合成对象保持稳定引用，避免主题 effect 每次渲染重跑
   const currentThemeDef = useMemo(

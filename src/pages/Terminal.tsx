@@ -130,8 +130,8 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const layoutMode = useTerminalStore(state => state.layoutMode)
   const cockpitTheme = useTerminalStore(state => state.cockpitTheme)
   const cockpitFontSize = useTerminalStore(state => state.cockpitFontSize)
-  // 驾驶舱模式：独立窗口（拖出的新窗口）永远走经典布局
-  const cockpitMode = layoutMode === 'cockpit' && !singleConnectionMode
+  // 驾驶舱模式：含独立终端窗口（跟随布局设置渲染驾驶舱形态）
+  const cockpitMode = layoutMode === 'cockpit'
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
   const shortcutSettings = useTerminalStore(state => state.shortcutSettings)

@@ -40,6 +40,7 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
   const [monitor, setMonitor] = useState<Record<string, MonitorSnapshot>>({})
   const [latency, setLatency] = useState<Record<string, number>>({})
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const monitorTs = useRef<Record<string, number>>({})
 
   const groups = useMemo(() => {
@@ -114,11 +115,30 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
   }, [connectedConnections, allConnections])
 
   const scheduleHide = useCallback(() => {
-    hideTimer.current = setTimeout(() => setPreview(null), 160)
+    hideTimer.current = setTimeout(() => setPreview(null), 280)
   }, [])
 
+  /**
+   * 驻留判定：悬停 160ms 后才显示/切换预览。
+   * 双列卡片布局下，从左列卡片把鼠标移向预览卡必然穿过右列卡片——
+   * 快速划过（<160ms）不切换预览，原预览保留，鼠标可顺利进入预览卡操作。
+   */
+  const handleCardEnter = useCallback((connId: string, el: HTMLElement) => {
+    if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null }
+    if (dwellTimer.current) clearTimeout(dwellTimer.current)
+    dwellTimer.current = setTimeout(() => showPreview(connId, el), 160)
+  }, [showPreview])
+
+  const handleCardLeave = useCallback(() => {
+    if (dwellTimer.current) { clearTimeout(dwellTimer.current); dwellTimer.current = null }
+    scheduleHide()
+  }, [scheduleHide])
+
   useEffect(() => {
-    return () => { if (hideTimer.current) clearTimeout(hideTimer.current) }
+    return () => {
+      if (hideTimer.current) clearTimeout(hideTimer.current)
+      if (dwellTimer.current) clearTimeout(dwellTimer.current)
+    }
   }, [])
 
   const previewConn = preview ? allConnections.find(c => c.id === preview.connId) : null
@@ -143,8 +163,8 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
                 className={`ck-wall-ico${connected ? ' on' : ''}`}
                 title={`${conn.name} · ${conn.username}@${conn.host}${connected ? '' : ' · 点击连接'}`}
                 onClick={() => onHostClick(conn)}
-                onMouseEnter={e => showPreview(conn.id, e.currentTarget)}
-                onMouseLeave={scheduleHide}
+                onMouseEnter={e => { const el = e.currentTarget; handleCardEnter(conn.id, el) }}
+                onMouseLeave={handleCardLeave}
               >
                 {conn.name.slice(0, 1).toUpperCase()}
               </button>
@@ -198,8 +218,8 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
                 key={conn.id}
                 className={`ck-hcard${connected ? ' on' : ''}`}
                 onClick={() => onHostClick(conn)}
-                onMouseEnter={e => showPreview(conn.id, e.currentTarget)}
-                onMouseLeave={scheduleHide}
+                onMouseEnter={e => { const el = e.currentTarget; handleCardEnter(conn.id, el) }}
+                onMouseLeave={handleCardLeave}
                 title={`${conn.name} · ${conn.username}@${conn.host}${connected ? ` · ${sc} 个会话` : ' · 点击连接'}`}
               >
                 <span className={`ck-dot${connected ? '' : ' off'}`} />
@@ -230,7 +250,10 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
         <div
           className="ck-hpreview"
           style={{ top: preview!.top, left: preview!.left }}
-          onMouseEnter={() => { if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null } }}
+          onMouseEnter={() => {
+            if (hideTimer.current) { clearTimeout(hideTimer.current); hideTimer.current = null }
+            if (dwellTimer.current) { clearTimeout(dwellTimer.current); dwellTimer.current = null }
+          }}
           onMouseLeave={() => setPreview(null)}
           role="tooltip"
         >
