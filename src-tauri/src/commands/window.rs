@@ -35,9 +35,12 @@ pub async fn create_terminal_window(
     .min_inner_size(600.0, 400.0)
     .resizable(true);
 
-    // macOS：与主窗口一致的 Overlay 标题栏（红绿灯悬浮，前端自绘标题区）
+    // macOS：与主窗口一致的 Overlay 标题栏（红绿灯悬浮，前端自绘标题区）；
+    // hidden_title 隐藏原生标题文字，避免与自绘内容重叠（主窗口配置同款）
     #[cfg(target_os = "macos")]
-    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true);
 
     #[cfg(debug_assertions)]
     let builder = builder.devtools(true);
