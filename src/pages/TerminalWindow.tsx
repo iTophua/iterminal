@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useState, useRef, lazy, Suspense } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTerminalStore, type SplitPane } from '../stores/terminalStore'
 import { getAllSessions } from '../utils/paneUtils'
 import { ThemeProvider } from '../components/ThemeProvider'
 import { TitleBar } from '../components/TitleBar'
+const SettingsPanel = lazy(() => import('../components/SettingsPanel'))
 import Terminal from './Terminal'
 
 interface ConnectionData {
@@ -39,6 +40,7 @@ function TerminalWindow() {
   const restoreConnection = useTerminalStore(s => s.restoreConnection)
   // 布局选择必须在 early return 之前读取（Hook 顺序稳定）
   const layoutMode = useTerminalStore(s => s.layoutMode)
+  const settingsVisible = useTerminalStore(s => s.settingsVisible)
 
   useEffect(() => {
     if (isInitialized.current) return
@@ -175,6 +177,10 @@ function TerminalWindow() {
       <div style={{ flex: 1, minHeight: 0 }}>
         <Terminal singleConnectionMode />
       </div>
+      {/* 全局设置弹窗（与主窗口同款）：独立窗口内打开设置才有落点 */}
+      <Suspense fallback={null}>
+        <SettingsPanel visible={settingsVisible} onClose={() => useTerminalStore.getState().setSettingsVisible(false)} />
+      </Suspense>
     </div>
   )
 }

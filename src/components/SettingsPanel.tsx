@@ -67,6 +67,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const setTerminalTheme = useThemeStore(state => state.setTerminalTheme)
   
   const navigate = useNavigate()
+  // 独立终端窗口没有主 app 的页面栈，切换布局后不导航（原地切换渲染）
+  const isStandaloneWindow = window.location.hash.startsWith('#/terminal-window')
 
   const [activeCategory, setActiveCategory] = useState<SettingCategory>(() => {
     const saved = localStorage.getItem('iterminal_settings_category')
@@ -490,7 +492,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         </Text>
         <div style={{ display: 'flex', gap: 12 }}>
           <div
-            onClick={() => { setLayoutMode('classic'); navigate('/terminal') }}
+            onClick={() => { setLayoutMode('classic'); if (!isStandaloneWindow) navigate('/terminal') }}
             style={{
               flex: 1, cursor: 'pointer', borderRadius: 10, padding: 12,
               border: `1.5px solid ${layoutMode === 'classic' ? 'var(--color-primary)' : 'var(--color-border)'}`,
@@ -503,7 +505,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
             </div>
           </div>
           <div
-            onClick={() => { setLayoutMode('cockpit'); navigate('/terminal') }}
+            onClick={() => { setLayoutMode('cockpit'); if (!isStandaloneWindow) navigate('/terminal') }}
             style={{
               flex: 1, cursor: 'pointer', borderRadius: 10, padding: 12,
               border: `1.5px solid ${layoutMode === 'cockpit' ? 'var(--color-primary)' : 'var(--color-border)'}`,
