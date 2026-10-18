@@ -292,8 +292,8 @@ pub fn create_api_router(app_handle: AppHandle, token: Option<String>) -> Router
                 .allow_origin([
                     "http://localhost:1430".parse().unwrap(),
                     "http://127.0.0.1:1430".parse().unwrap(),
-                    "http://localhost:27149".parse().unwrap(),
-                    "http://127.0.0.1:27149".parse().unwrap(),
+                    format!("http://localhost:{}", api_server_port()).parse().unwrap(),
+                    format!("http://127.0.0.1:{}", api_server_port()).parse().unwrap(),
                 ])
                 .allow_methods([Method::GET, Method::POST, Method::DELETE])
                 .allow_headers(tower_http::cors::Any),
@@ -1559,6 +1559,16 @@ fn ensure_mcp_token() -> Option<String> {
     Some(token)
 }
 
+/// API 服务端口：正式构建 27149；debug 构建（npm run tauri dev）用 27150，
+/// 避免开发实例与已安装的正式应用抢占同一端口，导致正式应用 MCP 401/静默失效。
+pub fn api_server_port() -> u16 {
+    if cfg!(debug_assertions) {
+        27150
+    } else {
+        27149
+    }
+}
+
 /// 获取当前 MCP token（明文，供设置页展示）
 #[tauri::command]
 pub async fn get_mcp_token() -> Result<Option<String>, String> {
@@ -1589,14 +1599,20 @@ pub async fn start_api_server(app_handle: AppHandle) {
     let api_token = ensure_mcp_token();
 
     let app = create_api_router(app_handle, api_token);
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 27149));
+    let port = api_server_port();
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
 
     println!("iTerminal API Server running on http://{}", addr);
 
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("Failed to bind API server: {}", e);
+            eprintln!(
+                "Failed to bind API server on port {} ({}): {}。端口被占用通常意味着另一个 iTerminal 实例正在运行（dev 与正式应用端口已分离：debug=27150 / release=27149），请勿同时开启两个实例的 MCP，或稍后重试。",
+                port,
+                if cfg!(debug_assertions) { "dev 构建" } else { "正式构建" },
+                e
+            );
             API_RUNNING.store(false, Ordering::SeqCst);
             return;
         }

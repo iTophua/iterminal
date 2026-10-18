@@ -56,7 +56,10 @@ const DockerPanel = lazy(() => import('../components/DockerPanel'))
 const AiAssistantModal = lazy(() => import('../components/AiAssistantModal'))
 import type { TerminalContext } from '../services/ai'
 import { useFullscreen, useContextMenu, useRightPanels } from './terminal/hooks'
+import { COCKPIT_THEMES } from '../styles/themes/cockpit-themes'
 import { SortableTab, LeafPane, TabContextMenu, ConnectionPaneHeader } from './terminal/components'
+import { CockpitLayout } from './terminal/layouts/cockpit/CockpitLayout'
+import type { CockpitDrawerTab } from './terminal/layouts/cockpit/ToolDrawer'
 import type { TabMenuEntry } from './terminal/components'
 import { ShortcutHelpModal } from './terminal/components/ShortcutHelpModal'
 import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOverlay'
@@ -122,10 +125,19 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const setActiveSessionInPane = useTerminalStore(state => state.setActiveSessionInPane)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
   const fileManagerVisible = useTerminalStore(state => state.fileManagerVisible)
+  const allConnections = useTerminalStore(state => state.allConnections)
+  const currentPaths = useTerminalStore(state => state.currentPaths)
+  const layoutMode = useTerminalStore(state => state.layoutMode)
+  const cockpitTheme = useTerminalStore(state => state.cockpitTheme)
+  const cockpitFontSize = useTerminalStore(state => state.cockpitFontSize)
+  // 驾驶舱模式：独立窗口（拖出的新窗口）永远走经典布局
+  const cockpitMode = layoutMode === 'cockpit' && !singleConnectionMode
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
   const shortcutSettings = useTerminalStore(state => state.shortcutSettings)
   const reorderConnections = useTerminalStore(state => state.reorderConnections)
+  const addSession = useTerminalStore(state => state.addSession)
+  const setActiveSession = useTerminalStore(state => state.setActiveSession)
   const terminalThemeKey = useThemeStore(state => state.terminalTheme)
   const appTheme = useThemeStore(state => state.appTheme)
   const selectedTheme = useThemeStore(state => state.selectedTheme)
@@ -686,8 +698,10 @@ const handlePointerUp = () => {
   }, [connectedConnections, splitPaneWithPosition, moveSessionToSplitPane, message])
 
   const currentThemeColors = useMemo(
-    () => resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey),
-    [selectedTheme, appTheme, terminalThemeKey]
+    () => cockpitMode
+      ? COCKPIT_THEMES[cockpitTheme].terminal
+      : resolveTerminalTheme(selectedTheme, appTheme, terminalThemeKey),
+    [cockpitMode, cockpitTheme, selectedTheme, appTheme, terminalThemeKey]
   )
   
   const activeConnection = connectedConnections.find(c => c.connectionId === activeConnectionId)
@@ -701,10 +715,12 @@ const handlePointerUp = () => {
       .map(id => connectedConnections.find(c => c.connectionId === id))
       .filter((c): c is NonNullable<typeof c> => !!c)
   }, [connectionSplitActive, connectionSplitIds, connectedConnections])
-  // 当前实际渲染的连接：分屏时为分屏列表，否则为活动连接
-  const renderedConnections = connectionSplitActive && splitConnections.length >= 2
-    ? splitConnections
-    : (activeConnection ? [activeConnection] : [])
+  // 当前实际渲染的连接：驾驶舱 = 全部；分屏 = 分屏列表；否则 = 活动连接
+  const renderedConnections = cockpitMode
+    ? connectedConnections
+    : connectionSplitActive && splitConnections.length >= 2
+      ? splitConnections
+      : (activeConnection ? [activeConnection] : [])
   const visibleSessionsKey = renderedConnections
     .flatMap(c => getVisibleSessions(c.rootPane).map(s => `${s.connectionId}_${s.id}_${s.shellId ?? ''}`))
     .join('|')
@@ -744,11 +760,11 @@ const handlePointerUp = () => {
     }
   }, [singleConnectionMode, connectedConnections.length, activeConnectionId])
 
-  // 切换连接时重置搜索状态
+  // 切换连接 / 切换布局时重置搜索状态
   useEffect(() => {
     setActiveSearchSessionKey(null)
     setSearchText('')
-  }, [activeConnectionId])
+  }, [activeConnectionId, cockpitMode])
 
   const paneStructureRef = useRef<string>('')
   useEffect(() => {
@@ -952,7 +968,7 @@ const handlePointerUp = () => {
           const terminal = new XTerm({
             cursorBlink: terminalSettings.cursorBlink,
             cursorStyle: terminalSettings.cursorStyle,
-            fontSize: terminalSettings.fontSize,
+            fontSize: cockpitMode ? cockpitFontSize : terminalSettings.fontSize,
             fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
             theme: currentThemeColors,
             convertEol: true,
@@ -1337,7 +1353,7 @@ const handlePointerUp = () => {
     }, 0)
 
     return () => clearTimeout(timerId)
-  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, paneStructureKey, storeReady, singleConnectionMode, loadHistory])
+  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, paneStructureKey, storeReady, singleConnectionMode, loadHistory, cockpitMode, cockpitFontSize])
 
   // initializing 超时保护：10秒后强制清除
   useEffect(() => {
@@ -1711,6 +1727,9 @@ const handlePointerUp = () => {
   }, [closeConnection])
 
   // ===== 连接 tab / 会话 tab 右键菜单 =====
+  // 驾驶舱工具抽屉状态（提升到此处，抽屉内各面板的关闭按钮可直接关闭抽屉）
+  const [cockpitDrawer, setCockpitDrawer] = useState<{ open: boolean; tab: CockpitDrawerTab }>({ open: false, tab: 'monitor' })
+
   const [tabMenu, setTabMenu] = useState<{
     visible: boolean
     x: number
@@ -1757,12 +1776,23 @@ const handlePointerUp = () => {
     }
   }, [])
 
+  // 驾驶舱字号实时应用（独立于全局终端设置）
+  useEffect(() => {
+    if (!cockpitMode) return
+    Object.values(terminalInstances.current).forEach(term => {
+      if (term) term.options.fontSize = cockpitFontSize
+    })
+    Object.values(fitAddons.current).forEach(addon => {
+      try { addon?.fit() } catch {}
+    })
+  }, [cockpitMode, cockpitFontSize])
+
   // 终端设置变更时应用到所有已打开终端
   useEffect(() => {
     Object.values(terminalInstances.current).forEach(term => {
       if (term) {
         term.options.fontFamily = `"${terminalSettings.fontFamily}", Menlo, Monaco, monospace`
-        term.options.fontSize = terminalSettings.fontSize
+        term.options.fontSize = cockpitMode ? cockpitFontSize : terminalSettings.fontSize
         term.options.cursorStyle = terminalSettings.cursorStyle
         term.options.cursorBlink = terminalSettings.cursorBlink
         term.options.scrollback = terminalSettings.scrollback
@@ -1771,7 +1801,8 @@ const handlePointerUp = () => {
     Object.values(fitAddons.current).forEach(addon => {
       try { addon?.fit() } catch {}
     })
-  }, [terminalSettings])
+    // 布局切换时字号来源变化（驾驶舱独立字号 ↔ 全局字号），需要重新应用
+  }, [terminalSettings, cockpitMode, cockpitFontSize])
 
   // 性能：窗口失焦/切到后台时暂停所有终端的光标闪烁（用户看不到，省 CPU）
   // 窗口重新获焦时恢复（恢复后由切连接 effect 再把非活动的关掉）
@@ -1795,15 +1826,15 @@ const handlePointerUp = () => {
     }
   }, [])
 
-  // 性能：切换活动连接时，只让活动连接（含连接分屏中的连接）的终端闪烁光标，其余关掉
+  // 性能：切换活动连接时，只让渲染中的连接（活动/分屏/驾驶舱全部）的终端闪烁光标，其余关掉
   useEffect(() => {
     Object.entries(terminalInstances.current).forEach(([key, term]) => {
       if (!term) return
       const [connId] = key.split('_')
-      const isActive = connId === activeConnectionId || connectionSplitIds.includes(connId)
+      const isActive = cockpitMode || connId === activeConnectionId || connectionSplitIds.includes(connId)
       term.options.cursorBlink = isActive && terminalSettingsRef.current.cursorBlink
     })
-  }, [activeConnectionId, connectionSplitIds])
+  }, [activeConnectionId, connectionSplitIds, cockpitMode])
 
   // 性能：焦点离开终端区域时（如点击 AI 面板输入框）关闭活动终端光标闪烁
   // 光标闪烁是 xterm 的 setInterval 驱动的持续重绘，是空闲 CPU 的大头
@@ -1816,8 +1847,8 @@ const handlePointerUp = () => {
       Object.entries(terminalInstances.current).forEach(([key, term]) => {
         if (!term) return
         const [connId] = key.split('_')
-        // 非活动（且不在连接分屏中）的连接始终关掉；活动连接仅在焦点在终端内时闪烁
-        const isActive = connId === activeConnectionId || connectionSplitIds.includes(connId)
+        // 非渲染中的连接始终关掉；渲染中的连接仅在焦点在终端内时闪烁
+        const isActive = cockpitMode || connId === activeConnectionId || connectionSplitIds.includes(connId)
         term.options.cursorBlink = isActive && blink
       })
     }
@@ -1828,7 +1859,7 @@ const handlePointerUp = () => {
       document.removeEventListener('focusin', updateBlink)
       document.removeEventListener('focusout', updateBlink)
     }
-  }, [activeConnectionId, connectionSplitIds])
+  }, [activeConnectionId, connectionSplitIds, cockpitMode])
 
   // 复制选中内容
   const handleCopy = useCallback(async () => {
@@ -2000,6 +2031,20 @@ const handlePointerUp = () => {
     return pane !== null && hasSplitChildren(conn.rootPane)
   }, [contextMenu.sessionKey, connectedConnections])
 
+  // 驾驶舱：Alt+←/→ 在全部会话窗口间轮换聚焦
+  const cycleCockpitFocus = useCallback((dir: 1 | -1) => {
+    const st = useTerminalStore.getState()
+    const all = st.connectedConnections.flatMap(c =>
+      getAllSessions(c.rootPane).map(sess => ({ key: `${c.connectionId}_${sess.id}`, connId: c.connectionId, sessId: sess.id }))
+    )
+    if (all.length === 0) return
+    const current = all.findIndex(x => x.key === st.cockpitFocusKey)
+    const next = all[(current + dir + all.length) % all.length]
+    st.setCockpitFocusKey(next.key)
+    st.setActiveSession(next.connId, next.sessId)
+    terminalInstances.current[next.key]?.focus()
+  }, [terminalInstances])
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (matchShortcut(e, shortcutSettings.search)) {
@@ -2085,6 +2130,11 @@ const handlePointerUp = () => {
       
 if (matchShortcut(e, shortcutSettings.nextSession)) {
         e.preventDefault()
+        // 驾驶舱：Alt+→ 在全部浮动窗口间轮换聚焦
+        if (cockpitMode) {
+          cycleCockpitFocus(1)
+          return
+        }
         const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
         if (activeConn) {
           const activeSess = getActiveSessionInPane(activeConn.rootPane)
@@ -2100,6 +2150,10 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       
       if (matchShortcut(e, shortcutSettings.prevSession)) {
         e.preventDefault()
+        if (cockpitMode) {
+          cycleCockpitFocus(-1)
+          return
+        }
         const activeConn = connectedConnections.find(c => c.connectionId === activeConnectionId)
         if (activeConn) {
           const activeSess = getActiveSessionInPane(activeConn.rootPane)
@@ -2344,6 +2398,81 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     children: <div />,
   })), [connectedConnections, handleCloseConnection])
 
+  /**
+   * 把连接迁出为独立窗口（经典拖拽 / 驾驶舱按钮、命令面板共用）：
+   * 序列化会话 → 清理本窗口终端状态 → 断开 SSH → 创建新窗口
+   */
+  const handleDetachConnectionToNewWindow = useCallback(async (connectionId: string) => {
+    const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === connectionId)
+    if (!conn) return
+    try {
+      const sessions = getAllSessions(conn.rootPane)
+      const sessionsWithShell = sessions.filter(s => s.shellId)
+
+      if (sessionsWithShell.length === 0) {
+        message.warning('该连接没有活动的终端会话')
+        return
+      }
+      const connectionData = JSON.stringify({
+        connectionId: connectionId,
+        connection: conn.connection,
+        sessions: sessionsWithShell.map(s => ({ id: s.id, title: s.title })),
+        rootPane: conn.rootPane,
+      })
+
+      for (const s of sessions) {
+        const key = `${connectionId}_${s.id}`
+        if (unlistenersRef.current[key]) {
+          unlistenersRef.current[key]()
+          delete unlistenersRef.current[key]
+        }
+        if (terminalInstances.current[key]) {
+          terminalInstances.current[key].dispose()
+          delete terminalInstances.current[key]
+        }
+        delete fitAddons.current[key]
+        delete searchAddons.current[key]
+        const resizeObserver = resizeObserversRef.current[key]
+        if (resizeObserver) {
+          resizeObserver.disconnect()
+        }
+        delete resizeObserversRef.current[key]
+        delete commandTrackersRef.current[key]
+        delete xtermDomRefs.current[key]
+        delete writeQueueRef.current[key]
+        delete writeDrainingRef.current[key]
+        delete ghostPendingInputRef.current[key]
+        const ghostRafId = ghostRafIdRef.current[key]
+        if (ghostRafId !== null && ghostRafId !== undefined) {
+          cancelAnimationFrame(ghostRafId)
+        }
+        delete ghostRafIdRef.current[key]
+        initializedRef.current.delete(key)
+        if (s.shellId) {
+          await invoke('close_shell', { id: s.shellId }).catch(() => {})
+        }
+      }
+
+      await invoke('disconnect_ssh', { id: connectionId }).catch(() => {})
+      disconnectHandledRef.current.delete(connectionId)
+      removeConnectionFromStore(connectionId)
+
+      await new Promise(resolve => setTimeout(resolve, 500))
+
+      await invoke<string>('create_terminal_window', {
+        connectionId: connectionId,
+        connectionName: conn.connection.name,
+        username: conn.connection.username,
+        host: conn.connection.host,
+        connectionData: connectionData,
+      })
+
+      message.success('已在新窗口中打开')
+    } catch (err) {
+      message.error(`创建新窗口失败: ${err}`)
+    }
+  }, [removeConnectionFromStore, message])
+
   const handleConnectionDragStart = (event: DragStartEvent) => {
     connectionDragIdRef.current = String(event.active.id)
     setIsConnectionDragging(true)
@@ -2358,85 +2487,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     connectionDragIdRef.current = null
     
     if (isDragToNewWindow && connectionId) {
-      const conn = connectedConnections.find(c => c.connectionId === connectionId)
-      if (conn) {
-        try {
-          const sessions = getAllSessions(conn.rootPane)
-          const sessionsWithShell = sessions.filter(s => s.shellId)
-          
-          if (sessionsWithShell.length > 0) {
-            const connectionData = JSON.stringify({
-              connectionId: connectionId,
-              connection: conn.connection,
-              sessions: sessionsWithShell.map(s => ({
-                id: s.id,
-                title: s.title,
-              })),
-              rootPane: conn.rootPane,
-            })
-            
-            // 1. 先清理本地终端状态和 shell
-            for (const s of sessions) {
-              const key = `${connectionId}_${s.id}`
-              if (unlistenersRef.current[key]) {
-                unlistenersRef.current[key]()
-                delete unlistenersRef.current[key]
-              }
-              if (terminalInstances.current[key]) {
-                terminalInstances.current[key].dispose()
-                delete terminalInstances.current[key]
-              }
-              delete fitAddons.current[key]
-              delete searchAddons.current[key]
-              const resizeObserver = resizeObserversRef.current[key]
-              if (resizeObserver) {
-                resizeObserver.disconnect()
-              }
-              delete resizeObserversRef.current[key]
-              delete commandTrackersRef.current[key]
-              delete xtermDomRefs.current[key]
-              // 清理写入队列，避免会话关闭后残留状态
-              delete writeQueueRef.current[key]
-              delete writeDrainingRef.current[key]
-              // 清理 ghost text 待处理状态，避免会话关闭后遗留 rAF 回调
-              delete ghostPendingInputRef.current[key]
-              const ghostRafId = ghostRafIdRef.current[key]
-              if (ghostRafId !== null && ghostRafId !== undefined) {
-                cancelAnimationFrame(ghostRafId)
-              }
-              delete ghostRafIdRef.current[key]
-              initializedRef.current.delete(key)
-              if (s.shellId) {
-                await invoke('close_shell', { id: s.shellId }).catch(() => {})
-              }
-            }
-            
-            // 2. 断开 SSH 并从 store 移除，确保新窗口 connect 时 session 已清理
-            // 使用 await 确保 disconnect 完成后再创建新窗口，避免竞态
-            await invoke('disconnect_ssh', { id: connectionId }).catch(() => {})
-            disconnectHandledRef.current.delete(connectionId)
-            removeConnectionFromStore(connectionId)
-
-            // 等待一段时间确保后端清理完成（SSH session disconnect 需要时间）
-            await new Promise(resolve => setTimeout(resolve, 500))
-
-            // 3. 再创建新窗口
-            await invoke<string>('create_terminal_window', {
-              connectionId: connectionId,
-              connectionName: conn.connection.name,
-              username: conn.connection.username,
-              host: conn.connection.host,
-              connectionData: connectionData,
-            })
-            
-            message.success('已在新窗口中打开')
-          } else {
-            message.warning('该连接没有活动的终端会话')
-          }
-        } catch (err) {
-          message.error(`创建新窗口失败: ${err}`)
-        }
-      }
+      await handleDetachConnectionToNewWindow(connectionId)
       setIsDragToNewWindow(false)
       return
     }
@@ -2456,6 +2507,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
   // （连接分屏中的连接即使非活动也在渲染，需保留 observer）
   useEffect(() => {
     const renderedIds = new Set<string>()
+    if (cockpitMode) {
+      connectedConnectionsRef.current.forEach(c => renderedIds.add(c.connectionId))
+    }
     if (activeConnectionId) renderedIds.add(activeConnectionId)
     connectionSplitIds.forEach(id => renderedIds.add(id))
 
@@ -2469,7 +2523,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         }
       }
     })
-  }, [activeConnectionId, connectionSplitIds])
+  }, [activeConnectionId, connectionSplitIds, cockpitMode])
 
   const historyModalData = useMemo(() => {
     if (!historyModalKey) return []
@@ -2480,6 +2534,390 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       : cache
     return filtered.slice(0, 50)
   }, [historyModalKey, historyCaches, historySearchText])
+
+
+  // ===== 驾驶舱布局 =====
+  // 驾驶舱下从主机墙连接：连接后聚焦新会话窗口
+  const handleCockpitHostClick = useCallback(async (conn: Connection) => {
+    const isConnected = connectedConnections.some(c => c.connectionId === conn.id)
+    if (isConnected) {
+      setActiveConnection(conn.id)
+      return
+    }
+    message.info(`正在连接 ${conn.name}...`)
+    try {
+      await invoke('connect_ssh', {
+        id: conn.id,
+        connection: {
+          host: conn.host,
+          port: conn.port,
+          username: conn.username,
+          password: conn.password || null,
+          key_file: conn.keyFile || null,
+        }
+      })
+      const shellId = await invoke<string>('get_shell', { id: conn.id })
+      const sessionId = addConnection(conn, shellId)
+      useTerminalStore.getState().setCockpitFocusKey(`${conn.id}_${sessionId}`)
+      await recordConnectionHistory(conn.id)
+      await refreshRecentConnections()
+      message.success(`已连接到 ${conn.name}`)
+    } catch (error) {
+      message.error(`连接失败: ${error}`)
+    }
+  }, [connectedConnections, addConnection, setActiveConnection, message, refreshRecentConnections])
+
+  // 驾驶舱下为已有连接新开会话（= 新浮动窗口）
+  const handleCockpitNewSession = useCallback(async (connectionId: string) => {
+    try {
+      const shellId = await invoke<string>('get_shell', { id: connectionId })
+      const sessionId = addSession(connectionId, shellId)
+      if (sessionId) {
+        useTerminalStore.getState().setCockpitFocusKey(`${connectionId}_${sessionId}`)
+        setActiveSession(connectionId, sessionId)
+      }
+    } catch (err) {
+      message.error(`创建会话失败: ${err}`)
+    }
+  }, [addSession, setActiveSession, message])
+
+  // 驾驶舱工具抽屉面板：复用经典布局的面板组件，仅换宿主
+  const cockpitDrawerPanels = useMemo<Partial<Record<CockpitDrawerTab, React.ReactNode>>>(() => {
+    const hint = (text: string) => (
+      <div style={{ padding: 16, color: 'var(--ck-t3, #5E6577)', fontSize: 12 }}>{text}</div>
+    )
+    const insertCb = (cmd: string) => {
+      const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === activeConnectionId)
+      if (!conn || !activeConnectionId) return
+      const activeSess = getActiveSessionInPane(conn.rootPane)
+      if (!activeSess) return
+      enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+    }
+    const runCb = (cmd: string) => insertCb(cmd + '\r')
+    return {
+      monitor: (
+        <Suspense fallback={null}>
+          <MonitorPanel visible connectionId={activeConnectionId || ''} onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} />
+        </Suspense>
+      ),
+      files: activeConnectionId ? (
+        <Suspense fallback={null}>
+          <FileManagerPanel connectionId={activeConnectionId} visible onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} />
+        </Suspense>
+      ) : hint('没有活动连接，先从左侧主机墙连接'),
+      docker: activeConnectionId ? (
+        <Suspense fallback={null}>
+          <DockerPanel connectionId={activeConnectionId} onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} onRunCommand={runCb} />
+        </Suspense>
+      ) : hint('没有活动连接，先从左侧主机墙连接'),
+      ports: !activeConnectionId
+        ? hint('没有活动连接，先从左侧主机墙连接')
+        : portForwardEnabled ? (
+          <Suspense fallback={null}>
+            <PortForwardPanel connectionId={activeConnectionId} onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} />
+          </Suspense>
+        ) : hint('端口转发需要 Pro 授权'),
+      ai: aiEnabled ? (
+        <Suspense fallback={null}>
+          <AiChatPanel
+            connectionId={activeConnectionId}
+            onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))}
+            initialText={aiChatInitialText}
+            onInsertCommand={insertCb}
+            onRunCommand={runCb}
+            getTerminalContext={() => {
+              const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn || !activeConnectionId) return null
+              const activeSess = getActiveSessionInPane(conn.rootPane)
+              if (!activeSess) return null
+              const key = `${activeConnectionId}_${activeSess.id}`
+              const term = terminalInstances.current[key]
+              if (!term) return null
+              const N = 200
+              const buf = term.buffer.active
+              const start = Math.max(0, buf.length - N)
+              const lines: string[] = []
+              for (let i = start; i < buf.length; i++) {
+                lines.push(buf.getLine(i)?.translateToString(true) || '')
+              }
+              const recentOutput = lines.join('\n')
+              const selection = term.getSelection() || ''
+              const cwd = useTerminalStore.getState().currentPaths[activeConnectionId]
+              const ctx: TerminalContext = {}
+              if (selection.trim()) ctx.selection = selection
+              const totalSize = recentOutput.length + selection.length
+              if (totalSize < 8000 && recentOutput.trim()) ctx.recentOutput = recentOutput
+              if (cwd) ctx.cwd = cwd
+              return ctx
+            }}
+          />
+        </Suspense>
+      ) : hint('AI 助手需要 Pro 授权'),
+    }
+  }, [activeConnectionId, aiEnabled, portForwardEnabled, aiChatInitialText, enqueueWrite])
+
+  // 两布局共享的浮层：终端右键菜单 / AI 弹窗 / 历史命令 / 快捷键帮助
+  const sharedOverlays = (
+    <>
+      {contextMenu.visible && createPortal(
+        <div
+          id="terminal-context-menu"
+          style={{
+            position: 'fixed',
+            left: contextMenu.x,
+            top: contextMenu.y,
+            zIndex: 1000,
+            background: 'var(--color-bg-elevated)',
+            borderRadius: 4,
+            boxShadow: 'var(--shadow-lg)',
+            overflow: 'hidden',
+            minWidth: 120,
+            fontSize: 13,
+          }}
+          onClick={(e) => e.stopPropagation()}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handleCopy}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <CopyOutlined /> 复制
+          </div>
+          <div
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handlePaste}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <SnippetsOutlined /> 粘贴
+          </div>
+          <div
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handleSelectAll}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <CheckCircleOutlined /> 全选
+          </div>
+          <div
+            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+            onClick={handleFindFromContextMenu}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+          >
+            <SearchOutlined /> 查找
+          </div>
+          {aiEnabled && (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={handleAiAnalyze}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <BulbOutlined /> AI 分析{contextMenu.sessionKey && terminalInstances.current[contextMenu.sessionKey]?.hasSelection() ? '选中内容' : ''}
+            </div>
+          )}
+          {aiEnabled && (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={handleSendToChat}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <MessageOutlined /> 发送到 AI 对话
+            </div>
+          )}
+          <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
+          {cockpitMode ? (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={() => {
+                const [connId] = contextMenu.sessionKey.split('_')
+                handleCockpitNewSession(connId)
+                hideContextMenu()
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,.1)'}
+              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <PlusOutlined /> 新建会话窗口
+            </div>
+          ) : isContextMenuOnSplitPanel() ? (
+            <div
+              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={handleCloseSplitFromContextMenu}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-spotlight)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+            >
+              <CloseOutlined /> 关闭分屏
+            </div>
+          ) : (
+            <>
+              <div
+                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleSplitHorizontalFromContextMenu}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <BorderHorizontalOutlined /> 水平分屏
+              </div>
+              <div
+                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={handleSplitVerticalFromContextMenu}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <BorderVerticleOutlined /> 垂直分屏
+              </div>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
+
+      {aiModalVisible && (
+        <Suspense fallback={null}>
+        <AiAssistantModal
+          visible={aiModalVisible}
+          initialText={aiInitialText}
+          onClose={() => setAiModalVisible(false)}
+          onInsertCommand={(cmd) => {
+            const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+            if (!conn || !activeConnectionId) return
+            const activeSess = getActiveSessionInPane(conn.rootPane)
+            if (!activeSess) return
+            enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+          }}
+        />
+        </Suspense>
+      )}
+
+      {historyModalVisible && historyModalKey && (
+        <Modal
+          open={true}
+          onCancel={hideHistoryModal}
+          footer={null}
+          mask={false}
+          title={
+            <span>
+              <HistoryOutlined style={{ marginRight: 8 }} />
+              历史命令
+              <Popconfirm
+                title="确定清空历史命令？"
+                description="此操作不可撤销"
+                onConfirm={() => {
+                  const [connId] = historyModalKey.split('_')
+                  clearConnectionHistory(connId)
+                  message.success('已清空历史命令')
+                }}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button 
+                  type="link" 
+                  size="small" 
+                  danger
+                  style={{ marginLeft: 12 }}
+                >
+                  清空
+                </Button>
+              </Popconfirm>
+            </span>
+          }
+          width={500}
+          centered
+        >
+          <Input
+            id="history-search-input"
+            placeholder="搜索..."
+            value={historySearchText}
+            onChange={(e) => {
+              setHistorySearchText(e.target.value)
+              setHistorySelectedIndex(0)
+            }}
+            prefix={<SearchOutlined />}
+            allowClear
+            style={{ marginBottom: 12 }}
+          />
+          <List
+            size="small"
+            dataSource={historyModalData}
+            style={{ maxHeight: 250, overflow: 'auto' }}
+            renderItem={(item: { text: string; count: number }, index: number) => (
+<List.Item
+                  onClick={() => selectHistoryCommand(item.text)}
+                  onMouseEnter={() => setHistorySelectedIndex(index)}
+                  style={{
+                    cursor: 'pointer',
+                    background: index === historySelectedIndex ? 'var(--color-primary)' : 'transparent',
+                    borderRadius: 4,
+                    padding: '8px 12px',
+                  }}
+                >
+                  <span style={{
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    color: index === historySelectedIndex ? '#fff' : 'var(--color-text)',
+                    flex: 1,
+                  }}>
+                    {item.text}
+                  </span>
+                </List.Item>
+            )}
+          />
+        </Modal>
+      )}
+
+      <ShortcutHelpModal
+        visible={shortcutHelpVisible}
+        onClose={() => setShortcutHelpVisible(false)}
+      />
+    </>
+  )
+
+  if (cockpitMode) {
+    return (
+      <div style={{ height: '100%', position: 'relative', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <CockpitLayout
+          connectedConnections={connectedConnections}
+          allConnections={allConnections}
+          currentPaths={currentPaths}
+          currentThemeColors={currentThemeColors}
+          fontFamily={terminalSettings.fontFamily}
+          fontSize={cockpitFontSize}
+          broadcastEnabled={broadcastEnabled}
+          terminalRefs={terminalRefs}
+          ghostTextElementsRef={ghostTextElementsRef}
+          terminalInstances={terminalInstances}
+          searchAddons={searchAddons}
+          drawer={cockpitDrawer}
+          onDrawerChange={setCockpitDrawer}
+          enqueueWrite={enqueueWrite}
+          onSessionContextMenu={handleContextMenu}
+          onCloseSession={(connId, sessId) => {
+            // 会话可能位于经典布局分屏产生的嵌套 pane 里，找到所属 pane 再关
+            const conn = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === connId)
+            const pane = conn ? findPaneBySessionId(conn.rootPane, sessId) : null
+            handleCloseSession(connId, sessId, pane?.id)
+          }}
+          onReconnect={handleReconnect}
+          onHostClick={handleCockpitHostClick}
+          onNewSession={handleCockpitNewSession}
+          onDetachToNewWindow={handleDetachConnectionToNewWindow}
+          activeSearchSessionKey={activeSearchSessionKey}
+          setActiveSearchSessionKey={setActiveSearchSessionKey}
+          searchText={searchText}
+          setSearchText={setSearchText}
+          searchMode={searchMode}
+          setSearchMode={setSearchMode}
+          drawerPanels={cockpitDrawerPanels}
+        />
+        {sharedOverlays}
+      </div>
+    )
+  }
 
   return connectedConnections.length === 0 ? (
     singleConnectionMode ? null : (
@@ -2812,109 +3250,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         document.body
       )}
 
-      {contextMenu.visible && createPortal(
-        <div
-          id="terminal-context-menu"
-          style={{
-            position: 'fixed',
-            left: contextMenu.x,
-            top: contextMenu.y,
-            zIndex: 1000,
-            background: 'var(--color-bg-elevated)',
-            borderRadius: 4,
-            boxShadow: 'var(--shadow-lg)',
-            overflow: 'hidden',
-            minWidth: 120,
-            fontSize: 13,
-          }}
-          onClick={(e) => e.stopPropagation()}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <div
-            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-            onClick={handleCopy}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
-            <CopyOutlined /> 复制
-          </div>
-          <div
-            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-            onClick={handlePaste}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
-            <SnippetsOutlined /> 粘贴
-          </div>
-          <div
-            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-            onClick={handleSelectAll}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
-            <CheckCircleOutlined /> 全选
-          </div>
-          <div
-            style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-            onClick={handleFindFromContextMenu}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
-            <SearchOutlined /> 查找
-          </div>
-          {aiEnabled && (
-            <div
-              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-              onClick={handleAiAnalyze}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <BulbOutlined /> AI 分析{contextMenu.sessionKey && terminalInstances.current[contextMenu.sessionKey]?.hasSelection() ? '选中内容' : ''}
-            </div>
-          )}
-          {aiEnabled && (
-            <div
-              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-              onClick={handleSendToChat}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <MessageOutlined /> 发送到 AI 对话
-            </div>
-          )}
-          <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
-          {isContextMenuOnSplitPanel() ? (
-            <div
-              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-              onClick={handleCloseSplitFromContextMenu}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--color-bg-spotlight)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <CloseOutlined /> 关闭分屏
-            </div>
-          ) : (
-            <>
-              <div
-                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleSplitHorizontalFromContextMenu}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <BorderHorizontalOutlined /> 水平分屏
-              </div>
-              <div
-                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-                onClick={handleSplitVerticalFromContextMenu}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-              >
-                <BorderVerticleOutlined /> 垂直分屏
-              </div>
-            </>
-          )}
-        </div>,
-        document.body
-      )}
+      {sharedOverlays}
       
       {draggedSession && dragPosition ? createPortal(
         <span
@@ -2947,104 +3283,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       
       <DragToNewWindowOverlay visible={!singleConnectionMode && isDragToNewWindow} />
 
-      {aiModalVisible && (
-        <Suspense fallback={null}>
-        <AiAssistantModal
-          visible={aiModalVisible}
-          initialText={aiInitialText}
-          onClose={() => setAiModalVisible(false)}
-          onInsertCommand={(cmd) => {
-            const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
-            if (!conn || !activeConnectionId) return
-            const activeSess = getActiveSessionInPane(conn.rootPane)
-            if (!activeSess) return
-            enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
-          }}
-        />
-        </Suspense>
-      )}
 
-      {historyModalVisible && historyModalKey && (
-        <Modal
-          open={true}
-          onCancel={hideHistoryModal}
-          footer={null}
-          mask={false}
-          title={
-            <span>
-              <HistoryOutlined style={{ marginRight: 8 }} />
-              历史命令
-              <Popconfirm
-                title="确定清空历史命令？"
-                description="此操作不可撤销"
-                onConfirm={() => {
-                  const [connId] = historyModalKey.split('_')
-                  clearConnectionHistory(connId)
-                  message.success('已清空历史命令')
-                }}
-                okText="确定"
-                cancelText="取消"
-              >
-                <Button 
-                  type="link" 
-                  size="small" 
-                  danger
-                  style={{ marginLeft: 12 }}
-                >
-                  清空
-                </Button>
-              </Popconfirm>
-            </span>
-          }
-          width={500}
-          centered
-        >
-          <Input
-            id="history-search-input"
-            placeholder="搜索..."
-            value={historySearchText}
-            onChange={(e) => {
-              setHistorySearchText(e.target.value)
-              setHistorySelectedIndex(0)
-            }}
-            prefix={<SearchOutlined />}
-            allowClear
-            style={{ marginBottom: 12 }}
-          />
-          <List
-            size="small"
-            dataSource={historyModalData}
-            style={{ maxHeight: 250, overflow: 'auto' }}
-            renderItem={(item: { text: string; count: number }, index: number) => (
-<List.Item
-                  onClick={() => selectHistoryCommand(item.text)}
-                  onMouseEnter={() => setHistorySelectedIndex(index)}
-                  style={{
-                    cursor: 'pointer',
-                    background: index === historySelectedIndex ? 'var(--color-primary)' : 'transparent',
-                    borderRadius: 4,
-                    padding: '8px 12px',
-                  }}
-                >
-                  <span style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    color: index === historySelectedIndex ? '#fff' : 'var(--color-text)',
-                    flex: 1,
-                  }}>
-                    {item.text}
-                  </span>
-                </List.Item>
-            )}
-          />
-        </Modal>
-      )}
-
-      <ShortcutHelpModal
-        visible={shortcutHelpVisible}
-        onClose={() => setShortcutHelpVisible(false)}
-      />
     </div>
   )
 }

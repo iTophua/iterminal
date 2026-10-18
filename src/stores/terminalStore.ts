@@ -32,6 +32,24 @@ export interface SplitPane {
 
 export type DisconnectReason = 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
 
+// 布局模式：classic 经典（tab+分栏）/ cockpit 驾驶舱（主机墙+浮动窗口）
+export type LayoutMode = 'classic' | 'cockpit'
+
+// 驾驶舱主题
+export type CockpitThemeName = 'force' | 'aurora' | 'ember'
+
+// 驾驶舱浮动窗口几何信息（key = `${connectionId}_${sessionId}`）
+export interface CockpitWindowGeometry {
+  x: number
+  y: number
+  w: number
+  h: number
+  zoomed?: boolean
+  /** 最小化到停靠栏（会话保留，窗口隐藏） */
+  minimized?: boolean
+  prev?: { x: number; y: number; w: number; h: number }
+}
+
 export interface ConnectedConnection {
   connectionId: string
   connection: Connection
@@ -172,6 +190,18 @@ interface TerminalState {
   connectionSplitIds: string[]
   // 连接分屏方向：horizontal 左右排 / vertical 上下排
   connectionSplitDirection: 'horizontal' | 'vertical'
+  // 布局模式（持久化到 localStorage）
+  layoutMode: LayoutMode
+  // 驾驶舱主题（持久化）
+  cockpitTheme: CockpitThemeName
+  // 驾驶舱终端字号（浮动窗口较小，独立于全局终端字号；持久化）
+  cockpitFontSize: number
+  // 驾驶舱主机墙折叠状态（折叠为图标条；持久化）
+  cockpitWallCollapsed: boolean
+  // 驾驶舱窗口几何（持久化，会话关闭时自动清理）
+  cockpitWindowGeometry: Record<string, CockpitWindowGeometry>
+  // 驾驶舱当前聚焦的会话 key（connectionId_sessionId）
+  cockpitFocusKey: string | null
   // 所有连接列表（启动时预加载）
   allConnections: Connection[]
   // 连接列表加载状态
@@ -235,6 +265,18 @@ interface TerminalState {
   removeConnectionFromSplitView: (connectionId: string) => void
   // 退出连接分屏，恢复单连接视图
   clearConnectionSplitView: () => void
+  // 切换布局模式（切到驾驶舱时自动退出连接分屏）
+  setLayoutMode: (mode: LayoutMode) => void
+  // 切换驾驶舱主题
+  setCockpitTheme: (theme: CockpitThemeName) => void
+  // 设置驾驶舱终端字号
+  setCockpitFontSize: (size: number) => void
+  // 切换驾驶舱主机墙折叠
+  setCockpitWallCollapsed: (collapsed: boolean) => void
+  // 提交窗口几何（拖拽/缩放结束时调用）
+  setCockpitWindowGeometry: (key: string, geo: CockpitWindowGeometry) => void
+  // 设置驾驶舱聚焦会话
+  setCockpitFocusKey: (key: string | null) => void
   // 设置激活的会话
   setActiveSession: (connectionId: string, sessionId: string) => void
   // 获取当前激活的会话
@@ -293,6 +335,75 @@ interface TerminalState {
   setConnectionInitializing: (connectionId: string, initializing: boolean) => void
 }
 
+// ===== 驾驶舱布局持久化（布局模式 / 主题 / 窗口几何） =====
+const COCKPIT_STORAGE_KEY = 'iterminal_cockpit'
+const COCKPIT_THEMES: CockpitThemeName[] = ['force', 'aurora', 'ember']
+
+function loadCockpitPersist(): {
+  layoutMode: LayoutMode
+  cockpitTheme: CockpitThemeName
+  cockpitFontSize: number
+  cockpitWallCollapsed: boolean
+  geometry: Record<string, CockpitWindowGeometry>
+} | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null
+    const raw = window.localStorage.getItem(COCKPIT_STORAGE_KEY)
+    if (!raw) return null
+    const p = JSON.parse(raw)
+    if (p && (p.layoutMode === 'classic' || p.layoutMode === 'cockpit')) {
+      const fontSize = typeof p.cockpitFontSize === 'number' && p.cockpitFontSize >= 10 && p.cockpitFontSize <= 18
+        ? p.cockpitFontSize
+        : 12
+      return {
+        layoutMode: p.layoutMode,
+        cockpitTheme: COCKPIT_THEMES.includes(p.cockpitTheme) ? p.cockpitTheme : 'force',
+        cockpitFontSize: fontSize,
+        cockpitWallCollapsed: p.cockpitWallCollapsed === true,
+        geometry: p.geometry && typeof p.geometry === 'object' ? p.geometry : {},
+      }
+    }
+  } catch {
+  }
+  return null
+}
+
+function persistCockpit(state: { layoutMode: LayoutMode; cockpitTheme: CockpitThemeName; cockpitFontSize: number; cockpitWallCollapsed: boolean; cockpitWindowGeometry: Record<string, CockpitWindowGeometry> }) {
+  try {
+    window.localStorage.setItem(COCKPIT_STORAGE_KEY, JSON.stringify({
+      layoutMode: state.layoutMode,
+      cockpitTheme: state.cockpitTheme,
+      cockpitFontSize: state.cockpitFontSize,
+      cockpitWallCollapsed: state.cockpitWallCollapsed,
+      geometry: state.cockpitWindowGeometry,
+    }))
+  } catch {
+  }
+}
+
+const cockpitInitial = loadCockpitPersist()
+
+function collectSessionKeys(pane: SplitPane, prefix: string, out: Set<string>) {
+  for (const sess of pane.sessions) out.add(`${prefix}${sess.id}`)
+  if (pane.children) for (const child of pane.children) collectSessionKeys(child, prefix, out)
+}
+
+// 会话/连接关闭后清理孤儿窗口几何
+function pruneCockpitGeometry(
+  geometry: Record<string, CockpitWindowGeometry>,
+  connections: ConnectedConnection[]
+): Record<string, CockpitWindowGeometry> {
+  const keep = new Set<string>()
+  for (const c of connections) collectSessionKeys(c.rootPane, `${c.connectionId}_`, keep)
+  let changed = false
+  const out: Record<string, CockpitWindowGeometry> = {}
+  for (const key of Object.keys(geometry)) {
+    if (keep.has(key)) out[key] = geometry[key]
+    else changed = true
+  }
+  return changed ? out : geometry
+}
+
 // 切换活动连接时：目标连接不在连接分屏视图内则退出分屏（恢复单连接视图）
 function splitAfterActivate(state: { connectionSplitIds: string[] }, activeId: string | null): string[] {
   const ids = state.connectionSplitIds
@@ -337,6 +448,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   activeConnectionId: null,
   connectionSplitIds: [],
   connectionSplitDirection: 'horizontal',
+  layoutMode: cockpitInitial?.layoutMode ?? 'classic',
+  cockpitTheme: cockpitInitial?.cockpitTheme ?? 'force',
+  cockpitFontSize: cockpitInitial?.cockpitFontSize ?? 12,
+  cockpitWallCollapsed: cockpitInitial?.cockpitWallCollapsed ?? false,
+  cockpitWindowGeometry: cockpitInitial?.geometry ?? {},
+  cockpitFocusKey: null,
   allConnections: [],
   connectionsLoading: true,
   sidebarCollapsed: false,
@@ -531,6 +648,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const newSessions = conn.rootPane.sessions.filter(s => s.id !== sessionId)
 
       if (newSessions.length === 0) {
+        const newConnections = state.connectedConnections.filter(c => c.connectionId !== connectionId)
         const newTransferTasks = { ...state.transferTasks }
         delete newTransferTasks[connectionId]
         const newFileManagerVisible = { ...state.fileManagerVisible }
@@ -543,7 +661,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         delete newExpandedKeys[connectionId]
 
         return {
-          connectedConnections: state.connectedConnections.filter(c => c.connectionId !== connectionId),
+          connectedConnections: newConnections,
+          cockpitWindowGeometry: pruneCockpitGeometry(state.cockpitWindowGeometry, newConnections),
           activeConnectionId: state.activeConnectionId === connectionId
             ? (state.connectedConnections.length > 1
               ? state.connectedConnections.find(c => c.connectionId !== connectionId)?.connectionId || null
@@ -561,19 +680,22 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         ? newSessions[0]?.id || null
         : conn.rootPane.activeSessionId
 
-      return {
-        connectedConnections: state.connectedConnections.map(c =>
-          c.connectionId === connectionId
-            ? { 
-                ...c, 
-                rootPane: {
-                  ...c.rootPane,
-                  sessions: newSessions,
-                  activeSessionId: newActiveSessionId,
-                }
+      const newConnections = state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? {
+              ...c,
+              rootPane: {
+                ...c.rootPane,
+                sessions: newSessions,
+                activeSessionId: newActiveSessionId,
               }
-            : c
-        ),
+            }
+          : c
+      )
+
+      return {
+        connectedConnections: newConnections,
+        cockpitWindowGeometry: pruneCockpitGeometry(state.cockpitWindowGeometry, newConnections),
       }
     })
   },
@@ -611,6 +733,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         connectedConnections: newConnections,
         activeConnectionId: newActiveId,
         connectionSplitIds: newSplitIds,
+        cockpitWindowGeometry: pruneCockpitGeometry(state.cockpitWindowGeometry, newConnections),
         transferTasks: newTransferTasks,
         fileManagerVisible: newFileManagerVisible,
         transferManagerVisible: newTransferManagerVisible,
@@ -653,6 +776,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         connectedConnections: newConnections,
         activeConnectionId: newActiveId,
         connectionSplitIds: newSplitIds,
+        cockpitWindowGeometry: pruneCockpitGeometry(state.cockpitWindowGeometry, newConnections),
         transferTasks: newTransferTasks,
         fileManagerVisible: newFileManagerVisible,
         transferManagerVisible: newTransferManagerVisible,
@@ -716,6 +840,38 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   clearConnectionSplitView: () => {
     set({ connectionSplitIds: [] })
+  },
+
+  setLayoutMode: (mode) => {
+    // 连接分屏状态在驾驶舱期间保留（closeConnection 等路径会自然剔除失效成员），
+    // 切回经典时若活动连接仍在分屏内则自动恢复分屏视图
+    set({ layoutMode: mode })
+    persistCockpit(get())
+  },
+
+  setCockpitTheme: (theme) => {
+    set({ cockpitTheme: theme })
+    persistCockpit(get())
+  },
+
+  setCockpitFontSize: (size) => {
+    const clamped = Math.max(10, Math.min(18, Math.round(size)))
+    set({ cockpitFontSize: clamped })
+    persistCockpit(get())
+  },
+
+  setCockpitWallCollapsed: (collapsed) => {
+    set({ cockpitWallCollapsed: collapsed })
+    persistCockpit(get())
+  },
+
+  setCockpitWindowGeometry: (key, geo) => {
+    set((state) => ({ cockpitWindowGeometry: { ...state.cockpitWindowGeometry, [key]: geo } }))
+    persistCockpit(get())
+  },
+
+  setCockpitFocusKey: (key) => {
+    set({ cockpitFocusKey: key })
   },
 
   setActiveSession: (connectionId, sessionId) => {
@@ -1054,12 +1210,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const newRootPane = removePane(conn.rootPane)
       if (!newRootPane) return state
 
+      const newConnections = state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, rootPane: newRootPane }
+          : c
+      )
       return {
-        connectedConnections: state.connectedConnections.map(c =>
-          c.connectionId === connectionId
-            ? { ...c, rootPane: newRootPane }
-            : c
-        ),
+        connectedConnections: newConnections,
+        cockpitWindowGeometry: pruneCockpitGeometry(state.cockpitWindowGeometry, newConnections),
       }
     })
   },
@@ -1126,12 +1284,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         return pane
       }
 
+      const newConnections = state.connectedConnections.map(c =>
+        c.connectionId === connectionId
+          ? { ...c, rootPane: updatePane(c.rootPane) }
+          : c
+      )
       return {
-        connectedConnections: state.connectedConnections.map(c =>
-          c.connectionId === connectionId
-            ? { ...c, rootPane: updatePane(c.rootPane) }
-            : c
-        ),
+        connectedConnections: newConnections,
+        cockpitWindowGeometry: pruneCockpitGeometry(state.cockpitWindowGeometry, newConnections),
       }
     })
   },

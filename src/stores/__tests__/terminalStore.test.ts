@@ -41,6 +41,10 @@ describe('terminalStore', () => {
       activeConnectionId: null,
       connectionSplitIds: [],
       connectionSplitDirection: 'horizontal',
+      layoutMode: 'classic',
+      cockpitTheme: 'force',
+      cockpitWindowGeometry: {},
+      cockpitFocusKey: null,
       sidebarCollapsed: false,
       fileManagerVisible: {},
       transferManagerVisible: {},
@@ -1003,6 +1007,79 @@ describe('terminalStore', () => {
       const state = useTerminalStore.getState()
       expect(state.connectionSplitIds).toEqual([])
       expect(state.connectedConnections.map(c => c.connectionId)).toEqual(['conn-1', 'conn-2'])
+    })
+  })
+
+  describe('cockpit（驾驶舱布局）', () => {
+    const mockConnection2: Connection = { ...mockConnection, id: 'conn-2', host: '192.168.1.2' }
+
+    it('切入驾驶舱时保留连接分屏状态，切回经典可恢复', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().addConnection(mockConnection2, 'shell-2')
+      useTerminalStore.getState().addConnectionToSplitView('conn-1', 'horizontal')
+      expect(useTerminalStore.getState().connectionSplitIds).toHaveLength(2)
+
+      useTerminalStore.getState().setLayoutMode('cockpit')
+      expect(useTerminalStore.getState().layoutMode).toBe('cockpit')
+      // 分屏成员保留；驾驶舱中聚焦非分屏连接会按需退出，聚焦分屏成员则切回经典自动恢复
+      expect(useTerminalStore.getState().connectionSplitIds).toHaveLength(2)
+
+      // 聚焦分屏成员：分屏保留
+      useTerminalStore.getState().setActiveConnection('conn-2')
+      expect(useTerminalStore.getState().connectionSplitIds).toHaveLength(2)
+
+      // 聚焦分屏外的连接：分屏按需退出
+      const conn3: Connection = { ...mockConnection, id: 'conn-3', host: '192.168.1.3' }
+      useTerminalStore.getState().addConnection(conn3, 'shell-3')
+      expect(useTerminalStore.getState().connectionSplitIds).toEqual([])
+
+      useTerminalStore.getState().setLayoutMode('classic')
+      expect(useTerminalStore.getState().layoutMode).toBe('classic')
+    })
+
+    it('布局模式应持久化到 localStorage', () => {
+      useTerminalStore.getState().setLayoutMode('cockpit')
+      useTerminalStore.getState().setCockpitTheme('aurora')
+      const saved = JSON.parse(mockLocalStorage.getItem('iterminal_cockpit') || '{}')
+      expect(saved.layoutMode).toBe('cockpit')
+      expect(saved.cockpitTheme).toBe('aurora')
+    })
+
+    it('驾驶舱字号可设置并持久化（钳制 10-18）', () => {
+      useTerminalStore.getState().setCockpitFontSize(11)
+      expect(useTerminalStore.getState().cockpitFontSize).toBe(11)
+      useTerminalStore.getState().setCockpitFontSize(99)
+      expect(useTerminalStore.getState().cockpitFontSize).toBe(18)
+      const saved = JSON.parse(mockLocalStorage.getItem('iterminal_cockpit') || '{}')
+      expect(saved.cockpitFontSize).toBe(18)
+    })
+
+    it('窗口几何应可提交并在会话关闭时清理', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      const state1 = useTerminalStore.getState()
+      const sessionId = state1.connectedConnections[0].rootPane.sessions[0].id
+      const key = `conn-1_${sessionId}`
+
+      useTerminalStore.getState().setCockpitWindowGeometry(key, { x: 320, y: 20, w: 600, h: 400 })
+      expect(useTerminalStore.getState().cockpitWindowGeometry[key]).toEqual({ x: 320, y: 20, w: 600, h: 400 })
+
+      // 关闭最后一个会话 → 连接移除 → 几何清理
+      useTerminalStore.getState().closeSession('conn-1', sessionId)
+      expect(useTerminalStore.getState().cockpitWindowGeometry[key]).toBeUndefined()
+    })
+
+    it('关闭连接应清理该连接全部窗口几何', () => {
+      useTerminalStore.getState().addConnection(mockConnection, 'shell-1')
+      useTerminalStore.getState().addConnection(mockConnection2, 'shell-2')
+      const s1 = useTerminalStore.getState().connectedConnections[0].rootPane.sessions[0].id
+      const s2 = useTerminalStore.getState().connectedConnections[1].rootPane.sessions[0].id
+      useTerminalStore.getState().setCockpitWindowGeometry(`conn-1_${s1}`, { x: 1, y: 1, w: 1, h: 1 })
+      useTerminalStore.getState().setCockpitWindowGeometry(`conn-2_${s2}`, { x: 2, y: 2, w: 2, h: 2 })
+
+      useTerminalStore.getState().closeConnection('conn-1')
+      const geo = useTerminalStore.getState().cockpitWindowGeometry
+      expect(geo[`conn-1_${s1}`]).toBeUndefined()
+      expect(geo[`conn-2_${s2}`]).toBeDefined()
     })
   })
 })

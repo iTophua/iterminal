@@ -5,7 +5,6 @@ import { useState, useEffect, useMemo } from 'react'
 import { open } from '@tauri-apps/plugin-shell'
 import { useTerminalStore } from '../stores/terminalStore'
 import { useTransferStore } from '../stores/transferStore'
-import SettingsPanel from './SettingsPanel'
 import { STORAGE_KEYS } from '../config/constants'
 
 const { Sider } = Layout
@@ -23,7 +22,6 @@ function Sidebar() {
   const transferringCount = useTransferStore(state => state.transferringCount)
   const storeSidebarCollapsed = useTerminalStore(state => state.sidebarCollapsed)
   const setSidebarCollapsed = useTerminalStore(state => state.setSidebarCollapsed)
-  const settingsVisible = useTerminalStore(state => state.settingsVisible)
   const setSettingsVisible = useTerminalStore(state => state.setSettingsVisible)
 
   const groups = useMemo(() => {
@@ -222,11 +220,6 @@ function Sidebar() {
         </div>
       </div>
 
-      {/* 设置弹窗 */}
-      <SettingsPanel
-        visible={settingsVisible}
-        onClose={() => setSettingsVisible(false)}
-      />
     </Sider>
   )
 }

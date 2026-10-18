@@ -5,8 +5,12 @@
 
 // API 服务配置
 export const API_CONFIG = {
-  /** MCP API 服务端口 */
-  PORT: 27149,
+  /**
+   * MCP API 服务端口。
+   * 与后端 api_server_port() 保持一致：dev 构建（tauri dev）用 27150，
+   * 正式构建用 27149，避免开发实例与已安装的正式应用抢占端口。
+   */
+  PORT: import.meta.env.DEV ? 27150 : 27149,
   /** API 基础 URL */
   get BASE_URL() {
     return `http://127.0.0.1:${this.PORT}`

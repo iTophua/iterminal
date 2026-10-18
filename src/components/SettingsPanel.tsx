@@ -4,9 +4,11 @@ import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined, RobotOutlined, CloudDownloadOutlined } from '@ant-design/icons'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { themeList } from '../styles/themes/app-themes'
+import { COCKPIT_THEME_LIST } from '../styles/themes/cockpit-themes'
 import { invoke } from '@tauri-apps/api/core'
 import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-shell'
@@ -50,6 +52,13 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const fontsLoading = useTerminalStore(state => state.fontsLoading)
   const reloadFonts = useTerminalStore(state => state.reloadFonts)
   
+  const layoutMode = useTerminalStore(state => state.layoutMode)
+  const setLayoutMode = useTerminalStore(state => state.setLayoutMode)
+  const cockpitTheme = useTerminalStore(state => state.cockpitTheme)
+  const setCockpitTheme = useTerminalStore(state => state.setCockpitTheme)
+  const cockpitFontSize = useTerminalStore(state => state.cockpitFontSize)
+  const setCockpitFontSize = useTerminalStore(state => state.setCockpitFontSize)
+
   const appThemeMode = useThemeStore(state => state.appThemeMode)
   const selectedTheme = useThemeStore(state => state.selectedTheme)
   const terminalTheme = useThemeStore(state => state.terminalTheme)
@@ -57,6 +66,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const setSelectedTheme = useThemeStore(state => state.setSelectedTheme)
   const setTerminalTheme = useThemeStore(state => state.setTerminalTheme)
   
+  const navigate = useNavigate()
+
   const [activeCategory, setActiveCategory] = useState<SettingCategory>(() => {
     const saved = localStorage.getItem('iterminal_settings_category')
     return (saved as SettingCategory) || 'appearance'
@@ -410,6 +421,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         </div>
       </div>
 
+      {layoutMode !== 'cockpit' ? (
       <div style={{ marginBottom: 20 }}>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
           字体大小: {tempSettings.fontSize}px
@@ -422,6 +434,23 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
           marks={{ 10: '10', 14: '14', 18: '18', 24: '24' }}
         />
       </div>
+      ) : (
+      <div style={{ marginBottom: 20 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
+          终端字号（驾驶舱）: {cockpitFontSize}px
+        </Text>
+        <Slider
+          min={10}
+          max={18}
+          value={cockpitFontSize}
+          onChange={(v) => setCockpitFontSize(v as number)}
+          marks={{ 10: '10', 12: '12', 14: '14', 18: '18' }}
+        />
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          驾驶舱布局使用独立终端字号（浮动窗口更小）；全局字号在经典布局下生效
+        </Text>
+      </div>
+      )}
 
       <div>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
@@ -454,6 +483,69 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         外观设置
       </Text>
 
+      {/* 界面布局：经典 / 驾驶舱 */}
+      <div style={{ marginBottom: 24 }}>
+        <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
+          界面布局
+        </Text>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <div
+            onClick={() => { setLayoutMode('classic'); navigate('/terminal') }}
+            style={{
+              flex: 1, cursor: 'pointer', borderRadius: 10, padding: 12,
+              border: `1.5px solid ${layoutMode === 'classic' ? 'var(--color-primary)' : 'var(--color-border)'}`,
+              background: layoutMode === 'classic' ? 'var(--color-primary-subtle)' : 'var(--color-bg-container)',
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>经典布局</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', lineHeight: 1.6 }}>
+              连接标签页 + 分栏分屏，适合长时间多会话并行
+            </div>
+          </div>
+          <div
+            onClick={() => { setLayoutMode('cockpit'); navigate('/terminal') }}
+            style={{
+              flex: 1, cursor: 'pointer', borderRadius: 10, padding: 12,
+              border: `1.5px solid ${layoutMode === 'cockpit' ? 'var(--color-primary)' : 'var(--color-border)'}`,
+              background: layoutMode === 'cockpit' ? 'var(--color-primary-subtle)' : 'var(--color-bg-container)',
+            }}
+          >
+            <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>驾驶舱布局</div>
+            <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', lineHeight: 1.6 }}>
+              主机墙 + 可拖动浮动终端窗口 + 底部停靠栏
+            </div>
+          </div>
+        </div>
+        {layoutMode === 'cockpit' && (
+          <div style={{ marginTop: 12 }}>
+            <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
+              驾驶舱主题
+            </Text>
+            <div style={{ display: 'flex', gap: 8 }}>
+              {COCKPIT_THEME_LIST.map(t => (
+                <div
+                  key={t.id}
+                  onClick={() => setCockpitTheme(t.id)}
+                  title={t.desc}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                    padding: '4px 12px', borderRadius: 999,
+                    border: `1px solid ${cockpitTheme === t.id ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                    color: cockpitTheme === t.id ? 'var(--color-primary)' : 'var(--color-text-secondary)',
+                  }}
+                >
+                  <span style={{ width: 10, height: 10, borderRadius: '50%', background: t.swatch }} />
+                  {t.name}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 经典布局专属：应用配色主题 + 终端主题（驾驶舱布局由驾驶舱主题接管终端配色） */}
+      {layoutMode === 'classic' && (
+      <>
       <div style={{ marginBottom: 24 }}>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 12 }}>
           配色主题
@@ -809,6 +901,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
           }
         </Text>
       </div>
+      </>
+      )}
     </div>
   )
 

@@ -38,7 +38,9 @@ function loadApiToken(): string | null {
   return null;
 }
 
-const API_TOKEN = loadApiToken();
+// token 缓存：应用侧可能重置/轮换 token（~/.iterminal/mcp_token），
+// 启动时读一次，收到 401 时重新读文件并重试，避免要求重启 MCP host。
+let apiToken: string | null = loadApiToken();
 
 interface ApiResponse<T> {
   success: boolean;
@@ -133,30 +135,51 @@ async function apiCall<T>(
   timeoutMs: number = 30000
 ): Promise<ApiResponse<T>> {
   const url = `${API_BASE}${path}`;
-  const controller = new AbortController();
-  // timeoutMs <= 0 表示不限时（上传/下载大文件可能耗时很久）
-  const timeoutId = timeoutMs > 0
-    ? setTimeout(() => controller.abort(), timeoutMs)
-    : undefined;
 
-  const options: RequestInit = {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
-    },
-    signal: controller.signal,
+  const doFetch = async (): Promise<Response> => {
+    const controller = new AbortController();
+    // timeoutMs <= 0 表示不限时（上传/下载大文件可能耗时很久）
+    const timeoutId = timeoutMs > 0
+      ? setTimeout(() => controller.abort(), timeoutMs)
+      : undefined;
+
+    const options: RequestInit = {
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        ...(apiToken ? { Authorization: `Bearer ${apiToken}` } : {}),
+      },
+      signal: controller.signal,
+    };
+    if (body) {
+      options.body = JSON.stringify(body);
+    }
+
+    try {
+      return await fetch(url, options);
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+    }
   };
-  if (body) {
-    options.body = JSON.stringify(body);
-  }
 
   try {
-    const response = await fetch(url, options);
+    let response = await doFetch();
+
+    // 401：应用侧 token 可能已轮换，重读 token 文件一次并重试
+    if (response.status === 401) {
+      const refreshed = loadApiToken();
+      if (refreshed && refreshed !== apiToken) {
+        apiToken = refreshed;
+        response = await doFetch();
+      }
+    }
+
     if (!response.ok) {
       return {
         success: false,
-        error: `HTTP ${response.status}: ${response.statusText}`,
+        error: response.status === 401
+          ? 'HTTP 401: token 无效（已尝试重读 ~/.iterminal/mcp_token 重试仍失败，请在 iTerminal 设置中确认 MCP 已开启）'
+          : `HTTP ${response.status}: ${response.statusText}`,
       };
     }
     return response.json();
@@ -173,8 +196,6 @@ async function apiCall<T>(
       success: false,
       error: error instanceof Error ? error.message : String(error),
     };
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
   }
 }
 

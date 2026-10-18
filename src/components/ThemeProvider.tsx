@@ -1,10 +1,12 @@
-import { useEffect, useLayoutEffect, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, type ReactNode } from 'react'
 import { ConfigProvider, theme as antdTheme, App as AntdApp } from 'antd'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { setTheme as setAppTheme } from '@tauri-apps/api/app'
 import { invoke } from '@tauri-apps/api/core'
 import { useThemeStore, getSystemTheme } from '../stores/themeStore'
+import { useTerminalStore } from '../stores/terminalStore'
 import { themes } from '../styles/themes/app-themes'
+import { COCKPIT_THEMES, buildCockpitThemeDefinition } from '../styles/themes/cockpit-themes'
 import type { AppTheme, ThemeName, ThemeVariableSet } from '../types/theme'
 
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
@@ -66,8 +68,24 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
   const selectedTheme = useThemeStore(s => s.selectedTheme)
   const hydrate = useThemeStore(s => s.hydrate)
   const hydrated = useThemeStore(s => s.hydrated)
-  
-  const currentThemeDef = themes[selectedTheme] ?? themes.default
+  const layoutMode = useTerminalStore(s => s.layoutMode)
+  const cockpitThemeName = useTerminalStore(s => s.cockpitTheme)
+
+  // 驾驶舱布局：用驾驶舱主题接管整条主题管线（CSS 变量 / antd tokens / 窗口底色），
+  // 应用主页面、设置弹窗、工具面板全量换肤；驾驶舱为暗色系，强制 dark 模式。
+  // 拖出的独立终端窗口（#/terminal-window）是经典 UI 且 layoutMode 读取自同一 localStorage，
+  // 必须排除，否则独立窗口会被驾驶舱主题错配。
+  const isTerminalWindow = typeof window !== 'undefined' && window.location.hash.startsWith('#/terminal-window')
+  const cockpitActive = layoutMode === 'cockpit' && !isTerminalWindow
+  const baseThemeDef = themes[selectedTheme] ?? themes.default
+  // memo：合成对象保持稳定引用，避免主题 effect 每次渲染重跑
+  const currentThemeDef = useMemo(
+    () => cockpitActive
+      ? buildCockpitThemeDefinition(COCKPIT_THEMES[cockpitThemeName], baseThemeDef)
+      : baseThemeDef,
+    [cockpitActive, cockpitThemeName, selectedTheme]
+  )
+  const colorMode: AppTheme = cockpitActive ? 'dark' : appTheme
   
   useIsomorphicLayoutEffect(() => {
     hydrate()
@@ -77,10 +95,10 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     if (!hydrated) return
 
     disableTransitions()
-    applyThemeToDOM(appTheme, selectedTheme, currentThemeDef.colors[appTheme])
+    applyThemeToDOM(colorMode, selectedTheme, currentThemeDef.colors[colorMode])
     applyTauriTheme(appThemeMode === 'system' ? null : appTheme)
 
-    const bgColor = currentThemeDef.colors[appTheme]['--color-bg-base']
+    const bgColor = currentThemeDef.colors[colorMode]['--color-bg-base']
     if (bgColor && bgColor.startsWith('#')) {
       applyWindowBackground(bgColor)
     }
@@ -93,7 +111,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
       cancelAnimationFrame(timer)
       enableTransitions()
     }
-  }, [appTheme, appThemeMode, selectedTheme, hydrated, currentThemeDef])
+  }, [appTheme, colorMode, appThemeMode, selectedTheme, hydrated, currentThemeDef, cockpitActive, cockpitThemeName])
   
   useEffect(() => {
     if (appThemeMode !== 'system') return
@@ -180,20 +198,20 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
     return null
   }
   
-  const themeColors = currentThemeDef.colors[appTheme]
+  const themeColors = currentThemeDef.colors[colorMode]
   const bgBase = themeColors['--color-bg-base']
   const bgContainer = themeColors['--color-bg-container']
   const bgElevated = themeColors['--color-bg-elevated']
   const colorText = themeColors['--color-text']
   const colorTextSecondary = themeColors['--color-text-secondary']
-  const colorTextQuaternary = themeColors['--color-text-quaternary'] || (appTheme === 'dark' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)')
+  const colorTextQuaternary = themeColors['--color-text-quaternary'] || (colorMode === 'dark' ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.25)')
   const colorBorder = themeColors['--color-border']
   const colorBorderSecondary = themeColors['--color-border-secondary']
 
   return (
     <ConfigProvider
       theme={{
-        algorithm: appTheme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+        algorithm: colorMode === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
         token: {
           colorPrimary: currentThemeDef.antdPrimary,
           colorBgBase: bgBase,
@@ -216,13 +234,13 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
         components: {
           Tree: {
             nodeSelectedBg: `${currentThemeDef.antdPrimary}26`,
-            nodeSelectedColor: appTheme === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
+            nodeSelectedColor: colorMode === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
             directoryNodeSelectedBg: `${currentThemeDef.antdPrimary}26`,
-            directoryNodeSelectedColor: appTheme === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
+            directoryNodeSelectedColor: colorMode === 'dark' ? '#fff' : 'rgba(0, 0, 0, 0.88)',
           },
           Tabs: {
             itemSelectedColor: currentThemeDef.antdPrimary,
-            itemHoverColor: currentThemeDef.antdPrimaryHover[appTheme],
+            itemHoverColor: currentThemeDef.antdPrimaryHover[colorMode],
             itemActiveColor: currentThemeDef.antdPrimary,
             inkBarColor: currentThemeDef.antdPrimary,
           },
@@ -230,10 +248,10 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             colorBgContainer: bgElevated,
             colorBorderSecondary: colorBorderSecondary,
             borderRadiusLG: 10,
-            boxShadow: appTheme === 'dark'
+            boxShadow: colorMode === 'dark'
               ? '0 4px 12px rgba(0, 0, 0, 0.3)'
               : '0 4px 12px rgba(0, 0, 0, 0.08)',
-            boxShadowSecondary: appTheme === 'dark'
+            boxShadowSecondary: colorMode === 'dark'
               ? '0 8px 24px rgba(0, 0, 0, 0.4)'
               : '0 8px 24px rgba(0, 0, 0, 0.12)',
           },
@@ -245,9 +263,9 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             defaultBorderColor: colorBorder,
             defaultHoverBg: bgContainer,
             defaultHoverBorderColor: currentThemeDef.antdPrimary,
-            defaultHoverColor: currentThemeDef.antdPrimaryHover[appTheme],
+            defaultHoverColor: currentThemeDef.antdPrimaryHover[colorMode],
             defaultActiveBg: bgBase,
-            defaultActiveBorderColor: currentThemeDef.antdPrimaryActive[appTheme],
+            defaultActiveBorderColor: currentThemeDef.antdPrimaryActive[colorMode],
             primaryShadow: `0 2px 8px ${currentThemeDef.antdPrimary}40`,
           },
           Input: {
@@ -255,7 +273,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             colorBorder: colorBorder,
             colorText: colorText,
             activeBorderColor: currentThemeDef.antdPrimary,
-            hoverBorderColor: currentThemeDef.antdPrimaryHover[appTheme],
+            hoverBorderColor: currentThemeDef.antdPrimaryHover[colorMode],
             activeShadow: `0 0 0 2px ${currentThemeDef.antdPrimary}20`,
             borderRadius: 6,
           },
@@ -266,7 +284,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             titleColor: colorText,
             titleFontSize: 15,
             borderRadiusLG: 12,
-            boxShadow: appTheme === 'dark'
+            boxShadow: colorMode === 'dark'
               ? '0 20px 48px rgba(0, 0, 0, 0.5)'
               : '0 20px 48px rgba(0, 0, 0, 0.15)',
           },
@@ -288,7 +306,7 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             colorBorder: colorBorder,
             colorText: colorText,
             activeBorderColor: currentThemeDef.antdPrimary,
-            hoverBorderColor: currentThemeDef.antdPrimaryHover[appTheme],
+            hoverBorderColor: currentThemeDef.antdPrimaryHover[colorMode],
             activeOutlineColor: `${currentThemeDef.antdPrimary}20`,
             borderRadius: 6,
             optionSelectedBg: `${currentThemeDef.antdPrimary}18`,
@@ -310,19 +328,19 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
           },
           Slider: {
             trackBg: currentThemeDef.antdPrimary,
-            trackHoverBg: currentThemeDef.antdPrimaryHover[appTheme],
+            trackHoverBg: currentThemeDef.antdPrimaryHover[colorMode],
             handleColor: currentThemeDef.antdPrimary,
-            handleActiveColor: currentThemeDef.antdPrimaryActive[appTheme],
+            handleActiveColor: currentThemeDef.antdPrimaryActive[colorMode],
             dotActiveBorderColor: currentThemeDef.antdPrimary,
             railBg: colorBorderSecondary,
             railHoverBg: colorBorder,
           },
           Switch: {
             colorPrimary: currentThemeDef.antdPrimary,
-            colorPrimaryHover: currentThemeDef.antdPrimaryHover[appTheme],
+            colorPrimaryHover: currentThemeDef.antdPrimaryHover[colorMode],
           },
           Tooltip: {
-            colorBgSpotlight: appTheme === 'dark' ? '#2a2a2a' : '#333',
+            colorBgSpotlight: colorMode === 'dark' ? '#2a2a2a' : '#333',
             colorTextLightSolid: '#fff',
             borderRadius: 6,
           },
@@ -366,17 +384,17 @@ export function ThemeProvider({ children }: ThemeProviderProps) {
             colorPrimary: currentThemeDef.antdPrimary,
             buttonCheckedBg: `${currentThemeDef.antdPrimary}20`,
             buttonSolidCheckedBg: currentThemeDef.antdPrimary,
-            buttonSolidCheckedHoverBg: currentThemeDef.antdPrimaryHover[appTheme],
+            buttonSolidCheckedHoverBg: currentThemeDef.antdPrimaryHover[colorMode],
             buttonSolidCheckedColor: '#ffffff',
           },
           Checkbox: {
             colorPrimary: currentThemeDef.antdPrimary,
-            colorPrimaryHover: currentThemeDef.antdPrimaryHover[appTheme],
+            colorPrimaryHover: currentThemeDef.antdPrimaryHover[colorMode],
             colorPrimaryBorder: currentThemeDef.antdPrimary,
           },
           Upload: {
             colorPrimary: currentThemeDef.antdPrimary,
-            colorPrimaryHover: currentThemeDef.antdPrimaryHover[appTheme],
+            colorPrimaryHover: currentThemeDef.antdPrimaryHover[colorMode],
           },
           Skeleton: {
             color: colorBorderSecondary,

@@ -12,6 +12,8 @@ const Transfers = lazy(() => import('./pages/Transfers'))
 const McpLogs = lazy(() => import('./pages/McpLogs'))
 const TerminalWindowPage = lazy(() => import('./pages/TerminalWindow'))
 import { useTerminalStore, type SplitPane } from './stores/terminalStore'
+// 设置弹窗提升到全局层：驾驶舱布局隐藏侧边栏后仍可打开设置
+const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -431,6 +433,7 @@ function PageSpin() {
 // 一旦访问过终端页即保持挂载，之后切换不会重连，体验与改动前一致。
 function MainContent() {
   const location = useLocation()
+  const layoutMode = useTerminalStore(s => s.layoutMode)
   const [visited, setVisited] = useState<Set<string>>(new Set(['/connections']))
 
   useEffect(() => {
@@ -482,7 +485,8 @@ function MainContent() {
 
       {/* 路由仅用于 URL 导航 */}
       <Routes>
-        <Route path="/" element={<Navigate to="/connections" replace />} />
+        {/* 启动页跟随布局设置：驾驶舱直接进入终端页（驾驶舱即整个工作区） */}
+        <Route path="/" element={<Navigate to={layoutMode === 'cockpit' ? '/terminal' : '/connections'} replace />} />
         <Route path="/connections" element={null} />
         <Route path="/transfers" element={null} />
         <Route path="/logs" element={null} />
@@ -509,15 +513,24 @@ function App() {
 }
 
 function MainApp() {
+  // 驾驶舱布局：终端页时驾驶舱接管整个窗口（隐藏全局侧边栏/底栏，保留窗口标题栏）
+  const layoutMode = useTerminalStore(s => s.layoutMode)
+  const settingsVisible = useTerminalStore(s => s.settingsVisible)
+  const location = useLocation()
+  const cockpitTakesOver = layoutMode === 'cockpit' && location.pathname === '/terminal'
+
   return (
     <>
       <SessionRestorer />
       <SessionSaver />
       <MenuActionHandler />
       <McpConnectionHandler />
-      <TitleBar />
+      {!cockpitTakesOver && <TitleBar />}
+      <Suspense fallback={null}>
+        <SettingsPanel visible={settingsVisible} onClose={() => useTerminalStore.getState().setSettingsVisible(false)} />
+      </Suspense>
       <Layout style={{
-        minHeight: 'calc(100vh - 28px)',
+        minHeight: cockpitTakesOver ? '100vh' : 'calc(100vh - 28px)',
         background: 'var(--color-bg-container)',
         position: 'relative',
         zIndex: 1,
@@ -526,11 +539,12 @@ function MainApp() {
       }}>
 
         <Layout style={{ flex: 1, display: 'flex' }}>
-          <Sidebar />
+          {!cockpitTakesOver && <Sidebar />}
 
           <MainContent />
         </Layout>
 
+        {!cockpitTakesOver && (
         <div className="footer-bar" style={{
           height: 32,
           display: 'flex',
@@ -558,6 +572,7 @@ function MainApp() {
             opacity: 0.7,
           }} />
         </div>
+        )}
       </Layout>
     </>
   )
