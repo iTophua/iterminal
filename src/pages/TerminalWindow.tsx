@@ -37,6 +37,8 @@ function TerminalWindow() {
   const acquiredShellIdsRef = useRef<string[]>([])
 
   const restoreConnection = useTerminalStore(s => s.restoreConnection)
+  // 布局选择必须在 early return 之前读取（Hook 顺序稳定）
+  const layoutMode = useTerminalStore(s => s.layoutMode)
 
   useEffect(() => {
     if (isInitialized.current) return
@@ -167,8 +169,6 @@ function TerminalWindow() {
 
   // macOS Overlay 窗口：经典布局渲染自定义标题条（红绿灯区），
   // 驾驶舱布局由驾驶舱顶条自行避让（含 78px 红绿灯留白）
-  const layoutMode = useTerminalStore(s => s.layoutMode)
-
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {layoutMode !== 'cockpit' && <TitleBar />}
