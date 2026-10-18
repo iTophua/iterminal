@@ -4,6 +4,7 @@ import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTerminalStore, type SplitPane } from '../stores/terminalStore'
 import { getAllSessions } from '../utils/paneUtils'
 import { ThemeProvider } from '../components/ThemeProvider'
+import { TitleBar } from '../components/TitleBar'
 import Terminal from './Terminal'
 
 interface ConnectionData {
@@ -164,9 +165,16 @@ function TerminalWindow() {
     )
   }
 
+  // macOS Overlay 窗口：经典布局渲染自定义标题条（红绿灯区），
+  // 驾驶舱布局由驾驶舱顶条自行避让（含 78px 红绿灯留白）
+  const layoutMode = useTerminalStore(s => s.layoutMode)
+
   return (
-    <div style={{ height: '100vh' }}>
-      <Terminal singleConnectionMode />
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {layoutMode !== 'cockpit' && <TitleBar />}
+      <div style={{ flex: 1, minHeight: 0 }}>
+        <Terminal singleConnectionMode />
+      </div>
     </div>
   )
 }

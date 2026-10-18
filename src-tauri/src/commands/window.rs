@@ -35,6 +35,10 @@ pub async fn create_terminal_window(
     .min_inner_size(600.0, 400.0)
     .resizable(true);
 
+    // macOS：与主窗口一致的 Overlay 标题栏（红绿灯悬浮，前端自绘标题区）
+    #[cfg(target_os = "macos")]
+    let builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay);
+
     #[cfg(debug_assertions)]
     let builder = builder.devtools(true);
 
