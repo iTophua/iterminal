@@ -132,6 +132,11 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const cockpitFontSize = useTerminalStore(state => state.cockpitFontSize)
   // 驾驶舱模式：含独立终端窗口（跟随布局设置渲染驾驶舱形态）
   const cockpitMode = layoutMode === 'cockpit'
+  // 最小化窗口集合指纹：最小化/恢复时变化，驱动终端 init effect 把 xterm DOM 搬回新容器
+  const cockpitWindowGeometry = useTerminalStore(state => state.cockpitWindowGeometry)
+  const cockpitMinimizedKey = cockpitMode
+    ? Object.keys(cockpitWindowGeometry).filter(k => cockpitWindowGeometry[k].minimized).sort().join('|')
+    : ''
   const setFileManagerVisible = useTerminalStore(state => state.setFileManagerVisible)
   const terminalSettings = useTerminalStore(state => state.terminalSettings)
   const shortcutSettings = useTerminalStore(state => state.shortcutSettings)
@@ -903,6 +908,9 @@ const handlePointerUp = () => {
             const resizeObserver = new ResizeObserver(() => {
               if (resizeTimer) clearTimeout(resizeTimer)
               resizeTimer = setTimeout(() => {
+                // 容器可能已随窗口最小化/布局切换卸载：脱离文档或 0 尺寸时跳过 fit，避免把 PTY 缩成 2×1
+                const el = terminalRefs.current[key]
+                if (!el || !el.isConnected || el.clientWidth === 0 || el.clientHeight === 0) return
                 const addon = fitAddons.current[key]
                 if (addon) {
                   try { addon.fit() } catch {}
@@ -1313,6 +1321,9 @@ const handlePointerUp = () => {
               clearTimeout(resizeTimer)
             }
             resizeTimer = setTimeout(() => {
+              // 同上：容器卸载/隐藏时跳过 fit
+              const el = terminalRefs.current[key]
+              if (!el || !el.isConnected || el.clientWidth === 0 || el.clientHeight === 0) return
               const addon = fitAddons.current[key]
               if (addon) {
                 try { addon.fit() } catch {}
@@ -1353,7 +1364,7 @@ const handlePointerUp = () => {
     }, 0)
 
     return () => clearTimeout(timerId)
-  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, paneStructureKey, storeReady, singleConnectionMode, loadHistory, cockpitMode, cockpitFontSize])
+  }, [connectedConnections.length, activeConnectionId, visibleSessionsKey, paneStructureKey, storeReady, singleConnectionMode, loadHistory, cockpitMode, cockpitFontSize, cockpitMinimizedKey])
 
   // initializing 超时保护：10秒后强制清除
   useEffect(() => {
