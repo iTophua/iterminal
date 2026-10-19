@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- macOS Sequoia+ 本地网络隐私：缺少此键的 app 访问局域网会被静默拒绝
+	     （表现为连接局域网 IP 瞬间报 No route to host），且不弹授权提示 -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>iTerminal 需要访问本地网络，以便连接局域网内的 SSH 服务器。</string>
+</dict>
+</plist>

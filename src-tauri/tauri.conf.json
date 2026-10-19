@@ -42,6 +42,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-",
       "dmg": {
         "background": "installer/dmg-background.png",
         "windowSize": {
