@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from 'react'
-import { App, Form, Input, Modal, Popconfirm, Select } from 'antd'
-import { CopyOutlined, DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
+import { useCallback, useMemo, useRef, useState } from 'react'
+import { App, Button, Form, Input, Modal, Popconfirm, Select } from 'antd'
+import { ApiOutlined, CopyOutlined, DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConnectedConnection, Connection } from '../../../../stores/terminalStore'
 import { useTerminalStore } from '../../../../stores/terminalStore'
@@ -34,7 +34,56 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
   const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchGroup, setBatchGroup] = useState<string | undefined>(undefined)
+  const [testLoading, setTestLoading] = useState(false)
+  const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null)
+  const [testMessage, setTestMessage] = useState('')
+  const testIdRef = useRef(0)
   const [form] = Form.useForm()
+
+  /** 用表单当前值做一次真实连接+认证测试（与经典布局表单同一后端命令） */
+  const handleTestConnection = useCallback(async () => {
+    const currentTestId = ++testIdRef.current
+    try {
+      const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile'])
+      const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
+      setTestLoading(true)
+      setTestResult(null)
+      setTestMessage('')
+      const t0 = performance.now()
+      const result = await invoke<boolean>('test_connection', {
+        connection: {
+          host: values.host,
+          port,
+          username: values.username,
+          password: values.password || null,
+          key_file: values.keyFile || null,
+        }
+      })
+      if (testIdRef.current !== currentTestId) return
+      const elapsed = Math.round(performance.now() - t0)
+      if (result) {
+        setTestResult('success')
+        setTestMessage(`连接成功 · ${elapsed}ms`)
+      } else {
+        setTestResult('failed')
+        setTestMessage('认证失败：请检查用户名 / 密码 / 密钥')
+      }
+    } catch (error) {
+      if (testIdRef.current !== currentTestId) return
+      if (error && typeof error === 'object' && 'errorFields' in error) return // 表单校验错误，字段上已提示
+      setTestResult('failed')
+      setTestMessage(`连接失败：${error}`)
+    } finally {
+      if (testIdRef.current === currentTestId) setTestLoading(false)
+    }
+  }, [form])
+
+  const resetTestState = useCallback(() => {
+    testIdRef.current++
+    setTestLoading(false)
+    setTestResult(null)
+    setTestMessage('')
+  }, [])
 
   const groups = useMemo(() => {
     const set = new Set<string>()
@@ -64,8 +113,9 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
     setEditing(null)
     form.resetFields()
     form.setFieldsValue({ port: 22, group: '默认' })
+    resetTestState()
     setFormOpen(true)
-  }, [form])
+  }, [form, resetTestState])
 
   const openEdit = useCallback((conn: Connection) => {
     setEditing(conn)
@@ -75,8 +125,9 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
       password: conn.password || '', keyFile: conn.keyFile || '',
       group: conn.group || '默认', tags: (conn.tags || []).join(', '),
     })
+    resetTestState()
     setFormOpen(true)
-  }, [form])
+  }, [form, resetTestState])
 
   const handleSave = useCallback(async () => {
     try {
@@ -117,8 +168,9 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
       password: conn.password || '', keyFile: conn.keyFile || '',
       group: conn.group || '默认', tags: (conn.tags || []).join(', '),
     })
+    resetTestState()
     setFormOpen(true)
-  }, [form])
+  }, [form, resetTestState])
 
   const handleDelete = useCallback(async (conn: Connection) => {
     // 已连接的连接先断开，避免残留会话
@@ -299,14 +351,35 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
         title={editing ? `编辑连接 · ${editing.name}` : '新建连接'}
         open={formOpen}
         onCancel={() => setFormOpen(false)}
-        onOk={handleSave}
-        okText="保存"
-        cancelText="取消"
-        confirmLoading={saving}
+        footer={
+          <>
+            <Button
+              icon={<ApiOutlined />}
+              loading={testLoading}
+              onClick={handleTestConnection}
+              style={{ marginRight: 'auto' }}
+            >
+              测试连接
+            </Button>
+            <Button onClick={() => setFormOpen(false)}>取消</Button>
+            <Button type="primary" loading={saving} onClick={handleSave}>保存</Button>
+          </>
+        }
         width={460}
         destroyOnHidden
       >
-        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+        <Form
+          form={form}
+          layout="vertical"
+          style={{ marginTop: 12 }}
+          onValuesChange={changed => {
+            // 连接相关字段变化后旧测试结果不再可信，立即清空
+            if (testMessage && ['host', 'port', 'username', 'password', 'keyFile'].some(f => f in changed)) {
+              setTestResult(null)
+              setTestMessage('')
+            }
+          }}
+        >
           <Form.Item name="name" label="名称"><Input placeholder="留空则自动使用 user@host" /></Form.Item>
           <div style={{ display: 'flex', gap: 8 }}>
             <Form.Item name="host" label="主机" rules={[{ required: true, message: '请输入主机地址' }]} style={{ flex: 1 }}>
@@ -335,6 +408,16 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
               <Input placeholder="逗号分隔，如: web, 生产" />
             </Form.Item>
           </div>
+          {testMessage && (
+            <div style={{
+              fontSize: 12,
+              color: testResult === 'success' ? '#52C41A' : '#F4576C',
+              marginTop: -12, marginBottom: 4,
+              fontFamily: 'ui-monospace, Menlo, monospace',
+            }}>
+              {testResult === 'success' ? '✓ ' : '✕ '}{testMessage}
+            </div>
+          )}
         </Form>
       </Modal>
     </div>
