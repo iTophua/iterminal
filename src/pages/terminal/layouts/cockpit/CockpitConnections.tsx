@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { App, Button, Form, Input, Modal, Popconfirm, Select } from 'antd'
-import { ApiOutlined, CopyOutlined, DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
+import { ApiOutlined, CopyOutlined, DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, LoadingOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConnectedConnection, Connection } from '../../../../stores/terminalStore'
 import { useTerminalStore } from '../../../../stores/terminalStore'
@@ -37,11 +37,23 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null)
   const [testMessage, setTestMessage] = useState('')
+  const [testCooldown, setTestCooldown] = useState(false)
   const testIdRef = useRef(0)
   const [form] = Form.useForm()
 
   /** 用表单当前值做一次真实连接+认证测试（与经典布局表单同一后端命令） */
   const handleTestConnection = useCallback(async () => {
+    // 测试进行中再点一次 = 放弃等待结果（后端连接无法中止，仅作废返回）
+    if (testCooldown) return
+    if (testLoading) {
+      testIdRef.current += 1
+      setTestLoading(false)
+      setTestResult('failed')
+      setTestMessage('测试已取消')
+      setTestCooldown(true)
+      setTimeout(() => setTestCooldown(false), 1500)
+      return
+    }
     const currentTestId = ++testIdRef.current
     try {
       const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile'])
@@ -76,13 +88,14 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
     } finally {
       if (testIdRef.current === currentTestId) setTestLoading(false)
     }
-  }, [form])
+  }, [form, testLoading, testCooldown])
 
   const resetTestState = useCallback(() => {
     testIdRef.current++
     setTestLoading(false)
     setTestResult(null)
     setTestMessage('')
+    setTestCooldown(false)
   }, [])
 
   const groups = useMemo(() => {
@@ -354,12 +367,12 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
         footer={
           <>
             <Button
-              icon={<ApiOutlined />}
-              loading={testLoading}
+              disabled={testCooldown}
+              icon={testLoading ? <LoadingOutlined /> : <ApiOutlined />}
               onClick={handleTestConnection}
               style={{ marginRight: 'auto' }}
             >
-              测试连接
+              {testLoading ? '取消测试' : '测试连接'}
             </Button>
             <Button onClick={() => setFormOpen(false)}>取消</Button>
             <Button type="primary" loading={saving} onClick={handleSave}>保存</Button>
