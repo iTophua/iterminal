@@ -100,7 +100,7 @@ export function CommandPalette({
         label: connected ? `跳转 ${conn.name}` : `连接 ${conn.name}`,
         hint: `${conn.username}@${conn.host}${connected ? ' · 已连接' : ''}`,
         icon: <ArrowRightOutlined />,
-        keywords: `${conn.name} ${conn.host} ${conn.username} ${conn.group} ${connected ? '跳转' : '连接'}`,
+        keywords: `${conn.name} ${conn.host} ${conn.username} ${conn.group} ${(conn.tags || []).join(' ')} ${connected ? '跳转' : '连接'}`,
         run: () => {
           if (connected) {
             const c = connectedConnections.find(x => x.connectionId === conn.id)!
@@ -119,7 +119,7 @@ export function CommandPalette({
         section: '主机',
         label: `在新窗口打开 ${c.connection.name}`,
         hint: '迁移其全部会话',
-        keywords: `独立窗口 拖出 ${c.connection.name}`,
+        keywords: `独立窗口 拖出 ${c.connection.name} ${c.connection.host} ${c.connection.username}`,
         run: () => onDetachToNewWindow(c.connectionId),
       })
     }
@@ -132,7 +132,7 @@ export function CommandPalette({
             section: '会话',
             label: `${c.connection.name} · ${sess.title}`,
             hint: `${c.connection.username}@${c.connection.host}`,
-            keywords: `${sess.title} ${c.connection.name}`,
+            keywords: `${sess.title} ${c.connection.name} ${c.connection.host} ${c.connection.username}`,
             run: () => onJumpSession(`${c.connectionId}_${sess.id}`),
           })
         }
@@ -181,12 +181,25 @@ export function CommandPalette({
   }, [allConnections, connectedConnections, historyCommands, onJumpSession, onConnectHost, onRunCommand, onToggleDrawer, onOpenConnections, broadcastEnabled, onToggleBroadcast, onDetachToNewWindow, snippets])
 
   const filtered = useMemo(() => {
-    if (!query.trim()) {
+    const q = query.trim().toLowerCase()
+    if (!q) {
       // 无输入时优先：主机 > 会话 > 命令 > 视图
       const order = { '主机': 0, '会话': 1, '命令': 2, '片段': 3, '视图': 4 } as const
       return [...actions].sort((a, b) => order[a.section] - order[b.section]).slice(0, 12)
     }
-    return actions.filter(a => fuzzyMatch(query, `${a.label} ${a.hint ?? ''} ${a.keywords ?? ''}`)).slice(0, 12)
+    // 相关性分级：主机名称/IP 直接命中(0) > 其他包含命中(1) > 子序列模糊命中(2)
+    const rank = (a: PaletteAction): number => {
+      if (a.section === '主机'
+        && (a.label.toLowerCase().includes(q) || (a.keywords ?? '').toLowerCase().includes(q))) return 0
+      if (`${a.label} ${a.hint ?? ''} ${a.keywords ?? ''}`.toLowerCase().includes(q)) return 1
+      return 2
+    }
+    return actions
+      .filter(a => fuzzyMatch(query, `${a.label} ${a.hint ?? ''} ${a.keywords ?? ''}`))
+      .map(a => ({ a, r: rank(a) }))
+      .sort((x, y) => x.r - y.r)
+      .slice(0, 12)
+      .map(x => x.a)
   }, [actions, query])
 
   useEffect(() => {
@@ -232,7 +245,7 @@ export function CommandPalette({
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="连接主机、跳转会话、运行历史命令、切换布局…"
+            placeholder="连接主机（支持名称 / IP）、跳转会话、运行历史命令…"
             aria-label="搜索命令"
           />
           <span className="ck-palette-esc">esc</span>

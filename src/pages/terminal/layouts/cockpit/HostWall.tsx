@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { DoubleLeftOutlined, DoubleRightOutlined, PlusOutlined } from '@ant-design/icons'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { CloseOutlined, DoubleLeftOutlined, DoubleRightOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConnectedConnection, Connection, SplitPane } from '../../../../stores/terminalStore'
 
@@ -30,18 +30,45 @@ function countSessions(pane: SplitPane): number {
   return n
 }
 
+/** 折叠条图标字形：优先名称首字母（含中文）；纯数字/IP 命名取主机末段，避免清一色"1" */
+function hostGlyph(conn: Connection): string {
+  const ch = conn.name.match(/[a-zA-Z\u4e00-\u9fa5]/)
+  if (ch) return /[a-zA-Z]/.test(ch[0]) ? ch[0].toUpperCase() : ch[0]
+  const last = conn.host.trim().split('.').pop() ?? ''
+  if (/^\d{1,3}$/.test(last)) return last
+  const hostCh = conn.host.match(/[a-zA-Z]/)
+  return hostCh ? hostCh[0].toUpperCase() : '#'
+}
+
+/** 主机稳定色相：图标按 name+host 散布着色（在线鲜明/离线低饱和），便于扫视区分 */
+function hostIconStyle(conn: Connection, connected: boolean): CSSProperties {
+  const s = `${conn.name}/${conn.host}`
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360
+  const glyph = hostGlyph(conn)
+  return {
+    background: connected ? `hsl(${h} 42% 38%)` : `hsl(${h} 10% 24%)`,
+    color: connected ? `hsl(${h} 70% 84%)` : `hsl(${h} 12% 62%)`,
+    fontSize: glyph.length >= 3 ? 9 : undefined,
+  }
+}
+
 /**
  * 驾驶舱左侧主机墙：全部已保存连接按分组展示；
  * 悬停已连接主机显示实时指标预览卡（CPU/内存）。
  */
 export function HostWall({ connectedConnections, allConnections, onHostClick, onNewSession, onAddHost, collapsed, onToggleCollapse, onDetachToNewWindow }: HostWallProps) {
   const [groupFilter, setGroupFilter] = useState<string>('全部')
+  const [wallQuery, setWallQuery] = useState('')
+  const [connectedOnly, setConnectedOnly] = useState(false)
   const [preview, setPreview] = useState<{ connId: string; top: number; left: number } | null>(null)
   const [monitor, setMonitor] = useState<Record<string, MonitorSnapshot>>({})
   const [latency, setLatency] = useState<Record<string, number>>({})
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dwellTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const monitorTs = useRef<Record<string, number>>({})
+
+  const connectedIds = useMemo(() => new Set(connectedConnections.map(c => c.connectionId)), [connectedConnections])
 
   const groups = useMemo(() => {
     const map = new Map<string, Connection[]>()
@@ -54,10 +81,21 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
   }, [allConnections])
 
   const groupNames = useMemo(() => ['全部', ...groups.map(g => g.name)], [groups])
-  const visibleGroups = useMemo(
-    () => (groupFilter === '全部' ? groups : groups.filter(g => g.name === groupFilter)),
-    [groups, groupFilter]
-  )
+
+  // 分组 × 仅在线 × 搜索（名称/IP/用户/标签）三级过滤后的主机列表
+  const wallConns = useMemo(() => {
+    let list = groupFilter === '全部'
+      ? allConnections
+      : allConnections.filter(c => (c.group || '默认') === groupFilter)
+    if (connectedOnly) list = list.filter(c => connectedIds.has(c.id))
+    const q = wallQuery.trim().toLowerCase()
+    if (q) {
+      list = list.filter(c =>
+        `${c.name} ${c.host} ${c.username} ${(c.tags || []).join(' ')}`.toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [allConnections, groupFilter, connectedOnly, connectedIds, wallQuery])
 
   const sessionCount = (connId: string) => {
     const c = connectedConnections.find(x => x.connectionId === connId)
@@ -155,21 +193,25 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
           <DoubleRightOutlined style={{ fontSize: 12 }} />
         </button>
         <div className="ck-wall-icons">
-          {allConnections.slice(0, 24).map(conn => {
-            const connected = connectedConnections.some(c => c.connectionId === conn.id)
-            return (
-              <button
-                key={conn.id}
-                className={`ck-wall-ico${connected ? ' on' : ''}`}
-                title={`${conn.name} · ${conn.username}@${conn.host}${connected ? '' : ' · 点击连接'}`}
-                onClick={() => onHostClick(conn)}
-                onMouseEnter={e => { const el = e.currentTarget; handleCardEnter(conn.id, el) }}
-                onMouseLeave={handleCardLeave}
-              >
-                {conn.name.slice(0, 1).toUpperCase()}
-              </button>
-            )
-          })}
+          {[...allConnections]
+            .sort((a, b) => Number(connectedIds.has(b.id)) - Number(connectedIds.has(a.id)))
+            .slice(0, 24)
+            .map(conn => {
+              const connected = connectedIds.has(conn.id)
+              return (
+                <button
+                  key={conn.id}
+                  className={`ck-wall-ico${connected ? ' on' : ''}`}
+                  title={`${conn.name} · ${conn.username}@${conn.host}${connected ? '' : ' · 点击连接'}`}
+                  onClick={() => onHostClick(conn)}
+                  onMouseEnter={e => { const el = e.currentTarget; handleCardEnter(conn.id, el) }}
+                  onMouseLeave={handleCardLeave}
+                  style={hostIconStyle(conn, connected)}
+                >
+                  {hostGlyph(conn)}
+                </button>
+              )
+            })}
           {allConnections.length > 24 && (
             <span className="ck-wall-ico-more" title={`还有 ${allConnections.length - 24} 台，展开查看`}>…</span>
           )}
@@ -193,8 +235,29 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
           <button title="折叠主机墙" onClick={() => onToggleCollapse(true)}><DoubleLeftOutlined style={{ fontSize: 12 }} /></button>
         </span>
       </h3>
+      <div className="ck-wall-search">
+        <SearchOutlined style={{ fontSize: 11, color: 'var(--ck-t3)' }} />
+        <input
+          placeholder="搜索名称 / IP / 用户…"
+          value={wallQuery}
+          onChange={e => setWallQuery(e.target.value)}
+          aria-label="搜索主机"
+        />
+        {wallQuery && (
+          <button className="ck-ws-clear" title="清空搜索" onClick={() => setWallQuery('')}>
+            <CloseOutlined style={{ fontSize: 10 }} />
+          </button>
+        )}
+      </div>
       {groupNames.length > 1 && (
         <div className="ck-gpills">
+          <button
+            className={`ck-gp${connectedOnly ? ' on' : ''}`}
+            title="只显示已连接的主机"
+            onClick={() => setConnectedOnly(v => !v)}
+          >
+            在线 {connectedIds.size}
+          </button>
           {groupNames.slice(0, 6).map(g => (
             <button
               key={g}
@@ -209,31 +272,31 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
         </div>
       )}
       <div className="ck-hgrid">
-        {visibleGroups.map(({ conns }) =>
-          conns.map(conn => {
-            const connected = connectedConnections.find(x => x.connectionId === conn.id)
-            const sc = sessionCount(conn.id)
-            return (
-              <button
-                key={conn.id}
-                className={`ck-hcard${connected ? ' on' : ''}`}
-                onClick={() => onHostClick(conn)}
-                onMouseEnter={e => { const el = e.currentTarget; handleCardEnter(conn.id, el) }}
-                onMouseLeave={handleCardLeave}
-                title={`${conn.name} · ${conn.username}@${conn.host}${connected ? ` · ${sc} 个会话` : ' · 点击连接'}`}
-              >
-                <span className={`ck-dot${connected ? '' : ' off'}`} />
-                <div className="nm">{conn.name}</div>
-                <div className="ip">{conn.username}@{conn.host}</div>
-                {sc > 0 && <span className="ck-hcard-sc">{sc} 会话</span>}
-              </button>
-            )
-          })
-        )}
+        {wallConns.map(conn => {
+          const connected = connectedConnections.find(x => x.connectionId === conn.id)
+          const sc = sessionCount(conn.id)
+          return (
+            <button
+              key={conn.id}
+              className={`ck-hcard${connected ? ' on' : ''}`}
+              onClick={() => onHostClick(conn)}
+              onMouseEnter={e => { const el = e.currentTarget; handleCardEnter(conn.id, el) }}
+              onMouseLeave={handleCardLeave}
+              title={`${conn.name} · ${conn.username}@${conn.host}${connected ? ` · ${sc} 个会话` : ' · 点击连接'}`}
+            >
+              <span className={`ck-dot${connected ? '' : ' off'}`} />
+              <div className="nm">{conn.name}</div>
+              <div className="ip">{conn.username}@{conn.host}</div>
+              {sc > 0 && <span className="ck-hcard-sc">{sc} 会话</span>}
+            </button>
+          )
+        })}
       </div>
-      {allConnections.length === 0 && (
+      {wallConns.length === 0 && (
         <div className="ck-empty-hint">
-          还没有保存的连接。点击上方 ＋ 新建，或从连接管理页导入；连接后会以浮动窗口出现在右侧画布。
+          {allConnections.length === 0
+            ? '还没有保存的连接。点击上方 ＋ 新建，或从连接管理页导入；连接后会以浮动窗口出现在右侧画布。'
+            : '没有匹配的主机，试试清空搜索或切换分组。'}
         </div>
       )}
     </aside>

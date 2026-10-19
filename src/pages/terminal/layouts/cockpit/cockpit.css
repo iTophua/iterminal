@@ -130,6 +130,21 @@
 .ck-hcard .ck-hcard-sc { position: absolute; right: 8px; top: 9px; font-size: 9px; color: var(--ck-accent); font-family: ui-monospace, Menlo, monospace; }
 .ck-empty-hint { margin-top: 14px; font-size: 11px; color: var(--ck-t3); line-height: 1.8; }
 
+/* 主机墙搜索框 */
+.ck-wall-search {
+  display: flex; align-items: center; gap: 6px; margin-top: 10px; flex: none;
+  background: var(--ck-card2); border: 1px solid var(--ck-line-soft); border-radius: 8px;
+  padding: 5px 8px;
+}
+.ck-wall-search:focus-within { border-color: color-mix(in srgb, var(--ck-accent) 45%, transparent); }
+.ck-wall-search input {
+  flex: 1; min-width: 0; background: none; border: none; outline: none;
+  color: var(--ck-t1); font-size: 11px; font-family: inherit;
+}
+.ck-wall-search input::placeholder { color: var(--ck-t3); }
+.ck-wall-search .ck-ws-clear { color: var(--ck-t3); display: flex; padding: 1px; flex: none; }
+.ck-wall-search .ck-ws-clear:hover { color: var(--ck-t1); }
+
 /* 浮动窗口 */
 .ck-win {
   position: absolute; display: flex; flex-direction: column;
@@ -343,7 +358,8 @@
   font-size: 12px; font-weight: 600; border-radius: 8px; padding: 6px 14px;
 }
 .ck-conn-new:hover { filter: brightness(1.08); }
-.ck-conn-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; align-content: start; }
+/* 行高必须贴合内容：items 拉伸到过期测量值的行轨会把 meta 行裁进底边框里 */
+.ck-conn-grid { flex: 1; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); grid-auto-rows: max-content; align-items: start; gap: 10px; align-content: start; }
 .ck-conn-card {
   position: relative; display: flex; align-items: stretch; gap: 10px;
   background: var(--ck-card2); border: 1px solid var(--ck-line-soft); border-radius: 10px;
@@ -359,10 +375,17 @@
 .ck-conn-group { font-size: 9.5px; color: var(--ck-t2); border: 1px solid var(--ck-line); border-radius: 6px; padding: 0 5px; }
 .ck-conn-sessions { font-size: 9.5px; color: var(--ck-accent); }
 .ck-conn-tag { font-size: 9.5px; color: var(--ck-t3); }
-.ck-conn-acts { display: flex; flex-direction: column; gap: 4px; justify-content: center; flex: none; opacity: 0; transition: opacity .15s; }
+/* 操作按钮悬浮层：不再占布局（隐形 80px 竖列会干扰网格内在尺寸测量） */
+.ck-conn-acts {
+  position: absolute; right: 6px; bottom: 6px;
+  display: flex; align-items: center; gap: 2px;
+  padding: 2px 4px; border-radius: 7px;
+  background: linear-gradient(to left, var(--ck-card2) 70%, transparent);
+  opacity: 0; transition: opacity .15s;
+}
 .ck-conn-card:hover .ck-conn-acts { opacity: 1; }
 .ck-conn-acts button {
-  width: 24px; height: 24px; border-radius: 7px; color: var(--ck-t3);
+  width: 22px; height: 22px; border-radius: 6px; color: var(--ck-t3);
   display: flex; align-items: center; justify-content: center;
 }
 .ck-conn-acts button:hover { color: var(--ck-t1); background: rgba(255,255,255,.07); }
