@@ -145,6 +145,29 @@
 .ck-wall-search .ck-ws-clear { color: var(--ck-t3); display: flex; padding: 1px; flex: none; }
 .ck-wall-search .ck-ws-clear:hover { color: var(--ck-t1); }
 
+/* 最近连接快捷胶囊（主机墙顶部） */
+.ck-recent { margin-top: 8px; flex: none; }
+.ck-recent-t { font-size: 10px; color: var(--ck-t3); }
+.ck-recent-row { display: flex; gap: 5px; margin-top: 5px; overflow-x: auto; scrollbar-width: none; }
+.ck-recent-row::-webkit-scrollbar { display: none; }
+.ck-rc {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 132px;
+  padding: 3px 9px 3px 3px; border-radius: 9px; cursor: pointer;
+  background: var(--ck-card2); border: 1px solid var(--ck-line-soft);
+  transition: border-color .15s;
+}
+.ck-rc:hover { border-color: color-mix(in srgb, var(--ck-accent) 45%, transparent); }
+.ck-rc.on { border-color: color-mix(in srgb, var(--ck-accent) 55%, transparent); }
+.ck-rc-ic {
+  width: 20px; height: 20px; border-radius: 6px; flex: none;
+  display: grid; place-items: center; font-size: 11px; font-weight: 600;
+}
+.ck-rc-n {
+  font-size: 11px; color: var(--ck-t2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ck-rc.on .ck-rc-n { color: var(--ck-t1); }
+
 /* 浮动窗口 */
 .ck-win {
   position: absolute; display: flex; flex-direction: column;

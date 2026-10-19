@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { getRecentConnections } from '../services/database'
 
 export interface Connection {
   id: string
@@ -204,6 +205,10 @@ interface TerminalState {
   cockpitFocusKey: string | null
   // 所有连接列表（启动时预加载）
   allConnections: Connection[]
+  // 最近连接（连接成功后记录，驾驶舱主机墙与经典布局共用）
+  recentConnections: Connection[]
+  // 拉取最近连接记录（连接成功 / 删除连接后调用）
+  refreshRecentConnections: () => Promise<void>
   // 连接列表加载状态
   connectionsLoading: boolean
   // 侧边栏折叠状态
@@ -501,6 +506,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setAllConnections: (connections) => {
     set({ allConnections: connections, connectionsLoading: false })
+  },
+
+  recentConnections: [],
+
+  refreshRecentConnections: async () => {
+    try {
+      const recent = await getRecentConnections(5)
+      set({ recentConnections: recent })
+    } catch (error) {
+      console.error('[terminalStore] Failed to refresh recent connections:', error)
+    }
   },
 
   setConnectionsLoading: (loading) => {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { CloseOutlined, DoubleLeftOutlined, DoubleRightOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConnectedConnection, Connection, SplitPane } from '../../../../stores/terminalStore'
+import { useTerminalStore } from '../../../../stores/terminalStore'
 
 interface HostWallProps {
   connectedConnections: ConnectedConnection[]
@@ -69,6 +70,13 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
   const monitorTs = useRef<Record<string, number>>({})
 
   const connectedIds = useMemo(() => new Set(connectedConnections.map(c => c.connectionId)), [connectedConnections])
+
+  const recentConnections = useTerminalStore(s => s.recentConnections)
+  // 顺序取最近记录，数据取 allConnections 实时值（连接被编辑/删除后胶囊不会过期）
+  const recentList = useMemo(() => {
+    const byId = new Map(allConnections.map(c => [c.id, c]))
+    return recentConnections.map(r => byId.get(r.id)).filter(Boolean).slice(0, 5) as Connection[]
+  }, [recentConnections, allConnections])
 
   const groups = useMemo(() => {
     const map = new Map<string, Connection[]>()
@@ -235,6 +243,27 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
           <button title="折叠主机墙" onClick={() => onToggleCollapse(true)}><DoubleLeftOutlined style={{ fontSize: 12 }} /></button>
         </span>
       </h3>
+      {recentList.length > 0 && (
+        <div className="ck-recent">
+          <span className="ck-recent-t">最近连接</span>
+          <div className="ck-recent-row">
+            {recentList.map(conn => {
+              const connected = connectedIds.has(conn.id)
+              return (
+                <button
+                  key={conn.id}
+                  className={`ck-rc${connected ? ' on' : ''}`}
+                  onClick={() => onHostClick(conn)}
+                  title={`${conn.name} · ${conn.username}@${conn.host}${connected ? ' · 点击聚焦' : ' · 点击连接'}`}
+                >
+                  <span className="ck-rc-ic" style={hostIconStyle(conn, connected)}>{hostGlyph(conn)}</span>
+                  <span className="ck-rc-n">{conn.name}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
       <div className="ck-wall-search">
         <SearchOutlined style={{ fontSize: 11, color: 'var(--ck-t3)' }} />
         <input

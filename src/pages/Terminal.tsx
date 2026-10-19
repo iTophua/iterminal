@@ -65,7 +65,7 @@ import { ShortcutHelpModal } from './terminal/components/ShortcutHelpModal'
 import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOverlay'
 import { useConnectionDragToNewWindow } from './terminal/hooks/useConnectionDrag'
 import { getAllSessions, getActiveSessionInPane, findPaneBySessionId, hasSplitChildren, getVisibleSessions } from '../utils/paneUtils'
-import { getRecentConnections, recordConnectionHistory } from '../services/database'
+import { recordConnectionHistory } from '../services/database'
 import { createCommandTracker, CommandTracker } from '../utils/shellOutputParser'
 import { matchShortcut } from '../utils/shortcutUtils'
 import { applyXtermImePatch } from '../utils/xtermImePatch'
@@ -152,16 +152,8 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  const [recentConnections, setRecentConnections] = useState<Connection[]>([])
-
-  const refreshRecentConnections = useCallback(async () => {
-    try {
-      const recent = await getRecentConnections(5)
-      setRecentConnections(recent)
-    } catch (error) {
-      console.error('[Terminal] Failed to refresh recent connections:', error)
-    }
-  }, [])
+  const recentConnections = useTerminalStore(s => s.recentConnections)
+  const refreshRecentConnections = useTerminalStore(s => s.refreshRecentConnections)
 
   useEffect(() => {
     refreshRecentConnections()
