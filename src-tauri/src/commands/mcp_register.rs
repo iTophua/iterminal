@@ -89,7 +89,8 @@ pub fn sync_launcher(app: &AppHandle) -> Result<String, String> {
     let candidates_js = serde_json::to_string(&candidates).map_err(|e| e.to_string())?;
 
     let content = format!(
-        r#"// 由 iTerminal 自动生成，请勿手动修改。
+        r#"#!/usr/bin/env node
+// 由 iTerminal 自动生成，请勿手动修改。
 // 客户端 MCP 配置指向本文件（永久稳定）；app 启动时会更新内部指向，
 // 升级或更换安装位置后自动使用新版 MCP server，客户端无需重新注册。
 import {{ existsSync }} from "node:fs";
@@ -109,6 +110,12 @@ await import(target);
         return Ok(launcher.to_string_lossy().to_string());
     }
     std::fs::write(&launcher, &content).map_err(|e| format!("写入 launcher 失败: {e}"))?;
+    // 可执行权限（配合 shebang，客户端可直接把本文件作为 command）
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755));
+    }
     Ok(launcher.to_string_lossy().to_string())
 }
 
