@@ -17,8 +17,12 @@ const srcPkg = JSON.parse(readFileSync(join(mcpDir, "package.json"), "utf-8"));
 const outDir = join(mcpDir, "..", "src-tauri", "mcp-bundle");
 const cacheDir = outDir + ".nm-cache";
 
-// 1. dist：不存在则现场构建（正常流程 beforeBuild 已构建过）
+// 1. dist：不存在则现场构建（正常流程 beforeBuild 已构建过）。
+//    干净环境（如 build-pro.sh 直接构建）mcp 依赖也可能缺失，一并兜底安装。
 if (!existsSync(join(mcpDir, "dist", "index.js"))) {
+  if (!existsSync(join(mcpDir, "node_modules"))) {
+    execSync("npm install --no-audit --no-fund", { cwd: mcpDir, stdio: "inherit" });
+  }
   execSync("npm run build", { cwd: mcpDir, stdio: "inherit" });
 }
 
