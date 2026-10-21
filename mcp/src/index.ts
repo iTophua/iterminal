@@ -556,7 +556,7 @@ const tools: Tool[] = [
 ];
 
 const server = new Server(
-  { name: "iterminal-mcp", version: "2.3.1" },
+  { name: "iterminal-mcp", version: "2.3.2" },
   { capabilities: { tools: {}, resources: {}, prompts: {} } }
 );
 
