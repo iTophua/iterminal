@@ -17,3 +17,5 @@
 # MCP Registry tokens
 .mcpregistry_*
 *.free.bak
+src-tauri/mcp-bundle/
+src-tauri/mcp-bundle.nm-cache/

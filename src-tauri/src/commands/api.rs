@@ -1733,6 +1733,7 @@ mod tests {
             details: "Connected to server".to_string(),
             success: true,
             error: None,
+            result: None,
         };
         assert_eq!(op.operation, "connect");
         assert!(op.success);

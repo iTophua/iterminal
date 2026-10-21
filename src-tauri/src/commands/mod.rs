@@ -3,6 +3,7 @@ pub mod api;
 pub mod db;
 pub mod docker;
 pub mod license;
+pub mod mcp_register;
 pub mod port_forward;
 pub mod sftp;
 pub mod ssh;

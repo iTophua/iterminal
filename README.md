@@ -33,7 +33,7 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 - ⌨️ **快捷键系统** - 丰富的快捷键支持，可自定义
 - 📁 **文件管理** - SFTP 文件浏览、上传下载、拖拽上传、文件搜索、压缩解压、文件预览/编辑（CodeMirror 6），面板跟随终端目录，权限不足时支持 sudo 提权上传
 - 📊 **系统监控** - 实时 CPU、内存、磁盘监控面板，进程管理
-- 🤖 **MCP 支持** - 内置 MCP 服务器（Token 鉴权 + SSE 传输），AI 执行的操作实时同步显示到终端
+- 🤖 **MCP 支持** - 内置 MCP 服务器（随 app 分发，Agent 自安装引导 + 自动更新），AI 执行的操作实时同步显示到终端
 - 🐳 **Docker 管理** - 容器/镜像/日志/容器终端
 - ✨ **AI 助手** - AI 对话（感知终端上下文）+ 智能体 Agent 自主诊断服务器
 - 🪟 **多窗口支持** - 拖拽连接到边缘创建新窗口，完整终端功能复用
@@ -293,9 +293,9 @@ npm run tauri build
 
 内置 MCP (Model Context Protocol) 服务器，支持 AI 助手集成：
 
-- 通过 HTTP API 控制 SSH 连接
-- 支持命令执行、文件操作、系统监控
-- 可与 Claude 等 AI 助手集成
+- MCP server 随 app 分发（不依赖 npm），在设置 → MCP 复制安装指令发给任意 AI 工具即可接入
+- 通过 HTTP API 控制 SSH 连接：命令执行、文件操作、传输、系统监控
+- 注册的是稳定启动器（`~/.iterminal/bin/mcp-launcher.mjs`），app 升级后 Agent 下次拉起会话自动使用新版，无需重新注册
 
 ---
 

@@ -909,33 +909,6 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   )
 
   const renderMcpSettings = () => {
-    const openCodeConfig = `{
-  "mcp": {
-    "iterminal": {
-      "type": "local",
-      "command": ["npx", "-y", "iterminal-mcp-server@latest"],
-      "enabled": true
-    }
-  }
-}`
-    const claudeConfig = `{
-  "mcpServers": {
-    "iterminal": {
-      "command": "npx",
-      "args": ["-y", "iterminal-mcp-server@latest"]
-    }
-  }
-}`
-
-    const handleCopy = async (text: string, key: string) => {
-      try {
-        await navigator.clipboard.writeText(text)
-        setCopiedKey(key)
-        setTimeout(() => setCopiedKey(null), 2000)
-      } catch (e) {
-        message.error('复制失败')
-      }
-    }
 
     return (
       <div style={{ padding: '0 16px' }}>
@@ -1048,68 +1021,38 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         <Divider style={{ margin: '16px 0', borderColor: 'var(--color-border)' }} />
 
         <div>
-          <Text style={{ color: 'var(--color-text)', fontWeight: 500, display: 'block', marginBottom: 12 }}>
-            在 AI 工具中配置
+          <Text style={{ color: 'var(--color-text)', fontWeight: 500, display: 'block', marginBottom: 4 }}>
+            接入 AI 工具
           </Text>
-          
-          <div style={{ marginBottom: 16 }}>
-            <Text style={{ color: 'var(--color-text-secondary)', fontSize: 13, display: 'block', marginBottom: 4 }}>
-              OpenCode (推荐)
-            </Text>
-            <div style={{ position: 'relative' }}>
-              <div style={{
-                background: 'var(--color-bg-spotlight)',
-                padding: '10px 12px',
-                borderRadius: 6,
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: 'var(--color-text-secondary)',
-                overflow: 'auto',
-                whiteSpace: 'pre',
-                paddingRight: 40,
-              }}>
-{`// ~/.config/opencode/opencode.jsonc
-${openCodeConfig}`}
-              </div>
-              <Button
-                size="small"
-                icon={copiedKey === 'opencode' ? <CheckCircleOutlined /> : <CopyOutlined />}
-                onClick={() => handleCopy(openCodeConfig, 'opencode')}
-                style={{ position: 'absolute', top: 8, right: 8 }}
-              />
-            </div>
-          </div>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+            MCP server 已内置在 iTerminal 中（不依赖 npm）。复制安装指令发给任意 AI 工具，由它自己完成配置——各工具格式由其自行处理，无需手动适配
+          </Text>
 
-          <div style={{ marginBottom: 16 }}>
-            <Text style={{ color: 'var(--color-text-secondary)', fontSize: 13, display: 'block', marginBottom: 4 }}>
-              Claude Desktop
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Button
+              type="primary"
+              icon={copiedKey === 'install-instruction' ? <CheckCircleOutlined /> : <CopyOutlined />}
+              onClick={async () => {
+                try {
+                  const text = await invoke<string>('get_mcp_install_instruction')
+                  await navigator.clipboard.writeText(text)
+                  setCopiedKey('install-instruction')
+                  setTimeout(() => setCopiedKey(null), 2000)
+                  message.success('已复制，粘贴给任意 AI 工具即可让它自行完成安装')
+                } catch (e) {
+                  message.error(`生成安装指令失败: ${e}`)
+                }
+              }}
+            >
+              复制安装指令
+            </Button>
+            <Text type="secondary" style={{ fontSize: 12 }}>
+              需要 Node.js；注册一次后随 app 更新持续生效
             </Text>
-            <div style={{ position: 'relative' }}>
-              <div style={{
-                background: 'var(--color-bg-spotlight)',
-                padding: '10px 12px',
-                borderRadius: 6,
-                fontFamily: 'monospace',
-                fontSize: 11,
-                color: 'var(--color-text-secondary)',
-                overflow: 'auto',
-                whiteSpace: 'pre',
-                paddingRight: 40,
-              }}>
-{`// ~/Library/Application Support/Claude/claude_desktop_config.json
-${claudeConfig}`}
-              </div>
-              <Button
-                size="small"
-                icon={copiedKey === 'claude' ? <CheckCircleOutlined /> : <CopyOutlined />}
-                onClick={() => handleCopy(claudeConfig, 'claude')}
-                style={{ position: 'absolute', top: 8, right: 8 }}
-              />
-            </div>
           </div>
 
           <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
-            配置后重启 AI 工具生效，确保 iTerminal 已启动且 MCP 服务开启
+            配置后重启 AI 工具生效，使用期间保持 iTerminal 已启动且 MCP 服务开启
           </Text>
 
           {/* SSE 模式说明 */}
@@ -1118,7 +1061,7 @@ ${claudeConfig}`}
               高级：SSE 传输模式（可选）
             </summary>
             <div style={{ marginTop: 8, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.6 }}>
-              <p style={{ marginBottom: 8 }}>默认使用 stdio 传输（上方配置）。如需 SSE 模式（常驻 HTTP 进程，支持远程客户端）：</p>
+              <p style={{ marginBottom: 8 }}>默认使用 stdio 传输（安装指令方式）。如需 SSE 模式（常驻 HTTP 进程，支持远程客户端）：</p>
               <div style={{
                 background: 'var(--color-bg-spotlight)',
                 padding: '8px 12px',
@@ -1130,8 +1073,8 @@ ${claudeConfig}`}
                 whiteSpace: 'pre',
                 overflow: 'auto',
               }}>
-{`# 1. 手动启动 MCP 服务器（SSE 模式）
-ITERMINAL_MCP_TRANSPORT=sse npx -y iterminal-mcp-server@latest
+{`# 1. 手动启动 MCP 服务器（SSE 模式；路径为 app 内置 server，可从安装指令中获取）
+ITERMINAL_MCP_TRANSPORT=sse node /Applications/iTerminal.app/Contents/Resources/mcp-bundle/dist/index.js
 
 # 2. AI 工具配置改用 url 连接
 {
@@ -1142,7 +1085,7 @@ ITERMINAL_MCP_TRANSPORT=sse npx -y iterminal-mcp-server@latest
   }
 }`}
               </div>
-              <p>SSE 模式需要额外安装 express：<code style={{ fontSize: 11 }}>npm i express</code>（在 mcp 目录下）</p>
+              <p>SSE 模式需要额外安装 express：<code style={{ fontSize: 11 }}>npm i express</code>（在 server 所在目录）</p>
             </div>
           </details>
         </div>

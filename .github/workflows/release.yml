@@ -10,38 +10,6 @@ permissions:
   contents: write
 
 jobs:
-  check-changes:
-    runs-on: ubuntu-latest
-    outputs:
-      mcp-changed: ${{ steps.check.outputs.mcp-changed }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check MCP changes
-        id: check
-        run: |
-          # Get previous tag
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          
-          if [ -z "$PREV_TAG" ]; then
-            # First release, publish everything
-            echo "mcp-changed=true" >> $GITHUB_OUTPUT
-            echo "First release, will publish MCP"
-          else
-            # Check if mcp/ directory changed between tags
-            CHANGED=$(git diff --name-only $PREV_TAG HEAD -- mcp/ | head -1)
-            if [ -n "$CHANGED" ]; then
-              echo "mcp-changed=true" >> $GITHUB_OUTPUT
-              echo "MCP changes detected between $PREV_TAG and ${{ github.ref_name }}"
-            else
-              echo "mcp-changed=false" >> $GITHUB_OUTPUT
-              echo "No MCP changes between $PREV_TAG and ${{ github.ref_name }}"
-            fi
-          fi
-
   build:
     strategy:
       fail-fast: false
@@ -72,22 +40,19 @@ jobs:
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "Updating version to $VERSION"
-          
+
           # Update package.json
           jq --arg v "$VERSION" '.version = $v' package.json > package.tmp && mv package.tmp package.json
-          
+
           # Update tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tauri.tmp && mv tauri.tmp src-tauri/tauri.conf.json
-          
+
           # Update Cargo.toml (use perl for cross-platform compatibility)
           perl -pi -e 's/^version = ".*"/version = "'"$VERSION"'"/' src-tauri/Cargo.toml
-          
-          # Update mcp/package.json
-          jq --arg v "$VERSION" '.version = $v' mcp/package.json > mcp-package.tmp && mv mcp-package.tmp mcp/package.json
-          
-          # Update mcp/server.json
-          jq --arg v "$VERSION" '.version = $v | .packages[0].version = $v' mcp/server.json > server.tmp && mv server.tmp mcp/server.json
-          
+
+          # Update MCP server version (随 app 打包分发，版本保持一致)
+          perl -pi -e 'if (/iterminal-mcp/) { s/version: "[^"]*"/version: "'"$VERSION"'"/ }' mcp/src/index.ts
+
           echo "Version updated to $VERSION"
 
       - name: Setup Node.js
@@ -113,6 +78,11 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install
+
+      # MCP server 随 app 打包（tauri resources），beforeBuildCommand 会构建并组装 mcp-bundle
+      - name: Install MCP dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+        working-directory: ./mcp
 
       - name: Build Tauri app
         run: pnpm exec tauri build --target ${{ matrix.target }}
@@ -184,58 +154,3 @@ jobs:
           draft: true
           prerelease: false
           files: artifacts/**/*
-
-  publish-mcp:
-    needs: [release, check-changes]
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && needs.check-changes.outputs.mcp-changed == 'true'
-    permissions:
-      contents: read
-      id-token: write
-    
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Update npm to latest
-        run: npm install -g npm@latest
-
-      - name: Verify npm version
-        run: npm --version
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - name: Install dependencies
-        working-directory: ./mcp
-        run: pnpm install --ignore-workspace
-
-      - name: Build
-        working-directory: ./mcp
-        run: pnpm run build
-
-      - name: Publish to npm
-        working-directory: ./mcp
-        run: |
-          echo "Publishing with npm $(npm --version)"
-          echo "Node version: $(node --version)"
-          npm publish --provenance --access public
-
-      - name: Install mcp-publisher
-        run: |
-          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
-
-      - name: Authenticate to MCP Registry
-        run: ./mcp-publisher login github-oidc
-
-      - name: Publish to MCP Registry
-        working-directory: ./mcp
-        run: ../mcp-publisher publish

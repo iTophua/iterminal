@@ -64,6 +64,8 @@ fn main() {
             iterminal::commands::api::start_api_server_command,
             iterminal::commands::api::get_mcp_token,
             iterminal::commands::api::reset_mcp_token,
+            iterminal::commands::mcp_register::get_mcp_install_instruction,
+            iterminal::commands::mcp_register::sync_mcp_launcher,
             iterminal::commands::license::verify_license,
             iterminal::commands::license::get_license,
             iterminal::commands::license::is_feature_available,
@@ -127,6 +129,12 @@ fn main() {
         .setup(|app| {
             if let Err(e) = iterminal::commands::db::init_database(app.handle().clone()) {
                 eprintln!("Failed to initialize database: {}", e);
+            }
+
+            // 同步 MCP launcher（~/.iterminal/bin/mcp-launcher.mjs）：客户端注册的稳定入口，
+            // 每次启动刷新指向 app 内置 server —— 升级/换安装位置后自动用新版，无需重新注册
+            if let Err(e) = iterminal::commands::mcp_register::sync_launcher(app.handle()) {
+                eprintln!("[mcp] Failed to sync MCP launcher: {}", e);
             }
 
             // 从持久化文件加载已激活的 License（Pro 构建生效；Free stub 为空操作）

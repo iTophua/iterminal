@@ -155,7 +155,7 @@
 │   ├── Cargo.toml              # Rust 依赖
 │   ├── tauri.conf.json         # Tauri 配置
 │   └── icons/                  # 应用图标
-├── mcp/                        # MCP 服务器 (独立 npm 包)
+├── mcp/                        # MCP 服务器 (随 app 打包分发，见 scripts/prepare-bundle.mjs)
 │   └── src/index.ts            # MCP 工具定义 (iter_*)
 ├── docs/                       # 项目文档
 │   ├── 优化实施计划.md         # 优化进度跟踪
@@ -540,7 +540,7 @@ npm run test:e2e
 - russh 使用原生 async/await，需要 Rust 1.75+
 - License 系统: 免费版 3 连接限制，付费版无限连接
 - 商业版构建: `../iterminal-pro/scripts/build-pro.sh` (从私有仓库复制代码后构建)
-- MCP 已发布到 npm: `iterminal-mcp-server@2.1.0`
+- MCP server 随 app 打包分发（tauri resources: mcp-bundle/），不再发布 npm；接入方式为设置页"复制安装指令"（agent 自安装），稳定入口 `~/.iterminal/bin/mcp-launcher.mjs` 由 app 启动时自动同步（mcp_register.rs）
 - 字体列表缓存在 localStorage，首次加载后不再重复加载
 - 连接列表在启动时预加载到 store，全局共享状态
 - 命令历史在数据库启动时自动清理过期和孤立记录
