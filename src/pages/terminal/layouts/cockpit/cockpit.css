@@ -194,7 +194,12 @@
 .ck-win.focus .ck-fdot { opacity: 1; }
 .ck-bcast { color: #F5B950; display: flex; font-size: 11px; }
 .ck-win-body { flex: 1; position: relative; background: var(--ck-term-bg); min-height: 0; }
-.ck-term { position: absolute; inset: 0; overflow: hidden; padding: 8px 10px; box-sizing: border-box; }
+/* xterm 容器铺满（inset:0）保证滚动条贴右贴底；文本留白放在 .terminal 自身 padding 上——
+   这是 xterm fit 唯一会正确扣除的 padding 层（外层留白会被忽略导致行数多算、末行被裁）。
+   padding 右/底为 0：滚动条（.xterm-viewport right:0 相对 padding box）才能贴住边框 */
+.ck-term { position: absolute; inset: 0; overflow: hidden; }
+.ck-term-inner { position: absolute; inset: 0; }
+.ck-term-inner .terminal { padding: 8px 0 0 10px; }
 .ck-rsz { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 3; touch-action: none; }
 .ck-win-banner {
   position: absolute; left: 0; right: 0; top: 0; z-index: 4;

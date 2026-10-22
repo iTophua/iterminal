@@ -163,10 +163,11 @@ export const FloatingWindow = React.memo(function FloatingWindow({
       </div>
       <div className="ck-win-body">
         <div
-          ref={el => { terminalRefs.current[sessionKey] = el }}
           className="ck-term"
           onContextMenu={e => onContextMenu(e, sessionKey)}
-        />
+        >
+          <div ref={el => { terminalRefs.current[sessionKey] = el }} className="ck-term-inner" />
+        </div>
         <GhostTextOverlay
           sessionKey={sessionKey}
           fontFamily={fontFamily}
