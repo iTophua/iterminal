@@ -143,6 +143,8 @@ function fmtTime(iso: string): string {
   return iso?.slice(5, 16).replace("T", " ") ?? "";
 }
 
+
+
 async function apiCall<T>(
   method: string,
   path: string,
@@ -190,11 +192,19 @@ async function apiCall<T>(
     }
 
     if (!response.ok) {
+      // 后端对业务错误统一返回 400/4xx/5xx，具体原因在 body 的 error 字段——透传给调用方
+      let detail = "";
+      try {
+        const body = (await response.json()) as { error?: string };
+        if (body?.error) detail = `：${body.error}`;
+      } catch {
+        // body 不是 JSON（如网关/代理错误页），仅保留状态码
+      }
       return {
         success: false,
         error: response.status === 401
           ? 'HTTP 401: token 无效（已尝试重读 ~/.iterminal/mcp_token 重试仍失败，请在 iTerminal 设置中确认 MCP 已开启）'
-          : `HTTP ${response.status}: ${response.statusText}`,
+          : `HTTP ${response.status}${detail || `: ${response.statusText}`}`,
       };
     }
     return response.json();

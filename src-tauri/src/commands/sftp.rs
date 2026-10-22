@@ -20,7 +20,17 @@ fn validate_path(path: &str) -> Result<String, String> {
 
     let normalized = path.replace('\\', "/");
 
-    let suspicious_patterns = ["../", "/..", "//..", "~/"];
+    // ../ 才是穿越向量；~/ 指向用户 home（AI 助手高频用法），改写为相对路径交给
+    // sftp-server 解析（OpenSSH sftp-server 以用户 home 为工作目录）
+    let normalized = if normalized == "~" {
+        ".".to_string()
+    } else if let Some(rest) = normalized.strip_prefix("~/") {
+        format!("./{rest}")
+    } else {
+        normalized
+    };
+
+    let suspicious_patterns = ["../", "/..", "//.."];
     for pattern in suspicious_patterns {
         if normalized.contains(pattern) {
             return Err("路径包含非法序列".to_string());
