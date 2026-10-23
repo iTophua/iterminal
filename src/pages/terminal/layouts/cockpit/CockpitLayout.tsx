@@ -399,7 +399,7 @@ export function CockpitLayout({
       <div
         className={`ck-canvas${wallCollapsed ? ' ck-wall-folded' : ''}`}
         ref={canvasRef}
-        style={{ '--ck-wall-w': `${wallW}px` } as React.CSSProperties}
+        style={{ '--ck-wall-w': `${wallCollapsed ? 48 : wallW}px` } as React.CSSProperties}
       >
         {!focusMode && (
           <HostWall
