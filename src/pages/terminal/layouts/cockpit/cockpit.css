@@ -202,7 +202,7 @@
 /* fit 插件在 scrollback>0 时固定从宽度扣 14px 作滚动条预留（源码写死），
    左侧 padding 对齐这 14px 使文本区左右对称。!important 穿透 global.css
    的 .xterm{padding:0!important}（那是对所有终端实例的全局清零） */
-.ck-term-inner .xterm { padding: 8px 0 0 10px !important; }
+.ck-term-inner .xterm { padding: 8px 0 0 6px !important; }
 .ck-rsz { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; z-index: 3; touch-action: none; }
 .ck-win-banner {
   position: absolute; left: 0; right: 0; top: 0; z-index: 4;

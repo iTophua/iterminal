@@ -977,7 +977,7 @@ const handlePointerUp = () => {
             macOptionIsMeta: true,
             // fit 插件用该宽度作右侧预留（默认写死 14px）；10 与驾驶舱左侧
             // padding(.ck-term-inner .xterm) 对齐，文本区左右对称
-            overviewRuler: { width: 10 },
+            overviewRuler: { width: 6 },
           })
 
           const fitAddon = new FitAddon()
