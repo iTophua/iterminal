@@ -17,6 +17,8 @@ interface HostWallProps {
   onToggleCollapse: (collapsed: boolean) => void
   /** 拖出为独立窗口 */
   onDetachToNewWindow: (connectionId: string) => void
+  /** 拖拽调节主机墙宽度（commit=松手时持久化） */
+  onWallResize?: (width: number, commit: boolean) => void
 }
 
 interface MonitorSnapshot {
@@ -58,7 +60,7 @@ function hostIconStyle(conn: Connection, connected: boolean): CSSProperties {
  * 驾驶舱左侧主机墙：全部已保存连接按分组展示；
  * 悬停已连接主机显示实时指标预览卡（CPU/内存）。
  */
-export function HostWall({ connectedConnections, allConnections, onHostClick, onNewSession, onAddHost, collapsed, onToggleCollapse, onDetachToNewWindow }: HostWallProps) {
+export function HostWall({ connectedConnections, allConnections, onHostClick, onNewSession, onAddHost, collapsed, onToggleCollapse, onDetachToNewWindow, onWallResize }: HostWallProps) {
   const [groupFilter, setGroupFilter] = useState<string>('全部')
   const [wallQuery, setWallQuery] = useState('')
   const [connectedOnly, setConnectedOnly] = useState(false)
@@ -70,6 +72,26 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
   const monitorTs = useRef<Record<string, number>>({})
 
   const connectedIds = useMemo(() => new Set(connectedConnections.map(c => c.connectionId)), [connectedConnections])
+
+  const wallElRef = useRef<HTMLElement | null>(null)
+
+  /** 右缘拖拽调节墙宽：move 中实时上报（父级 state 驱动 CSS 变量），松手持久化 */
+  const beginWallResize = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = wallElRef.current?.getBoundingClientRect().width ?? 256
+    const clampW = (w: number) => Math.min(420, Math.max(200, Math.round(w)))
+    const onMove = (ev: PointerEvent) => onWallResize?.(clampW(startW + ev.clientX - startX), false)
+    const onUp = (ev: PointerEvent) => {
+      document.removeEventListener('pointermove', onMove)
+      document.removeEventListener('pointerup', onUp)
+      onWallResize?.(clampW(startW + ev.clientX - startX), true)
+    }
+    document.addEventListener('pointermove', onMove)
+    document.addEventListener('pointerup', onUp)
+  }, [onWallResize])
 
   const recentConnections = useTerminalStore(s => s.recentConnections)
   // 顺序取最近记录，数据取 allConnections 实时值（连接被编辑/删除后胶囊不会过期）
@@ -227,7 +249,7 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
         <button className="ck-wall-fold bottom" title="新建连接" onClick={onAddHost}>
           <PlusOutlined style={{ fontSize: 12 }} />
         </button>
-      </aside>
+        </aside>
       {preview && previewConn && <PreviewCard />}
       </>
     )
@@ -235,7 +257,7 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
 
   return (
     <>
-    <aside className="ck-wall">
+    <aside className="ck-wall" ref={wallElRef}>
       <h3>
         主机
         <span style={{ display: 'inline-flex', gap: 2 }}>
@@ -328,6 +350,7 @@ export function HostWall({ connectedConnections, allConnections, onHostClick, on
             : '没有匹配的主机，试试清空搜索或切换分组。'}
         </div>
       )}
+      <div className="ck-wall-rsz" onPointerDown={beginWallResize} title="拖拽调节宽度" />
     </aside>
 
     {/* 悬停预览卡（挂在画布上，避免被 wall 的 overflow 裁剪） */}

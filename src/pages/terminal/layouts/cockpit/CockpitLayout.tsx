@@ -140,7 +140,17 @@ export function CockpitLayout({
     return () => ro.disconnect()
   }, [])
 
-  const narrowWall = !wallCollapsed && canvasSize.w < 1000
+  // 主机墙宽度：用户可拖拽调节（右缘把手），localStorage 持久化
+  const [wallW, setWallW] = useState(() => {
+    const saved = parseInt(localStorage.getItem('ck-wall-w') || '', 10)
+    return Number.isFinite(saved) ? Math.min(420, Math.max(200, saved)) : 256
+  })
+  const handleWallResize = useCallback((w: number, commit: boolean) => {
+    const clamped = Math.min(420, Math.max(200, w))
+    setWallW(clamped)
+    if (commit) localStorage.setItem('ck-wall-w', String(Math.round(clamped)))
+  }, [])
+
   const bounds = useMemo(
     () => focusMode
       ? { minX: 12, minY: 8, maxX: Math.max(340, canvasSize.w - 20), maxY: Math.max(216, canvasSize.h - 20) }
@@ -385,8 +395,12 @@ export function CockpitLayout({
         </div>
       </div>
 
-      {/* 画布（窄画布时主机墙自动收窄，dock/预览卡经 --ck-wall-w 联动） */}
-      <div className={`ck-canvas${narrowWall ? ' ck-narrow' : ''}${wallCollapsed ? ' ck-wall-folded' : ''}`} ref={canvasRef}>
+      {/* 画布（dock/预览卡经 --ck-wall-w 联动主机墙宽度） */}
+      <div
+        className={`ck-canvas${wallCollapsed ? ' ck-wall-folded' : ''}`}
+        ref={canvasRef}
+        style={{ '--ck-wall-w': `${wallW}px` } as React.CSSProperties}
+      >
         {!focusMode && (
           <HostWall
             connectedConnections={connectedConnections}
@@ -397,6 +411,7 @@ export function CockpitLayout({
             collapsed={wallCollapsed}
             onToggleCollapse={setWallCollapsed}
             onDetachToNewWindow={onDetachToNewWindow}
+            onWallResize={handleWallResize}
           />
         )}
 
