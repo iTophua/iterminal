@@ -72,7 +72,6 @@ export interface CockpitLayoutProps {
 }
 
 // 主机墙宽度（含左 12 + 右 8 间隙）：折叠 48 / 窄画布 232 / 常态 256
-const wallWidth = (canvasW: number, collapsed: boolean) => (collapsed ? 48 : canvasW < 1000 ? 232 : 256)
 const RAIL_W = 66    // 右侧工具栏（46 宽 + 12 右缘 + 8 间隙）
 const DOCK_H = 90    // 底部停靠栏（68 高 + 12 底缘 + 10 间隙）
 
@@ -142,12 +141,13 @@ export function CockpitLayout({
   }, [])
 
   const narrowWall = !wallCollapsed && canvasSize.w < 1000
-  const wallW = wallWidth(canvasSize.w, wallCollapsed)
   const bounds = useMemo(
     () => focusMode
       ? { minX: 12, minY: 8, maxX: Math.max(340, canvasSize.w - 20), maxY: Math.max(216, canvasSize.h - 20) }
-      : { minX: 12 + wallW + 8, minY: 8, maxX: Math.max(12 + wallW + 8 + 340, canvasSize.w - RAIL_W), maxY: Math.max(216, canvasSize.h - DOCK_H) },
-    [canvasSize, focusMode, wallW]
+      // minX 不再排除主机墙：窗口可拖到最左侧覆盖主机墙（窗口 zIndex 恒高于主机墙，
+      // 需要大画布空间时把窗口盖过去即可）
+      : { minX: 12, minY: 8, maxX: Math.max(340, canvasSize.w - RAIL_W), maxY: Math.max(216, canvasSize.h - DOCK_H) },
+    [canvasSize, focusMode]
   )
 
   // 全部会话（每会话一个浮动窗口）
