@@ -743,7 +743,7 @@ const handlePointerUp = () => {
     for (let i = 0; i < instances.length; i++) {
       const term = instances[i]
       if (term) {
-        term.options.theme = currentThemeColors
+        term.options.theme = { ...currentThemeColors, overviewRulerBorder: '#00000000' }
         term.refresh(0, term.rows - 1)
       }
     }
@@ -970,7 +970,7 @@ const handlePointerUp = () => {
             cursorStyle: terminalSettings.cursorStyle,
             fontSize: cockpitMode ? cockpitFontSize : terminalSettings.fontSize,
             fontFamily: `${terminalSettings.fontFamily}, Menlo, Monaco, "Courier New", monospace`,
-            theme: currentThemeColors,
+            theme: { ...currentThemeColors, overviewRulerBorder: '#00000000' },
             convertEol: true,
             disableStdin: false,
             scrollback: terminalSettings.scrollback,
