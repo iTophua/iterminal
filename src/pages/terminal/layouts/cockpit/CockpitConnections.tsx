@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
-import { App, Button, Form, Input, Modal, Popconfirm, Select } from 'antd'
+import { App, AutoComplete, Button, Form, Input, Modal, Popconfirm, Select } from 'antd'
 import { ApiOutlined, CopyOutlined, DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, LoadingOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
 import type { ConnectedConnection, Connection } from '../../../../stores/terminalStore'
@@ -409,10 +409,10 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
           <Form.Item name="keyFile" label="私钥路径"><Input placeholder="/Users/you/.ssh/id_rsa（可留空）" /></Form.Item>
           <div style={{ display: 'flex', gap: 8 }}>
             <Form.Item name="group" label="分组" style={{ flex: 1 }}>
-              <Select
+              {/* AutoComplete 取值为单字符串；勿用 Select mode="tags"（返回数组，
+                  传给后端 group_name: Option<String> 会报 invalid type: sequence） */}
+              <AutoComplete
                 allowClear
-                mode="tags"
-                maxCount={1}
                 placeholder="选择或输入分组"
                 options={groups.filter(g => g !== '全部').map(g => ({ value: g, label: g }))}
               />
