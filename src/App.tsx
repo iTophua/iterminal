@@ -195,6 +195,28 @@ function McpConnectionHandler() {
     return () => { unlisten.then(fn => fn()) }
   }, [navigate, connectedConnections, addConnection, setActiveConnection])
 
+  // MCP 后台保存的连接（iter_save_connection）直接写 DB，前端 store 不知情；
+  // 收到 connections-changed 后从 DB 重载，连接管理页/主机墙实时显示
+  useEffect(() => {
+    const unlisten = listen('connections-changed', async () => {
+      try {
+        const { getConnections } = await import('./services/database')
+        const list = await getConnections()
+        const prev = useTerminalStore.getState().allConnections
+        // 保留既有在线状态（DB 里不存 status），避免连接中的卡片闪烁成离线
+        useTerminalStore.getState().setAllConnections(
+          list.map(c => {
+            const p = prev.find(x => x.id === c.id)
+            return p ? { ...c, status: p.status } : c
+          })
+        )
+      } catch (e) {
+        console.error('[MCP] Failed to reload connections:', e)
+      }
+    })
+    return () => { unlisten.then(fn => fn()) }
+  }, [])
+
   return null
 }
 

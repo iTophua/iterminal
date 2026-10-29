@@ -1025,6 +1025,9 @@ async fn save_and_connect_handler(
         (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))
     })?;
 
+    // MCP 写库绕过了前端 store，通知前端重载连接列表（连接管理/主机墙实时可见）
+    let _ = state.app_handle.emit("connections-changed", ());
+
     let details = format!("{}@{}:{}", payload.username, payload.host, port);
     emit_operation(
         &state.app_handle,
