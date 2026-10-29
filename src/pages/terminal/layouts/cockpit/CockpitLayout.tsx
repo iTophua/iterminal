@@ -452,7 +452,11 @@ export function CockpitLayout({
               ghostTextElementsRef={ghostTextElementsRef}
               themeColors={currentThemeColors}
               bounds={bounds}
-              onFocus={() => { if (key !== focusKey) focusSession(key) }}
+              onFocus={() => {
+                // 已聚焦的窗口也要 focus 终端：键盘焦点可能已被主机墙搜索框等抢走
+                if (key !== focusKey) focusSession(key)
+                else terminalInstances.current[key]?.focus()
+              }}
               onGeometryCommit={g => commitGeometry(key, g)}
               onMinimize={() => {
                 commitGeometry(key, { ...geo, minimized: true, zoomed: false, prev: undefined })

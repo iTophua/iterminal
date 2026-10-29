@@ -74,7 +74,8 @@ export const FloatingWindow = React.memo(function FloatingWindow({
   const beginDrag = useCallback((mode: 'move' | 'resize') => (e: React.PointerEvent) => {
     if (e.button !== 0) return
     e.preventDefault()
-    e.stopPropagation()
+    // 不 stopPropagation：让事件冒泡到窗口根节点的 onPointerDown={onFocus}，
+    // 否则点标题栏/缩放角只拖得动窗口、终端拿不到键盘焦点
     const el = winRef.current
     if (!el) return
 
