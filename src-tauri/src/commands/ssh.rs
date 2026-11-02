@@ -541,7 +541,13 @@ pub async fn get_shell(id: String, app: AppHandle) -> Result<String, String> {
     // PS2 是 shell 主动输出，PTY 关 ECHO 只能抑制输入回显、拦不住它，
     // 表现为连接后终端出现一串 "> > > >"。单行 + 末尾换行让 bash 一次读完
     // 整条命令，只输出一个新提示符；开头不带换行，避免额外空行提示符。
-    let cwd_hook = r#"__iterminal_cwd_report() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }; if [ -n "$BASH_VERSION" ]; then PROMPT_COMMAND="__iterminal_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; elif [ -n "$ZSH_VERSION" ]; then precmd_functions+=(__iterminal_cwd_report); fi; stty echo 2>/dev/null
+    //
+    // 整行必须对 POSIX sh（dash）可解析：shell 先解析整行再执行，行尾的 stty echo
+    // 是恢复回显的唯一机会，任何分支里出现 bash/zsh 专属语法（如 zsh 的数组追加
+    // precmd_functions+=(...)）都会让 dash 直接抛 Syntax error、整行作废，
+    // ECHO 永远开不回来——表现为连上后输入内容不可见。故 zsh 分支用
+    // eval '...' 包裹：对其他 shell 只是一个字符串参数，仅 zsh 运行时执行。
+    let cwd_hook = r#"__iterminal_cwd_report() { printf '\033]7;file://%s%s\007' "${HOSTNAME:-localhost}" "$PWD"; }; if [ -n "$BASH_VERSION" ]; then PROMPT_COMMAND="__iterminal_cwd_report${PROMPT_COMMAND:+;$PROMPT_COMMAND}"; elif [ -n "$ZSH_VERSION" ]; then eval 'precmd_functions+=(__iterminal_cwd_report)'; fi; stty echo 2>/dev/null
 "#;
     let _ = channel.data(cwd_hook.as_bytes()).await;
 
