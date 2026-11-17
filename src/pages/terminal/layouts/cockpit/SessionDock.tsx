@@ -57,7 +57,7 @@ export const SessionDock = React.memo(function SessionDock({ items, onFocus, onC
           </button>
         </div>
       ))}
-      <button className="ck-dk-new" onClick={onNew} title="新会话（从左侧主机墙选择主机）">
+      <button className="ck-dk-new" onClick={onNew} title="新会话（无焦点连接时打开连接管理选择主机）">
         <PlusOutlined style={{ fontSize: 12 }} /> 新会话
       </button>
     </div>

@@ -196,7 +196,7 @@ function McpConnectionHandler() {
   }, [navigate, connectedConnections, addConnection, setActiveConnection])
 
   // MCP 后台保存的连接（iter_save_connection）直接写 DB，前端 store 不知情；
-  // 收到 connections-changed 后从 DB 重载，连接管理页/主机墙实时显示
+  // 收到 connections-changed 后从 DB 重载，连接管理页实时显示
   useEffect(() => {
     const unlisten = listen('connections-changed', async () => {
       try {

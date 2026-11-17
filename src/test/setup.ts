@@ -1,6 +1,21 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach, vi } from 'vitest'
 
+// Node ≥22 的实验性 localStorage 全局（未启用时为 undefined）会遮蔽 jsdom 的实现，
+// 导致模块作用域里的 localStorage.getItem 直接崩溃。补一个内存实现兜底。
+if (!globalThis.localStorage) {
+  const mem = new Map<string, string>()
+  const storage: Storage = {
+    get length() { return mem.size },
+    clear: () => mem.clear(),
+    getItem: (k) => mem.get(k) ?? null,
+    key: (i) => Array.from(mem.keys())[i] ?? null,
+    removeItem: (k) => { mem.delete(k) },
+    setItem: (k, v) => { mem.set(k, String(v)) },
+  }
+  Object.defineProperty(globalThis, 'localStorage', { value: storage, configurable: true })
+}
+
 const mockInvoke = vi.fn()
 const mockListen = vi.fn(() => Promise.resolve(() => {}))
 const mockEmit = vi.fn()

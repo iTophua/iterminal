@@ -23,6 +23,7 @@ import {
   CloseCircleOutlined,
   MinusCircleOutlined,
   ShrinkOutlined,
+  ExportOutlined,
 } from '@ant-design/icons'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
@@ -2543,7 +2544,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
 
 
   // ===== 驾驶舱布局 =====
-  // 驾驶舱下从主机墙连接：连接后聚焦新会话窗口
+  // 驾驶舱下新发起的连接：连接后聚焦新会话窗口
   const handleCockpitHostClick = useCallback(async (conn: Connection) => {
     const isConnected = connectedConnections.some(c => c.connectionId === conn.id)
     if (isConnected) {
@@ -2610,14 +2611,14 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         <Suspense fallback={null}>
           <FileManagerPanel connectionId={activeConnectionId} visible onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} />
         </Suspense>
-      ) : hint('没有活动连接，先从左侧主机墙连接'),
+      ) : hint('没有活动连接，先用 ⌘K 或连接管理连接主机'),
       docker: activeConnectionId ? (
         <Suspense fallback={null}>
           <DockerPanel connectionId={activeConnectionId} onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} onRunCommand={runCb} />
         </Suspense>
-      ) : hint('没有活动连接，先从左侧主机墙连接'),
+      ) : hint('没有活动连接，先用 ⌘K 或连接管理连接主机'),
       ports: !activeConnectionId
-        ? hint('没有活动连接，先从左侧主机墙连接')
+        ? hint('没有活动连接，先用 ⌘K 或连接管理连接主机')
         : portForwardEnabled ? (
           <Suspense fallback={null}>
             <PortForwardPanel connectionId={activeConnectionId} onClose={() => setCockpitDrawer(d => ({ ...d, open: false }))} />
@@ -2737,18 +2738,32 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           )}
           <div style={{ height: 1, background: 'var(--color-border)', margin: '3px 0' }} />
           {cockpitMode ? (
-            <div
-              style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
-              onClick={() => {
-                const [connId] = contextMenu.sessionKey.split('_')
-                handleCockpitNewSession(connId)
-                hideContextMenu()
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,.1)'}
-              onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-            >
-              <PlusOutlined /> 新建会话窗口
-            </div>
+            <>
+              <div
+                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={() => {
+                  const [connId] = contextMenu.sessionKey.split('_')
+                  handleCockpitNewSession(connId)
+                  hideContextMenu()
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <PlusOutlined /> 新建会话窗口
+              </div>
+              <div
+                style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                onClick={() => {
+                  const [connId] = contextMenu.sessionKey.split('_')
+                  handleDetachConnectionToNewWindow(connId)
+                  hideContextMenu()
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,.1)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+              >
+                <ExportOutlined /> 在新窗口打开（迁移全部会话）
+              </div>
+            </>
           ) : isContextMenuOnSplitPanel() ? (
             <div
               style={{ padding: '6px 12px', cursor: 'pointer', color: 'var(--color-text)', display: 'flex', alignItems: 'center', gap: 8 }}

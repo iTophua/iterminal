@@ -514,7 +514,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
           >
             <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text)' }}>驾驶舱布局</div>
             <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', lineHeight: 1.6 }}>
-              主机墙 + 可拖动浮动终端窗口 + 底部停靠栏
+              可拖动浮动终端窗口 + 底部停靠栏，主机入口走 ⌘K 与连接管理
             </div>
           </div>
         </div>

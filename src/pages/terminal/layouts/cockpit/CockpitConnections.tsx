@@ -331,7 +331,6 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
               <span className="ck-conn-stripe" style={{ background: GROUP_COLORS[conn.group] || 'var(--ck-accent)' }} />
               <div className="ck-conn-main">
                 <div className="ck-conn-name">
-                  <span className={`ck-dot${connected ? '' : ' off'}`} style={{ width: 6, height: 6 }} />
                   {conn.name}
                 </div>
                 <div className="ck-conn-host">{conn.username}@{conn.host}:{conn.port}</div>

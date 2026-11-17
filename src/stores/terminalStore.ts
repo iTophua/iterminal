@@ -33,7 +33,7 @@ export interface SplitPane {
 
 export type DisconnectReason = 'write_failed' | 'channel_closed' | 'server_close' | 'unknown'
 
-// 布局模式：classic 经典（tab+分栏）/ cockpit 驾驶舱（主机墙+浮动窗口）
+// 布局模式：classic 经典（tab+分栏）/ cockpit 驾驶舱（浮动窗口）
 export type LayoutMode = 'classic' | 'cockpit'
 
 // 驾驶舱主题
@@ -197,15 +197,13 @@ interface TerminalState {
   cockpitTheme: CockpitThemeName
   // 驾驶舱终端字号（浮动窗口较小，独立于全局终端字号；持久化）
   cockpitFontSize: number
-  // 驾驶舱主机墙折叠状态（折叠为图标条；持久化）
-  cockpitWallCollapsed: boolean
   // 驾驶舱窗口几何（持久化，会话关闭时自动清理）
   cockpitWindowGeometry: Record<string, CockpitWindowGeometry>
   // 驾驶舱当前聚焦的会话 key（connectionId_sessionId）
   cockpitFocusKey: string | null
   // 所有连接列表（启动时预加载）
   allConnections: Connection[]
-  // 最近连接（连接成功后记录，驾驶舱主机墙与经典布局共用）
+  // 最近连接（连接成功后记录，驾驶舱 ⌘K 面板与经典布局共用）
   recentConnections: Connection[]
   // 拉取最近连接记录（连接成功 / 删除连接后调用）
   refreshRecentConnections: () => Promise<void>
@@ -276,8 +274,6 @@ interface TerminalState {
   setCockpitTheme: (theme: CockpitThemeName) => void
   // 设置驾驶舱终端字号
   setCockpitFontSize: (size: number) => void
-  // 切换驾驶舱主机墙折叠
-  setCockpitWallCollapsed: (collapsed: boolean) => void
   // 提交窗口几何（拖拽/缩放结束时调用）
   setCockpitWindowGeometry: (key: string, geo: CockpitWindowGeometry) => void
   // 设置驾驶舱聚焦会话
@@ -348,7 +344,6 @@ function loadCockpitPersist(): {
   layoutMode: LayoutMode
   cockpitTheme: CockpitThemeName
   cockpitFontSize: number
-  cockpitWallCollapsed: boolean
   geometry: Record<string, CockpitWindowGeometry>
 } | null {
   try {
@@ -364,7 +359,6 @@ function loadCockpitPersist(): {
         layoutMode: p.layoutMode,
         cockpitTheme: COCKPIT_THEMES.includes(p.cockpitTheme) ? p.cockpitTheme : 'force',
         cockpitFontSize: fontSize,
-        cockpitWallCollapsed: p.cockpitWallCollapsed === true,
         geometry: p.geometry && typeof p.geometry === 'object' ? p.geometry : {},
       }
     }
@@ -373,13 +367,12 @@ function loadCockpitPersist(): {
   return null
 }
 
-function persistCockpit(state: { layoutMode: LayoutMode; cockpitTheme: CockpitThemeName; cockpitFontSize: number; cockpitWallCollapsed: boolean; cockpitWindowGeometry: Record<string, CockpitWindowGeometry> }) {
+function persistCockpit(state: { layoutMode: LayoutMode; cockpitTheme: CockpitThemeName; cockpitFontSize: number; cockpitWindowGeometry: Record<string, CockpitWindowGeometry> }) {
   try {
     window.localStorage.setItem(COCKPIT_STORAGE_KEY, JSON.stringify({
       layoutMode: state.layoutMode,
       cockpitTheme: state.cockpitTheme,
       cockpitFontSize: state.cockpitFontSize,
-      cockpitWallCollapsed: state.cockpitWallCollapsed,
       geometry: state.cockpitWindowGeometry,
     }))
   } catch {
@@ -456,7 +449,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   layoutMode: cockpitInitial?.layoutMode ?? 'classic',
   cockpitTheme: cockpitInitial?.cockpitTheme ?? 'force',
   cockpitFontSize: cockpitInitial?.cockpitFontSize ?? 12,
-  cockpitWallCollapsed: cockpitInitial?.cockpitWallCollapsed ?? false,
   cockpitWindowGeometry: cockpitInitial?.geometry ?? {},
   cockpitFocusKey: null,
   allConnections: [],
@@ -873,11 +865,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   setCockpitFontSize: (size) => {
     const clamped = Math.max(10, Math.min(18, Math.round(size)))
     set({ cockpitFontSize: clamped })
-    persistCockpit(get())
-  },
-
-  setCockpitWallCollapsed: (collapsed) => {
-    set({ cockpitWallCollapsed: collapsed })
     persistCockpit(get())
   },
 

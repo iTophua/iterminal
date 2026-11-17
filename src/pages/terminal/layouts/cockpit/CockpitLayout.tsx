@@ -31,7 +31,6 @@ import { getAllSessions } from '../../../../utils/paneUtils'
 import { COCKPIT_THEMES, COCKPIT_THEME_LIST } from '../../../../styles/themes/cockpit-themes'
 import type { TerminalThemeColors } from '../../../../types/theme'
 import { FloatingWindow } from './FloatingWindow'
-import { HostWall } from './HostWall'
 import { SessionDock, readTerminalPreview, type DockItem } from './SessionDock'
 import { ToolDrawer, type CockpitDrawerTab } from './ToolDrawer'
 import { CommandPalette } from './CommandPalette'
@@ -71,11 +70,11 @@ export interface CockpitLayoutProps {
   drawerPanels: Partial<Record<CockpitDrawerTab, React.ReactNode>>
 }
 
-// 主机墙宽度（含左 12 + 右 8 间隙）：折叠 48 / 窄画布 232 / 常态 256
+// 主机入口统一走 ⌘K 命令面板与连接管理浮层（主机墙已移除）
 const RAIL_W = 66    // 右侧工具栏（46 宽 + 12 右缘 + 8 间隙）
 const DOCK_H = 90    // 底部停靠栏（68 高 + 12 底缘 + 10 间隙）
 
-/** 驾驶舱布局：主机墙 + 浮动终端窗口 + 底部停靠栏 + 右侧工具抽屉 + ⌘K 命令面板 */
+/** 驾驶舱布局：浮动终端窗口 + 底部停靠栏 + 右侧工具抽屉 + ⌘K 命令面板 */
 export function CockpitLayout({
   connectedConnections,
   allConnections,
@@ -114,8 +113,6 @@ export function CockpitLayout({
   const setActiveSession = useTerminalStore(s => s.setActiveSession)
   const setSettingsVisible = useTerminalStore(s => s.setSettingsVisible)
   const transferTasks = useTerminalStore(s => s.transferTasks)
-  const wallCollapsed = useTerminalStore(s => s.cockpitWallCollapsed)
-  const setWallCollapsed = useTerminalStore(s => s.setCockpitWallCollapsed)
 
   const canvasRef = useRef<HTMLDivElement>(null)
   const [canvasSize, setCanvasSize] = useState({ w: 900, h: 600 })
@@ -140,22 +137,9 @@ export function CockpitLayout({
     return () => ro.disconnect()
   }, [])
 
-  // 主机墙宽度：用户可拖拽调节（右缘把手），localStorage 持久化
-  const [wallW, setWallW] = useState(() => {
-    const saved = parseInt(localStorage.getItem('ck-wall-w') || '', 10)
-    return Number.isFinite(saved) ? Math.min(420, Math.max(200, saved)) : 256
-  })
-  const handleWallResize = useCallback((w: number, commit: boolean) => {
-    const clamped = Math.min(420, Math.max(200, w))
-    setWallW(clamped)
-    if (commit) localStorage.setItem('ck-wall-w', String(Math.round(clamped)))
-  }, [])
-
   const bounds = useMemo(
     () => focusMode
       ? { minX: 12, minY: 8, maxX: Math.max(340, canvasSize.w - 20), maxY: Math.max(216, canvasSize.h - 20) }
-      // minX 不再排除主机墙：窗口可拖到最左侧覆盖主机墙（窗口 zIndex 恒高于主机墙，
-      // 需要大画布空间时把窗口盖过去即可）
       : { minX: 12, minY: 8, maxX: Math.max(340, canvasSize.w - RAIL_W), maxY: Math.max(216, canvasSize.h - DOCK_H) },
     [canvasSize, focusMode]
   )
@@ -354,7 +338,7 @@ export function CockpitLayout({
         <div className="ck-top-right">
           <button
             className={`ck-icon-btn${focusMode ? ' on' : ''}`}
-            title={focusMode ? '退出专注模式' : '专注模式（隐藏主机墙与停靠栏）'}
+            title={focusMode ? '退出专注模式' : '专注模式（隐藏停靠栏与工具栏）'}
             onClick={() => setFocusMode(v => !v)}
           >
             {focusMode ? <ShrinkOutlined style={{ fontSize: 14 }} /> : <ExpandOutlined style={{ fontSize: 14 }} />}
@@ -395,31 +379,13 @@ export function CockpitLayout({
         </div>
       </div>
 
-      {/* 画布（dock/预览卡经 --ck-wall-w 联动主机墙宽度） */}
-      <div
-        className={`ck-canvas${wallCollapsed ? ' ck-wall-folded' : ''}`}
-        ref={canvasRef}
-        style={{ '--ck-wall-w': `${wallCollapsed ? 48 : wallW}px` } as React.CSSProperties}
-      >
-        {!focusMode && (
-          <HostWall
-            connectedConnections={connectedConnections}
-            allConnections={allConnections}
-            onHostClick={handleHostClick}
-            onNewSession={onNewSession}
-            onAddHost={openManage}
-            collapsed={wallCollapsed}
-            onToggleCollapse={setWallCollapsed}
-            onDetachToNewWindow={onDetachToNewWindow}
-            onWallResize={handleWallResize}
-          />
-        )}
-
+      {/* 画布 */}
+      <div className="ck-canvas" ref={canvasRef}>
         {sessions.length === 0 && (
           <div className="ck-empty">
             <b>驾驶舱</b>
-            <span>点击左侧主机墙的卡片开始连接，每个会话都会变成一个可自由拖动的浮动窗口。</span>
-            <span>按 <span className="ck-kbd">⌘K</span> 打开命令面板，任何操作都能搜到。</span>
+            <span>按 <span className="ck-kbd">⌘K</span> 搜索主机连接，或点击右上 <b>连接管理</b> 选择主机。</span>
+            <span>每个会话都会变成一个可自由拖动的浮动窗口。</span>
           </div>
         )}
 
@@ -453,7 +419,7 @@ export function CockpitLayout({
               themeColors={currentThemeColors}
               bounds={bounds}
               onFocus={() => {
-                // 已聚焦的窗口也要 focus 终端：键盘焦点可能已被主机墙搜索框等抢走
+                // 已聚焦的窗口也要 focus 终端：键盘焦点可能已被停靠栏/搜索框等抢走
                 if (key !== focusKey) focusSession(key)
                 else terminalInstances.current[key]?.focus()
               }}

@@ -91,9 +91,9 @@ describe('CockpitLayout', () => {
     window.localStorage.clear()
   })
 
-  it('无连接时渲染主机墙与空状态提示', () => {
+  it('无连接时渲染空状态提示', () => {
     setup([], [{ id: 'a', name: 'Web', host: '1.2.3.4', port: 22, username: 'root', group: '', tags: [], status: 'offline' }])
-    expect(screen.getByText('主机')).toBeInTheDocument()
+    expect(screen.getByText('驾驶舱')).toBeInTheDocument()
     expect(screen.getByText(/浮动窗口/)).toBeInTheDocument()
   })
 
@@ -136,28 +136,14 @@ describe('CockpitLayout', () => {
     expect(screen.getByText(/连接 Web 服务器/)).toBeInTheDocument()
   })
 
-  it('主机墙可折叠为图标条并持久化状态', () => {
-    setup([], [{ id: 'a', name: 'Web 服务器', host: '1.2.3.4', port: 22, username: 'root', group: '', tags: [], status: 'offline' }])
-    fireEvent.click(screen.getByTitle('折叠主机墙'))
-    const collapsed = document.querySelector('.ck-wall-collapsed')
-    expect(collapsed).toBeInTheDocument()
-    // 图标条仍有主机入口
-    expect(screen.getByTitle(/Web 服务器/)).toBeInTheDocument()
-    // 状态已写入 store（持久化由 setter 负责）
-    expect(useTerminalStore.getState().cockpitWallCollapsed).toBe(true)
-    fireEvent.click(screen.getByTitle('展开主机墙'))
-    expect(document.querySelector('.ck-wall-collapsed')).toBeNull()
-    expect(useTerminalStore.getState().cockpitWallCollapsed).toBe(false)
-  })
-
-  it('专注模式隐藏主机墙与停靠栏', () => {
+  it('专注模式隐藏停靠栏与工具栏', () => {
     const conn = makeConn('web', 'Web 服务器')
     setup([conn] as any)
-    expect(document.querySelector('.ck-wall')).toBeInTheDocument()
     expect(document.querySelector('.ck-dock')).toBeInTheDocument()
+    expect(document.querySelector('.ck-rail')).toBeInTheDocument()
     fireEvent.click(screen.getByTitle(/专注模式/))
-    expect(document.querySelector('.ck-wall')).toBeNull()
     expect(document.querySelector('.ck-dock')).toBeNull()
+    expect(document.querySelector('.ck-rail')).toBeNull()
     // 窗口仍在
     expect(document.querySelectorAll('.ck-win').length).toBe(1)
   })

@@ -43,7 +43,7 @@ function termColors(base: {
 }
 
 /**
- * 驾驶舱布局专属主题：只作用于驾驶舱 chrome（主机墙/窗口/停靠栏/抽屉），
+ * 驾驶舱布局专属主题：只作用于驾驶舱 chrome（窗口/停靠栏/抽屉），
  * 终端区配色继续走全局终端主题。辉光/焦点色在 CSS 里用 color-mix 从 accent 派生。
  */
 export const COCKPIT_THEMES: Record<CockpitThemeName, CockpitTheme> = {

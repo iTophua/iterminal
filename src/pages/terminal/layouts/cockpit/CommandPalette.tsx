@@ -8,7 +8,7 @@ import {
   ReloadOutlined,
   SearchOutlined,
 } from '@ant-design/icons'
-import type { ConnectedConnection, Connection } from '../../../../stores/terminalStore'
+import { useTerminalStore, type ConnectedConnection, type Connection } from '../../../../stores/terminalStore'
 
 export interface PaletteAction {
   key: string
@@ -80,6 +80,7 @@ export function CommandPalette({
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const recentConnections = useTerminalStore(s => s.recentConnections)
 
   useEffect(() => {
     if (visible) {
@@ -92,7 +93,15 @@ export function CommandPalette({
   const actions = useMemo<PaletteAction[]>(() => {
     const list: PaletteAction[] = []
 
-    for (const conn of allConnections) {
+    // 主机排序：已连接(活跃) > 按最近使用时间 > 其余保持原顺序（稳定排序）
+    const recentIndex = new Map(recentConnections.map((r, i) => [r.id, i]))
+    const hostRank = (conn: Connection) =>
+      connectedConnections.some(c => c.connectionId === conn.id)
+        ? -1
+        : recentIndex.get(conn.id) ?? Number.MAX_SAFE_INTEGER
+    const ordered = [...allConnections].sort((a, b) => hostRank(a) - hostRank(b))
+
+    for (const conn of ordered) {
       const connected = connectedConnections.some(c => c.connectionId === conn.id)
       list.push({
         key: `host-${conn.id}`,
@@ -178,14 +187,14 @@ export function CommandPalette({
       { key: 'goto-connections', section: '视图', label: '打开连接管理', icon: <PlusOutlined />, run: onOpenConnections },
     )
     return list
-  }, [allConnections, connectedConnections, historyCommands, onJumpSession, onConnectHost, onRunCommand, onToggleDrawer, onOpenConnections, broadcastEnabled, onToggleBroadcast, onDetachToNewWindow, snippets])
+  }, [allConnections, connectedConnections, recentConnections, historyCommands, onJumpSession, onConnectHost, onRunCommand, onToggleDrawer, onOpenConnections, broadcastEnabled, onToggleBroadcast, onDetachToNewWindow, snippets])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) {
       // 无输入时优先：主机 > 会话 > 命令 > 视图
       const order = { '主机': 0, '会话': 1, '命令': 2, '片段': 3, '视图': 4 } as const
-      return [...actions].sort((a, b) => order[a.section] - order[b.section]).slice(0, 12)
+      return [...actions].sort((a, b) => order[a.section] - order[b.section]).slice(0, 40)
     }
     // 相关性分级：主机名称/IP 直接命中(0) > 其他包含命中(1) > 子序列模糊命中(2)
     const rank = (a: PaletteAction): number => {
@@ -198,7 +207,7 @@ export function CommandPalette({
       .filter(a => fuzzyMatch(query, `${a.label} ${a.hint ?? ''} ${a.keywords ?? ''}`))
       .map(a => ({ a, r: rank(a) }))
       .sort((x, y) => x.r - y.r)
-      .slice(0, 12)
+      .slice(0, 40)
       .map(x => x.a)
   }, [actions, query])
 
@@ -254,6 +263,7 @@ export function CommandPalette({
           {filtered.map((a, i) => (
             <div
               key={a.key}
+              ref={el => { if (el && i === selectedIndex) el.scrollIntoView?.({ block: 'nearest' }) }}
               className={`ck-palette-item${i === selectedIndex ? ' sel' : ''}`}
               onMouseEnter={() => setSelectedIndex(i)}
               onClick={runSelected}
