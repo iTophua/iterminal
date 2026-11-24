@@ -118,6 +118,31 @@ export function isPromptLine(line: string): boolean {
   return false
 }
 
+// 行首提示符 → 命令输入起点的识别模式，具体格式在前。
+// 允许 `(venv) ` 这类前置环境名；提示符后的一个空格计入提示符。
+const PROMPT_ENV_PREFIX = String.raw`(?:\([^\)\n]{1,60}\)\s*)?`
+const PROMPT_END_PATTERNS: RegExp[] = [
+  // [user@host ~]$  /  [root@host /var/log]#
+  new RegExp(String.raw`^${PROMPT_ENV_PREFIX}\[[^\]\n]{1,100}\][\$#%>]\s?`),
+  // user@host:~/path$
+  new RegExp(String.raw`^${PROMPT_ENV_PREFIX}[\w.\-@]+@[\w.\-]+:[^\n\$#%>]*[\$#%>]\s?`),
+  // ~/path$  /  host%  /  裸 $ # >
+  new RegExp(String.raw`^${PROMPT_ENV_PREFIX}[~\w\-./]*[\$#%>]\s?`),
+  /^[❯➜›»]\s?/,
+]
+
+/**
+ * 识别行首的提示符，返回命令输入在该行文本中的起始下标；不是常见提示符格式时返回 null。
+ * 传入的应是「行首到光标」的纯文本。命令提示引擎在输入起点丢失时用它兜底重新定位。
+ */
+export function matchPromptEnd(line: string): number | null {
+  for (const pattern of PROMPT_END_PATTERNS) {
+    const m = pattern.exec(line)
+    if (m) return m[0].length
+  }
+  return null
+}
+
 /**
  * 从缓冲区行中提取纯文本
  */

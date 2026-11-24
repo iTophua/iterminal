@@ -2,6 +2,7 @@ import { Modal, Select, Slider, Typography, Button, Menu, Spin, Radio, Divider, 
 import { useTerminalStore, type TerminalSettings, type ShortcutSettings, formatShortcutForDisplay } from '../stores/terminalStore'
 import { useThemeStore } from '../stores/themeStore'
 import { useLicenseStore } from '../stores/licenseStore'
+import { useHistoryStore } from '../stores/historyStore'
 
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -47,6 +48,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   const updateTerminalSettings = useTerminalStore(state => state.updateTerminalSettings)
   const shortcutSettings = useTerminalStore(state => state.shortcutSettings)
   const updateShortcutSettings = useTerminalStore(state => state.updateShortcutSettings)
+  const importShellHistory = useHistoryStore(state => state.importShellHistory)
+  const clearImportedHistory = useHistoryStore(state => state.clearImportedHistory)
   const resetShortcutSettings = useTerminalStore(state => state.resetShortcutSettings)
   const availableFonts = useTerminalStore(state => state.availableFonts)
   const fontsLoading = useTerminalStore(state => state.fontsLoading)
@@ -325,8 +328,23 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     setHasTerminalChanges(true)
   }
 
+  const handleImportServerHistoryChange = (checked: boolean) => {
+    setTempSettings(prev => ({ ...prev, importServerHistory: checked }))
+    setHasTerminalChanges(true)
+  }
+
   const handleSave = () => {
+    const wasEnabled = terminalSettings.importServerHistory
     updateTerminalSettings(tempSettings)
+    if (wasEnabled && !tempSettings.importServerHistory) {
+      // 关掉：已导入的立即作废；重新打开后下次连接再导入
+      clearImportedHistory()
+    } else if (!wasEnabled && tempSettings.importServerHistory) {
+      // 打开：已连接的服务器现在就导入
+      for (const conn of useTerminalStore.getState().connectedConnections) {
+        void importShellHistory(conn.connectionId)
+      }
+    }
     onClose()
   }
 
@@ -391,6 +409,19 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
             onChange={handleCursorBlinkChange}
           />
         </div>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: 'var(--color-text-secondary)' }}>命令提示：导入服务器历史</Text>
+          <Switch
+            checked={tempSettings.importServerHistory}
+            onChange={handleImportServerHistoryChange}
+          />
+        </div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+          连接时读取服务器上的 shell 历史（~/.bash_history 等）作为命令提示的候选，不写入本地历史
+        </Text>
       </div>
 
       <div style={{ marginBottom: 20 }}>

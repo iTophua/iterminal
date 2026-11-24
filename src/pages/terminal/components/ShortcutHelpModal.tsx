@@ -94,7 +94,8 @@ export function ShortcutHelpModal({ visible, onClose }: ShortcutHelpModalProps) 
           💡 提示
         </div>
         <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: 'var(--color-text-secondary)', lineHeight: 1.8 }}>
-          <li>在终端中输入 <kbd style={{ padding: '1px 4px', background: 'var(--color-bg-elevated)', borderRadius: 3 }}>Tab</kbd> 可触发命令历史自动补全</li>
+          <li>输入命令时会出现灰字建议：<kbd style={{ padding: '1px 4px', background: 'var(--color-bg-elevated)', borderRadius: 3 }}>→</kbd> 接受、<kbd style={{ padding: '1px 4px', background: 'var(--color-bg-elevated)', borderRadius: 3 }}>Esc</kbd> 隐藏，多条候选可用上面的「下一条 / 上一条建议」切换</li>
+          <li><kbd style={{ padding: '1px 4px', background: 'var(--color-bg-elevated)', borderRadius: 3 }}>Tab</kbd> 仍是服务器上 shell 自带的补全，补全后会接着按补全后的命令给建议</li>
           <li>连接断开后按 <kbd style={{ padding: '1px 4px', background: 'var(--color-bg-elevated)', borderRadius: 3 }}>Enter</kbd> 可快速重连</li>
           <li>拖拽连接 Tab 到窗口边缘 60px 区域可创建新窗口</li>
         </ul>

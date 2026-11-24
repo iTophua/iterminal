@@ -16,6 +16,54 @@ function computeGhostColor(foreground: string): string {
   return foreground
 }
 
+/** 一次命令提示的绘制参数 */
+export interface GhostPaint {
+  /** 建议各行文本，已按终端列宽折好 */
+  lines: string[]
+  /** 首行的起始列 */
+  startCol: number
+  /** 首行左上角相对定位容器的位置（CSS 像素） */
+  top: number
+  left: number
+  cellWidth: number
+  cellHeight: number
+}
+
+/**
+ * 把命令提示画到浮层元素上。
+ *
+ * 首行从光标处（startCol 列）起排，折行后的后续各行要回到终端第 0 列：
+ * 它们绝对定位在首行下方、相对浮层向左移 startCol 格。
+ * 文本和偏移都没变时不重建子节点——每次回显都会走到这里。
+ */
+export function paintGhostText(el: HTMLDivElement, paint: GhostPaint): void {
+  const { lines, startCol, top, left, cellWidth, cellHeight } = paint
+  el.style.top = `${top}px`
+  el.style.left = `${left}px`
+  el.style.lineHeight = `${cellHeight}px`
+
+  const signature = `${cellWidth}|${cellHeight}|${startCol}|${lines.join('\u0001')}`
+  if (el.dataset.ghost !== signature) {
+    el.dataset.ghost = signature
+    el.replaceChildren(...lines.map((text, i) => {
+      const line = document.createElement('div')
+      line.textContent = text
+      if (i > 0 && startCol > 0) {
+        line.style.position = 'absolute'
+        line.style.top = `${i * cellHeight}px`
+        line.style.left = `${-startCol * cellWidth}px`
+      }
+      return line
+    }))
+  }
+  el.style.display = 'block'
+}
+
+/** 隐藏命令提示浮层（已隐藏时不碰 DOM） */
+export function hideGhostText(el: HTMLDivElement | null | undefined): void {
+  if (el && el.style.display !== 'none') el.style.display = 'none'
+}
+
 export const GhostTextOverlay = React.forwardRef<HTMLDivElement, {
   sessionKey: string
   fontFamily?: string

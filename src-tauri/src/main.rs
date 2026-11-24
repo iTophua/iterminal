@@ -41,6 +41,7 @@ fn main() {
             iterminal::commands::sftp::chmod_file,
             iterminal::commands::sftp::file_exists,
             iterminal::commands::sftp::read_file_content,
+            iterminal::commands::sftp::read_shell_history,
             iterminal::commands::sftp::write_file_content,
             iterminal::commands::sftp::upload_file,
             iterminal::commands::sftp::upload_file_sudo,

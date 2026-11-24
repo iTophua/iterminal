@@ -59,6 +59,12 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
+// xterm 加载时会取 canvas 2d 上下文算对比度；jsdom 未实现，会往 stderr 报 Not implemented
+Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
+  value: () => null,
+  configurable: true,
+})
+
 afterEach(() => {
   vi.clearAllMocks()
 })

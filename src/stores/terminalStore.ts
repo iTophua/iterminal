@@ -103,6 +103,8 @@ export interface TerminalSettings {
   copyOnSelect: boolean  // 选中即复制
   cursorStyle: 'block' | 'underline' | 'bar'
   cursorBlink: boolean
+  // 连接时导入服务器上的 shell 历史（~/.bash_history 等）作为命令提示候选
+  importServerHistory: boolean
 }
 
 // 默认终端设置
@@ -113,6 +115,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   copyOnSelect: false,
   cursorStyle: 'block',
   cursorBlink: true,
+  importServerHistory: true,
 }
 
 export interface ShortcutSettings {

@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { CommandRecord } from '../types/history'
-import { loadCommandHistory, saveCommandToHistory, clearCommandHistory, matchHistory, sortHistory } from '../services/historyService'
+import { loadCommandHistory, saveCommandToHistory, clearCommandHistory, matchHistory, sortHistory, readShellHistory } from '../services/historyService'
 import { shouldSaveCommand } from '../constants/commandBlacklist'
+import { buildImportedHistory } from '../utils/shellHistory'
 
 interface HistoryState {
   caches: Map<string, CommandRecord[]>
@@ -10,10 +11,18 @@ interface HistoryState {
   selectedIndex: number
   currentPrefix: string
   activeConnectionId: string | null
+  /** 导入的服务器 shell 历史（每连接一份）：只作命令提示候选，不进历史弹窗、不落库 */
+  importedHistory: Map<string, CommandRecord[]>
+  /** 已尝试过导入的连接：本次运行内每个连接只导入一次 */
+  importAttempts: Map<string, boolean>
 
   loadHistory: (connectionId: string) => Promise<void>
   addCommand: (connectionId: string, text: string) => Promise<void>
   clearConnectionHistory: (connectionId: string) => void
+  /** 读取服务器上的 shell 历史，导入为该连接的命令提示候选 */
+  importShellHistory: (connectionId: string) => Promise<void>
+  /** 丢弃全部导入的历史，并允许下次连接重新导入 */
+  clearImportedHistory: () => void
   match: (connectionId: string, prefix: string) => void
   selectPrev: () => number
   selectNext: () => number
@@ -29,6 +38,8 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   selectedIndex: 0,
   currentPrefix: '',
   activeConnectionId: null,
+  importedHistory: new Map(),
+  importAttempts: new Map(),
 
   loadHistory: async (connectionId: string) => {
     const { caches, loading } = get()
@@ -165,4 +176,23 @@ export const useHistoryStore = create<HistoryState>((set, get) => ({
   setActiveConnection: (connectionId: string | null) => {
     set({ activeConnectionId: connectionId, suggestions: [], selectedIndex: 0, currentPrefix: '' })
   },
+
+  importShellHistory: async (connectionId) => {
+    if (get().importAttempts.get(connectionId)) return
+    set(state => ({ importAttempts: new Map(state.importAttempts).set(connectionId, true) }))
+
+    try {
+      const files = await readShellHistory(connectionId)
+      const own = (get().caches.get(connectionId) ?? []).map(record => record.text)
+      const imported = buildImportedHistory(files, own, Date.now())
+      if (imported.length) {
+        set(state => ({ importedHistory: new Map(state.importedHistory).set(connectionId, imported) }))
+      }
+    } catch (error) {
+      // 服务器没开 SFTP、历史文件不可读等都属于正常情况，命令提示退回只用本应用的历史
+      console.debug('[HistoryStore] Failed to import shell history:', error)
+    }
+  },
+
+  clearImportedHistory: () => set({ importedHistory: new Map(), importAttempts: new Map() }),
 }))

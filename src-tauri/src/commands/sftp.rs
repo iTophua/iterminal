@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tauri::Emitter;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::SeekFrom;
 use tokio::sync::RwLock;
 
 fn validate_path(path: &str) -> Result<String, String> {
@@ -569,6 +570,69 @@ pub async fn read_file_content(
         truncated,
         encoding,
     })
+}
+
+/// 常见 shell 的历史文件（相对用户 home）
+const SHELL_HISTORY_FILES: [&str; 3] = [".zsh_history", ".bash_history", ".sh_history"];
+/// 单个历史文件最多读取的字节数（只读末尾）
+const MAX_HISTORY_BYTES: u64 = 512 * 1024;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShellHistoryFile {
+    /// 文件名，如 .bash_history
+    pub name: String,
+    /// 修改时间（Unix 秒），取不到为 None
+    pub mtime: Option<u64>,
+    /// 文件末尾的文本（非法 UTF-8 按有损转换）
+    pub content: String,
+    /// 文件超过读取上限，只取了末尾
+    pub truncated: bool,
+}
+
+/// 读取服务器上的 shell 历史文件，供命令提示导入候选。
+/// 历史文件按时间顺序追加、越靠后越新，所以超限时只读末尾。
+/// 不存在的文件直接跳过（可能返回空列表）；SFTP 不可用等错误原样返回。
+#[tauri::command]
+pub async fn read_shell_history(connection_id: String) -> Result<Vec<ShellHistoryFile>, String> {
+    let sftp = get_sftp_session(&connection_id).await?;
+    let mut files = Vec::new();
+
+    for name in SHELL_HISTORY_FILES {
+        let path = format!("~/{name}");
+        let Ok(path) = validate_path(&path) else {
+            continue;
+        };
+        let Ok(metadata) = sftp.metadata(&path).await else {
+            continue;
+        };
+        let size = metadata.size.unwrap_or(0);
+        let start = size.saturating_sub(MAX_HISTORY_BYTES);
+        let Ok(mut file) = sftp.open(&path).await else {
+            continue;
+        };
+        if start > 0 && file.seek(SeekFrom::Start(start)).await.is_err() {
+            continue;
+        }
+
+        let mut buffer = Vec::new();
+        let mut chunk = vec![0u8; 32 * 1024];
+        while buffer.len() as u64 <= MAX_HISTORY_BYTES {
+            let n = match file.read(&mut chunk).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            buffer.extend_from_slice(&chunk[..n]);
+        }
+
+        files.push(ShellHistoryFile {
+            name: name.to_string(),
+            mtime: metadata.mtime.map(|t| t as u64),
+            content: String::from_utf8_lossy(&buffer).into_owned(),
+            truncated: start > 0,
+        });
+    }
+
+    Ok(files)
 }
 
 /// 按字符边界安全截断（避免按字节切在 UTF-8 多字节字符中间导致 panic）

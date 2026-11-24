@@ -71,6 +71,9 @@ import { createCommandTracker, CommandTracker } from '../utils/shellOutputParser
 import { matchShortcut } from '../utils/shortcutUtils'
 import { applyXtermImePatch } from '../utils/xtermImePatch'
 import { getXtermCellMetrics, isAlternateBuffer } from '../utils/xtermMetrics'
+import { GhostTextEngine, layoutGhostLines } from '../utils/ghostTextEngine'
+import { paintGhostText, hideGhostText as hideOverlayElement } from '../components/GhostTextOverlay'
+import { findSuggestions } from '../services/historyService'
 import type { Connection } from '../types/shared'
 
 interface TerminalProps {
@@ -178,213 +181,160 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   const connectedConnectionsRef = useRef(connectedConnections)
   // 广播状态 ref：onData 闭包里读取，避免闭包持有旧值
   const broadcastEnabledRef = useRef(broadcastEnabled)
-  const currentInputRef = useRef<{ [key: string]: string }>({})
-  const ghostTextRef = useRef<{ [key: string]: { input: string, suggestion: string, allSuggestions: string[], currentIndex: number } }>({})
-  const ghostTextOverlayRef = useRef<{ [key: string]: { top: number, left: number, text: string } }>({})
+  // 命令提示（ghost text）：每个会话一个引擎，以屏幕为准追踪命令行（见 utils/ghostTextEngine.ts）
+  const ghostEnginesRef = useRef<{ [key: string]: GhostTextEngine }>({})
   const ghostTextElementsRef = useRef<{ [key: string]: HTMLDivElement | null }>({})
-  const ghostTextCellHeightRef = useRef<{ [key: string]: number }>({})
-  const ghostTextStartXRef = useRef<{ [key: string]: number }>({})
-  const ghostTextLineRef = useRef<{ [key: string]: number }>({})
   // 缓存终端单元格尺寸和偏移，避免每次按键都调用 getBoundingClientRect（触发强制重排）
   const cellMetricsCacheRef = useRef<{ [key: string]: { cellWidth: number; cellHeight: number; offsetX: number; screenOffsetTop: number; cols: number; rows: number } }>({})
   const commandTrackersRef = useRef<{ [key: string]: CommandTracker }>({})
   const initializingTimeoutRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({})
   const xtermDomRefs = useRef<{ [key: string]: { screen: HTMLElement | null } }>({})
-  // ghost text 按帧合并：快速输入时多次 onData 在同一帧内只算一次 ghost text，
-  // 避免每个按键都触发同步 DOM 操作导致主线程阻塞、WKWebView 丢弃按键事件。
-  // pendingInputRef 记录最新待处理的 input；rafIdRef 保证一帧只调度一次 rAF。
-  const ghostPendingInputRef = useRef<{ [key: string]: { connId: string; input: string } }>({})
+  // ghost text 按帧合并：同一帧内多次触发（连续按键、多个回显块）只同步/绘制一次
   const ghostRafIdRef = useRef<{ [key: string]: number | null }>({})
   const messageRef = useRef(message)
   useEffect(() => { messageRef.current = message }, [message])
   
-  const updateGhostTextOverlay = useCallback((key: string, top: number, left: number, text: string, cellHeight?: number) => {
-    const el = ghostTextElementsRef.current[key]
-    if (el) {
-      el.style.top = top + 'px'
-      el.style.left = left + 'px'
-      el.textContent = text
-      el.style.display = text ? 'block' : 'none'
-      if (cellHeight) {
-        el.style.lineHeight = cellHeight + 'px'
-      }
-    }
-    ghostTextOverlayRef.current[key] = { top, left, text }
+  /** 隐藏命令提示浮层 */
+  const hideGhostText = useCallback((key: string) => {
+    hideOverlayElement(ghostTextElementsRef.current[key])
   }, [])
-  
-const matchAndUpdateGhostText = useCallback((key: string, connId: string, input: string, suggestionIndex: number = 0) => {
-    if (!input) {
-      ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
-      updateGhostTextOverlay(key, 0, 0, '')
+
+  /**
+   * 把引擎的 view 画到浮层上。
+   * 建议接近行尾时按终端列宽折行：浮层定位在光标处，首行从光标列起排，
+   * 后续各行相对浮层左移到终端第 0 列；超出终端底部的部分已被截掉。
+   */
+  const renderGhostText = useCallback((key: string) => {
+    const view = ghostEnginesRef.current[key]?.view
+    const el = ghostTextElementsRef.current[key]
+    if (!el) return
+    const term = terminalInstances.current[key]
+    const container = terminalRefs.current[key]
+    const xtermScreen = xtermDomRefs.current[key]?.screen
+    if (!view || !term || !container || !term.element || !xtermScreen) {
+      hideGhostText(key)
       return
     }
 
-    const { caches } = useHistoryStore.getState()
-    const cache = caches.get(connId) || []
+    try {
+      const lines = layoutGhostLines(view.text, view.col, term.cols, term.rows - view.row, view.endCol)
+      if (!lines.length) {
+        hideGhostText(key)
+        return
+      }
 
-    if (cache.length === 0) {
-      ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
-      updateGhostTextOverlay(key, 0, 0, '')
-      return
-    }
+      // 使用缓存的单元格尺寸，仅在首次测量或尺寸变化时重新计算
+      // 避免每次按键都调用 getBoundingClientRect（强制同步重排）
+      const cached = cellMetricsCacheRef.current[key]
+      let cellWidth: number
+      let cellHeight: number
+      let offsetX: number
+      let screenOffsetTop: number
 
-    const normalizedInput = input.toLowerCase().replace(/\s+/g, ' ')
-    const allMatches = cache.filter(cmd => {
-      const normalizedCmd = cmd.text.toLowerCase().replace(/\s+/g, ' ')
-      return normalizedCmd.startsWith(normalizedInput) && normalizedCmd.length > normalizedInput.length
-    }).slice(0, 10)
+      if (cached && cached.cols === term.cols && cached.rows === term.rows) {
+        cellWidth = cached.cellWidth
+        cellHeight = cached.cellHeight
+        offsetX = cached.offsetX
+        screenOffsetTop = cached.screenOffsetTop
+      } else {
+        // offsetX / screenOffsetTop 需要容器坐标系换算；screenRect 同时复用给 fallback 的尺寸测量，
+        // 精确值成功时只产生这一次 getBoundingClientRect 调用。
+        const screenRect = xtermScreen.getBoundingClientRect()
+        const containerRect = container.getBoundingClientRect()
+        offsetX = screenRect.left - containerRect.left
+        screenOffsetTop = screenRect.top - containerRect.top
 
-    if (allMatches.length > 0) {
-      const safeIndex = Math.min(suggestionIndex, allMatches.length - 1)
-      const match = allMatches[safeIndex]
-      const normalizedMatch = match.text.toLowerCase().replace(/\s+/g, ' ')
-      const remainingPart = normalizedMatch.slice(normalizedInput.length)
-      const suggestion = remainingPart
-      const allSuggestions = allMatches.map(m => {
-        const nm = m.text.toLowerCase().replace(/\s+/g, ' ')
-        return nm.slice(normalizedInput.length)
-      })
-      ghostTextRef.current[key] = { input, suggestion, allSuggestions, currentIndex: safeIndex }
-
-      const term = terminalInstances.current[key]
-      const container = terminalRefs.current[key]
-
-      if (term && container && term.element) {
-        try {
-          // 备用屏（vi/nano/less/tmux/man/top 等全屏程序）下不显示命令提示
-          if (isAlternateBuffer(term)) {
-            updateGhostTextOverlay(key, 0, 0, '')
-            return
-          }
-
-          const buffer = term.buffer.active
-          const cursorY = buffer.cursorY
-
-          const domCache = xtermDomRefs.current[key]
-          const xtermScreen = domCache?.screen
-
-          if (!xtermScreen) {
-            updateGhostTextOverlay(key, 0, 0, '')
-            return
-          }
-
-          // 使用缓存的单元格尺寸，仅在首次测量或尺寸变化时重新计算
-          // 避免每次按键都调用 getBoundingClientRect（强制同步重排）
-          const cached = cellMetricsCacheRef.current[key]
-          let actualCellWidth: number
-          let actualCellHeight: number
-          let offsetX: number
-          let screenOffsetTop: number
-
-          if (cached && cached.cols === term.cols && cached.rows === term.rows) {
-            actualCellWidth = cached.cellWidth
-            actualCellHeight = cached.cellHeight
-            offsetX = cached.offsetX
-            screenOffsetTop = cached.screenOffsetTop
+        // 优先用 xterm 内部 _renderService.dimensions 的 CSS 像素精确值（与 FitAddon 同源），
+        // 替代旧的 screenRect.width / cols 近似——后者会把滚动条/末端留白算进宽度，
+        // 导致 cellWidth 偏大、ghost 浮层随输入长度向右漂移（用户反馈"右偏半个字符"）。
+        const precise = getXtermCellMetrics(term, xtermScreen)
+        if (precise) {
+          cellWidth = precise.cellWidth
+          cellHeight = precise.cellHeight
+        } else {
+          const firstRow = xtermScreen.querySelector('.xterm-row')
+          if (firstRow) {
+            cellHeight = (firstRow as HTMLElement).getBoundingClientRect().height
           } else {
-            // offsetX / screenOffsetTop 需要容器坐标系换算；screenRect 同时复用给 fallback 的尺寸测量，
-            // 精确值成功时只产生这一次 getBoundingClientRect 调用。
-            const screenRect = xtermScreen.getBoundingClientRect()
-            const containerRect = container.getBoundingClientRect()
-            offsetX = screenRect.left - containerRect.left
-            screenOffsetTop = screenRect.top - containerRect.top
-
-            // 优先用 xterm 内部 _renderService.dimensions 的 CSS 像素精确值（与 FitAddon 同源），
-            // 替代旧的 screenRect.width / cols 近似——后者会把滚动条/末端留白算进宽度，
-            // 导致 cellWidth 偏大、ghost 浮层随输入长度向右漂移（用户反馈"右偏半个字符"）。
-            const precise = getXtermCellMetrics(term, xtermScreen)
-            if (precise) {
-              actualCellWidth = precise.cellWidth
-              actualCellHeight = precise.cellHeight
-            } else {
-              const firstRow = xtermScreen.querySelector('.xterm-row')
-              if (firstRow) {
-                actualCellHeight = (firstRow as HTMLElement).getBoundingClientRect().height
-              } else {
-                actualCellHeight = screenRect.height / (term.rows || 24)
-              }
-              actualCellWidth = screenRect.width / (term.cols || 80)
-            }
-
-            cellMetricsCacheRef.current[key] = {
-              cellWidth: actualCellWidth,
-              cellHeight: actualCellHeight,
-              offsetX,
-              screenOffsetTop,
-              cols: term.cols,
-              rows: term.rows,
-            }
+            cellHeight = screenRect.height / (term.rows || 24)
           }
+          cellWidth = screenRect.width / (term.cols || 80)
+        }
 
-          ghostTextCellHeightRef.current[key] = actualCellHeight
-
-          const startX = ghostTextStartXRef.current[key] ?? buffer.cursorX
-
-          const ghostX = startX + input.length
-
-          updateGhostTextOverlay(
-            key,
-            screenOffsetTop + cursorY * actualCellHeight,
-            offsetX + ghostX * actualCellWidth,
-            suggestion,
-            actualCellHeight
-          )
-        } catch {
-          updateGhostTextOverlay(key, 0, 0, '')
+        cellMetricsCacheRef.current[key] = {
+          cellWidth,
+          cellHeight,
+          offsetX,
+          screenOffsetTop,
+          cols: term.cols,
+          rows: term.rows,
         }
       }
-    } else {
-      ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
-      updateGhostTextOverlay(key, 0, 0, '')
-    }
-  }, [updateGhostTextOverlay])
-  
-  const clearGhostText = useCallback((key: string) => {
-    ghostTextRef.current[key] = { input: '', suggestion: '', allSuggestions: [], currentIndex: 0 }
-    delete ghostTextStartXRef.current[key]
-    delete ghostTextLineRef.current[key]
-    delete cellMetricsCacheRef.current[key]
-    // 取消待处理的 ghost 更新，避免清空后又被 rAF 回调重新显示
-    delete ghostPendingInputRef.current[key]
-    const rafId = ghostRafIdRef.current[key]
-    if (rafId !== null && rafId !== undefined) {
-      cancelAnimationFrame(rafId)
-      delete ghostRafIdRef.current[key]
-    }
-    updateGhostTextOverlay(key, 0, 0, '')
-  }, [updateGhostTextOverlay])
 
-  // 按帧合并 ghost text 更新：同一帧内多次调用只保留最新 input，rAF 回调里算一次。
-  // 这样快速输入时每帧最多触发一次 matchAndUpdateGhostText（含 DOM 操作），
-  // 避免每个按键都同步重排导致 WKWebView 丢弃后续 keydown 事件。
-  const scheduleGhostUpdate = useCallback((key: string, connId: string, input: string) => {
-    ghostPendingInputRef.current[key] = { connId, input }
-    if (ghostRafIdRef.current[key] !== null && ghostRafIdRef.current[key] !== undefined) {
-      return // 已有 rAF 待执行，最新 input 已记录，回调会读到
+      paintGhostText(el, {
+        lines,
+        startCol: view.col,
+        top: screenOffsetTop + view.row * cellHeight,
+        left: offsetX + view.col * cellWidth,
+        cellWidth,
+        cellHeight,
+      })
+    } catch {
+      hideGhostText(key)
     }
+  }, [hideGhostText])
+
+  /**
+   * 同步并重绘提示，按帧合并：同一帧内多次触发（连续按键、多个回显块）只做一次。
+   * 引擎的读屏和候选匹配都在这里执行；onData 的按键路径只做字符串运算、不碰 DOM，
+   * 避免同步重排阻塞主线程、WKWebView 在高频 keydown 中丢弃后续按键（曾表现为快速输入丢字母）。
+   */
+  const scheduleGhostRender = useCallback((key: string) => {
+    if (ghostRafIdRef.current[key] !== null && ghostRafIdRef.current[key] !== undefined) return
     ghostRafIdRef.current[key] = requestAnimationFrame(() => {
       ghostRafIdRef.current[key] = null
-      const pending = ghostPendingInputRef.current[key]
-      delete ghostPendingInputRef.current[key]
-      if (!pending) return
-      matchAndUpdateGhostText(key, pending.connId, pending.input)
+      const engine = ghostEnginesRef.current[key]
+      if (!engine) return
+      try {
+        engine.sync()
+      } catch (err) {
+        console.error('[GhostText] sync failed:', err)
+      }
+      renderGhostText(key)
     })
-  }, [matchAndUpdateGhostText])
-  
-  const switchSuggestion = useCallback((key: string, connId: string, direction: 'next' | 'prev') => {
-    const ghost = ghostTextRef.current[key]
-    if (!ghost || ghost.allSuggestions.length === 0) return
-    
-    let newIndex = ghost.currentIndex
-    if (direction === 'next') {
-      newIndex = (ghost.currentIndex + 1) % ghost.allSuggestions.length
+  }, [renderGhostText])
+
+  /** 命令行结束 / 会话状态不可信：清空追踪和浮层 */
+  const clearGhostText = useCallback((key: string) => {
+    ghostEnginesRef.current[key]?.reset()
+    hideGhostText(key)
+  }, [hideGhostText])
+
+  /**
+   * 有文本不经按键路径写进终端（⌘V 粘贴、历史弹窗选命令、AI/片段插入）。
+   * 引擎靠按键和回显追踪命令行，这类写入要通知它等回显后重新对齐；
+   * 带换行的会直接执行，等同回车。suppress：视同调出历史命令，回显后不接延伸建议。
+   */
+  const noteExternalWrite = useCallback((key: string, text: string, suppress = false) => {
+    const engine = ghostEnginesRef.current[key]
+    if (!engine) return
+    if (/\r|\n/.test(text)) {
+      engine.reset()
     } else {
-      newIndex = ghost.currentIndex === 0 ? ghost.allSuggestions.length - 1 : ghost.currentIndex - 1
+      engine.noteExternalWrite(suppress)
     }
-    
-    matchAndUpdateGhostText(key, connId, ghost.input, newIndex)
-  }, [matchAndUpdateGhostText])
-  
+    scheduleGhostRender(key)
+  }, [scheduleGhostRender])
+
+  /** 在候选间切换（⌥↑ / ⌥↓） */
+  const cycleGhostSuggestion = useCallback((key: string, direction: 1 | -1) => {
+    const engine = ghostEnginesRef.current[key]
+    if (!engine) return
+    engine.cycle(direction)
+    renderGhostText(key)
+  }, [renderGhostText])
+
+  const importShellHistory = useHistoryStore(state => state.importShellHistory)
   const loadHistory = useHistoryStore(state => state.loadHistory)
   const addCommand = useHistoryStore(state => state.addCommand)
   const historyCaches = useHistoryStore(state => state.caches)
@@ -467,7 +417,8 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
       // 可能在 PTY 里留下一个 dead-key 回显字符（如 ˙），直接写命令会拼到脏字符后面。
       enqueueWriteRef.current(key, '\x15')
       enqueueWriteRef.current(key, command)
-      currentInputRef.current[key] = command
+      // 命令提示引擎按回显重新对齐；选中的是完整命令，回显后不接延伸建议
+      noteExternalWrite(key, command, true)
     }
     hideHistoryModal()
     requestAnimationFrame(() => {
@@ -476,7 +427,7 @@ const matchAndUpdateGhostText = useCallback((key: string, connId: string, input:
         term.focus()
       }
     })
-  }, [historyModalKey, hideHistoryModal])
+  }, [historyModalKey, hideHistoryModal, noteExternalWrite])
 
   useEffect(() => {
     if (!historyModalVisible || !historyModalKey) return
@@ -876,6 +827,8 @@ const handlePointerUp = () => {
           // shellId 可能已在重连或恢复时更新，同步到 ref
           if (shellId && shellId !== shellIdsRef.current[key]) {
             shellIdsRef.current[key] = shellId
+            // 新 shell：屏幕上的命令行与重连前的追踪无关，清掉命令提示状态
+            clearGhostText(key)
           }
 
           const term = terminalInstances.current[key]
@@ -908,12 +861,10 @@ const handlePointerUp = () => {
                 if (addon) {
                   try { addon.fit() } catch {}
                 }
-                const ghostEl = ghostTextElementsRef.current[key]
-                if (ghostEl) {
-                  ghostEl.style.display = 'none'
-                  ghostEl.textContent = ''
-                }
+                // 清掉缓存的单元格尺寸；命令提示引擎按新布局重新定位，定位不了就不显示
                 delete cellMetricsCacheRef.current[key]
+                ghostEnginesRef.current[key]?.noteResize()
+                scheduleGhostRender(key)
                 resizeTimer = null
               }, 100)
             })
@@ -1020,6 +971,15 @@ const handlePointerUp = () => {
             }, true)
           }
 
+          // 命令提示引擎：候选来自该连接的命令历史（本应用执行过的 + 导入的服务器历史）
+          const ghostEngine = new GhostTextEngine(terminal, {
+            getSuggestions: input => {
+              const { caches, importedHistory } = useHistoryStore.getState()
+              return findSuggestions(input, caches.get(connId), importedHistory.get(connId))
+            },
+          })
+          ghostEnginesRef.current[key] = ghostEngine
+
           terminal.attachCustomKeyEventHandler(event => {
             if (event.type !== 'keydown') return true
             
@@ -1070,6 +1030,7 @@ const handlePointerUp = () => {
                   if (currentShellId) {
                     // 走统一写入队列，与后续按键保持 FIFO，避免粘贴后立即输入产生乱序
                     enqueueWrite(key, text)
+                    noteExternalWrite(key, text)
                   }
                 }
               }).catch(err => {
@@ -1085,18 +1046,12 @@ const handlePointerUp = () => {
             }
             
             if (matchShortcut(event, settings.nextSuggestion, true)) {
-              const ghost = ghostTextRef.current[key]
-              if (ghost && ghost.allSuggestions.length > 0) {
-                switchSuggestion(key, key.split('_')[0], 'next')
-              }
+              if (ghostEngine.view) cycleGhostSuggestion(key, 1)
               return false
             }
             
             if (matchShortcut(event, settings.prevSuggestion, true)) {
-              const ghost = ghostTextRef.current[key]
-              if (ghost && ghost.allSuggestions.length > 0) {
-                switchSuggestion(key, key.split('_')[0], 'prev')
-              }
+              if (ghostEngine.view) cycleGhostSuggestion(key, -1)
               return false
             }
 
@@ -1145,92 +1100,30 @@ const handlePointerUp = () => {
             // 退出后误触发提示或在编辑器/分页器里闪现幽灵文本。
             if (isAlternateBuffer(terminal)) {
               // 仍在备用屏时清掉残留的 ghost 状态，避免回到普通屏后错位显示
-              if (ghostTextRef.current[key]?.input || ghostTextRef.current[key]?.suggestion) {
-                clearGhostText(key)
-                currentInputRef.current[key] = ''
-              }
+              clearGhostText(key)
               enqueueWrite(key, data)
               broadcastData(data)
               return
             }
 
-            const ghost = ghostTextRef.current[key]
-            
-            if (data === '\x1b[C') {
-              if (ghost && ghost.suggestion) {
-                const currentShellId = shellIdsRef.current[key]
-                if (currentShellId) {
-                  enqueueWrite(key, ghost.suggestion)
-                  currentInputRef.current[key] = ghost.input + ghost.suggestion
-                  ghostTextRef.current[key] = { input: ghost.input + ghost.suggestion, suggestion: '', allSuggestions: [], currentIndex: 0 }
-                  updateGhostTextOverlay(key, 0, 0, '')
-                }
-                return
-              }
+            // 命令提示引擎先处理按键（只做字符串运算）：返回 accept 时改为写入建议
+            // （已输入部分 shell 那边已有，只补建议文本，且不广播）；返回 swallow 时吞掉不发给 shell。
+            const action = ghostEngine.handleInput(data)
+            if (action.type === 'swallow') {
+              scheduleGhostRender(key)
+              return
             }
-            
-            // 处理 Ctrl+C / Ctrl+U - 清除输入和建议
-            if (data === '\x03' || data === '\x15') {
-              clearGhostText(key)
-              currentInputRef.current[key] = ''
+            if (action.type === 'accept') {
+              enqueueWrite(key, action.text)
+              scheduleGhostRender(key)
+              return
             }
-            else if (data === '\t') {
-              clearGhostText(key)
-              currentInputRef.current[key] = ''
+            if (data === '\r' || data === '\n') {
+              commandTrackersRef.current[key]?.clearPendingCommand()
             }
-            else if (data === '\x1b') {
-              const ghost = ghostTextRef.current[key]
-              if (ghost && ghost.suggestion) {
-                clearGhostText(key)
-                return
-              }
-            }
-            // 上下方向键：shell 用它切换历史命令，会整行替换当前输入。
-            // 此时 currentInputRef 已失效（shell 端替换了输入行，但不经过 onData 文本追踪），
-            // 必须清掉 ghost 建议并重置输入追踪，否则残留的建议会错位显示。
-            else if (data === '\x1b[A' || data === '\x1b[B') {
-              clearGhostText(key)
-              currentInputRef.current[key] = ''
-            }
-            else if (data === '\r' || data === '\n') {
-              clearGhostText(key)
-              currentInputRef.current[key] = ''
-              const tracker = commandTrackersRef.current[key]
-              if (tracker) {
-                tracker.clearPendingCommand()
-              }
-            }
-            // 处理退格
-            else if (data === '\x7f' || data === '\b') {
-              const current = currentInputRef.current[key] || ''
-              if (current.length > 0) {
-                const newInput = current.slice(0, -1)
-                currentInputRef.current[key] = newInput
-                if (newInput === '') {
-                  clearGhostText(key)
-                } else {
-                  scheduleGhostUpdate(key, connId, newInput)
-                }
-              }
-            }
-            // 处理普通文本输入（包括粘贴）
-            else if (!data.startsWith('\x1b') && !data.includes('\r') && !data.includes('\n')) {
-              const currentInput = currentInputRef.current[key] || ''
-              if (currentInput === '') {
-                const buffer = terminal.buffer.active
-                ghostTextStartXRef.current[key] = buffer.cursorX
-                ghostTextLineRef.current[key] = buffer.cursorY
-              }
-              const newInput = currentInput + data
-              currentInputRef.current[key] = newInput
-              // ⚠️ 异步 + 按帧合并更新 ghost text：matchAndUpdateGhostText 会触发同步 DOM 写入
-              // （getBoundingClientRect 强制重排 + style 修改）。若同步执行会阻塞主线程，
-              // WKWebView 在高频 keydown 风暴中会合并/丢弃后续按键事件，
-              // 表现为快速输入时随机字符丢失（如 grep 的 e、mysql 的 s、docker 的 r）。
-              // scheduleGhostUpdate 把 DOM 操作推迟到下一帧，且同一帧多次输入只算一次。
-              scheduleGhostUpdate(key, connId, newInput)
-            }
-            
+
+            // 提示的读屏、候选匹配和绘制都推迟到下一帧，见 scheduleGhostRender
+            scheduleGhostRender(key)
             enqueueWrite(key, data)
             broadcastData(data)
           })
@@ -1242,6 +1135,9 @@ const handlePointerUp = () => {
                 console.error('调整终端大小失败:', err)
               })
             }
+            // 行内容被重新折行后由 shell 重绘：提示先收起，重绘到达后再按已追踪的输入重新定位
+            ghostEngine.noteResize()
+            scheduleGhostRender(key)
           })
 
           terminal.onSelectionChange(() => {
@@ -1256,13 +1152,8 @@ const handlePointerUp = () => {
           })
 
           terminal.onScroll(() => {
-            const ghost = ghostTextRef.current[key]
-            if (ghost && ghost.input) {
-              const [connId] = key.split('_')
-              requestAnimationFrame(() => {
-                matchAndUpdateGhostText(key, connId, ghost.input, ghost.currentIndex)
-              })
-            }
+            // 视口滚离底部时提示要隐藏，滚回底部后按光标位置重画
+            scheduleGhostRender(key)
           })
 
           // 缓冲区切换（normal <-> alternate）：进入 vi/nano/less/tmux 等全屏程序时
@@ -1271,7 +1162,6 @@ const handlePointerUp = () => {
           // 返回的 disposable 由 terminal.dispose() 统一释放，无需手动管理。
           terminal.buffer.onBufferChange(() => {
             clearGhostText(key)
-            currentInputRef.current[key] = ''
           })
 
           terminalInstances.current[key] = terminal
@@ -1291,7 +1181,8 @@ const handlePointerUp = () => {
                 return
               }
 
-              term.write(event.payload)
+              // 回调在数据解析完成时触发，此时缓冲区已更新，可以读屏；按帧合并，见 scheduleGhostRender
+              term.write(event.payload, () => scheduleGhostRender(key))
 
               const tracker = commandTrackersRef.current[key]
               if (tracker && typeof event.payload === 'string') {
@@ -1324,7 +1215,10 @@ const handlePointerUp = () => {
               if (addon) {
                 try { addon.fit() } catch {}
               }
-              clearGhostText(key)
+              // 同上：命令提示按新布局重新定位，定位不了就不显示
+              delete cellMetricsCacheRef.current[key]
+              ghostEngine.noteResize()
+              scheduleGhostRender(key)
               resizeTimer = null
             }, 100)
           })
@@ -1339,6 +1233,10 @@ const handlePointerUp = () => {
           initializedRef.current.add(key)
 
           loadHistory(connId)
+          // 导入服务器上的 shell 历史（~/.bash_history 等）作为命令提示候选，只在设置开启时
+          if (useTerminalStore.getState().terminalSettings.importServerHistory) {
+            void importShellHistory(connId)
+          }
 
           try {
             await invoke('start_shell_reader', { id: shellId })
@@ -1640,7 +1538,7 @@ const handlePointerUp = () => {
     delete xtermDomRefs.current[key]
     delete writeQueueRef.current[key]
     delete writeDrainingRef.current[key]
-    delete ghostPendingInputRef.current[key]
+    delete ghostEnginesRef.current[key]
     const ghostRafId = ghostRafIdRef.current[key]
     if (ghostRafId !== null && ghostRafId !== undefined) {
       cancelAnimationFrame(ghostRafId)
@@ -1897,6 +1795,7 @@ const handlePointerUp = () => {
           if (sess?.shellId) {
             // 走统一写入队列，与后续按键保持 FIFO
             enqueueWriteRef.current(contextMenu.sessionKey, text)
+            noteExternalWrite(contextMenu.sessionKey, text)
           }
         }
       }
@@ -1908,7 +1807,7 @@ const handlePointerUp = () => {
       console.error('粘贴失败:', err)
     }
     hideContextMenu()
-  }, [contextMenu.sessionKey, connectedConnections])
+  }, [contextMenu.sessionKey, connectedConnections, noteExternalWrite])
   
   // 全选
   const handleSelectAll = useCallback(() => {
@@ -2448,7 +2347,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         delete xtermDomRefs.current[key]
         delete writeQueueRef.current[key]
         delete writeDrainingRef.current[key]
-        delete ghostPendingInputRef.current[key]
+        delete ghostEnginesRef.current[key]
         const ghostRafId = ghostRafIdRef.current[key]
         if (ghostRafId !== null && ghostRafId !== undefined) {
           cancelAnimationFrame(ghostRafId)
@@ -2598,7 +2497,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       if (!conn || !activeConnectionId) return
       const activeSess = getActiveSessionInPane(conn.rootPane)
       if (!activeSess) return
-      enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+      const key = `${activeConnectionId}_${activeSess.id}`
+      enqueueWrite(key, cmd)
+      noteExternalWrite(key, cmd)
     }
     const runCb = (cmd: string) => insertCb(cmd + '\r')
     return {
@@ -2661,7 +2562,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
         </Suspense>
       ) : hint('AI 助手需要 Pro 授权'),
     }
-  }, [activeConnectionId, aiEnabled, portForwardEnabled, aiChatInitialText, enqueueWrite])
+  }, [activeConnectionId, aiEnabled, portForwardEnabled, aiChatInitialText, enqueueWrite, noteExternalWrite])
 
   // 两布局共享的浮层：终端右键菜单 / AI 弹窗 / 历史命令 / 快捷键帮助
   const sharedOverlays = (
@@ -2808,7 +2709,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
             if (!conn || !activeConnectionId) return
             const activeSess = getActiveSessionInPane(conn.rootPane)
             if (!activeSess) return
-            enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+            const key = `${activeConnectionId}_${activeSess.id}`
+            enqueueWrite(key, cmd)
+            noteExternalWrite(key, cmd)
           }}
         />
         </Suspense>
@@ -3158,6 +3061,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               if (!activeSess) return
               const key = `${activeConnectionId}_${activeSess.id}`
               enqueueWrite(key, cmd)
+              noteExternalWrite(key, cmd)
             }}
           />
           </Suspense>
@@ -3181,14 +3085,18 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               if (!conn || !activeConnectionId) return
               const activeSess = getActiveSessionInPane(conn.rootPane)
               if (!activeSess) return
-              enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd)
+              const key = `${activeConnectionId}_${activeSess.id}`
+              enqueueWrite(key, cmd)
+              noteExternalWrite(key, cmd)
             }}
             onRunCommand={(cmd) => {
               const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
               if (!conn || !activeConnectionId) return
               const activeSess = getActiveSessionInPane(conn.rootPane)
               if (!activeSess) return
-              enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd + '\r')
+              const key = `${activeConnectionId}_${activeSess.id}`
+              enqueueWrite(key, cmd + '\r')
+              noteExternalWrite(key, cmd + '\r')
             }}
             getTerminalContext={() => {
               const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
@@ -3231,7 +3139,9 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               if (!conn || !activeConnectionId) return
               const activeSess = getActiveSessionInPane(conn.rootPane)
               if (!activeSess) return
-              enqueueWrite(`${activeConnectionId}_${activeSess.id}`, cmd + '\r')
+              const key = `${activeConnectionId}_${activeSess.id}`
+              enqueueWrite(key, cmd + '\r')
+              noteExternalWrite(key, cmd + '\r')
             }}
           />
           </Suspense>
