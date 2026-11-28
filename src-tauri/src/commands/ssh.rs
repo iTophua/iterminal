@@ -320,10 +320,14 @@ async fn establish_session_inner(
                 .and_then(|mut a| a.next())
                 .ok_or("解析地址失败")?;
             (
-                tokio::time::timeout(
-                    CONNECT_TIMEOUT,
-                    russh::client::connect(config, &socket_addr.to_string(), handler),
-                )
+                // TCP_NODELAY：按键这种小包立刻发出。默认的 Nagle 算法会把紧跟在上一键之后的小包
+                // 压到上一个包的 ACK 回来再发，网络往返一高（VPN、跨地域）连续输入就成批地晚到；
+                // OpenSSH 对交互式连接也是关掉 Nagle 的
+                tokio::time::timeout(CONNECT_TIMEOUT, async move {
+                    let socket = tokio::net::TcpStream::connect(socket_addr).await?;
+                    let _ = socket.set_nodelay(true);
+                    russh::client::connect_stream(config, socket, handler).await
+                })
                 .await,
                 Vec::new(),
             )

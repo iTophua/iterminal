@@ -109,6 +109,8 @@ export interface TerminalSettings {
   copyOnSelect: boolean  // 选中即复制
   cursorStyle: 'block' | 'underline' | 'bar'
   cursorBlink: boolean
+  // 输入时给灰字命令建议（→ 接受、⌥↑/⌥↓ 切换候选）
+  commandSuggestions: boolean
   // 连接时导入服务器上的 shell 历史（~/.bash_history 等）作为命令提示候选
   importServerHistory: boolean
   // 会话日志：把终端输出（去掉转义序列）按会话写到本地文本文件
@@ -124,6 +126,7 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   copyOnSelect: false,
   cursorStyle: 'block',
   cursorBlink: true,
+  commandSuggestions: true,
   importServerHistory: true,
   sessionLogEnabled: false,
   sessionLogDir: '~/iTerminal/logs',

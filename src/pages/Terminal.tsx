@@ -338,6 +338,11 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
    * 避免同步重排阻塞主线程、WKWebView 在高频 keydown 中丢弃后续按键（曾表现为快速输入丢字母）。
    */
   const scheduleGhostRender = useCallback((key: string) => {
+    // 设置里关掉命令提示：不读屏不算候选，顺手收掉已有的提示
+    if (!terminalSettingsRef.current.commandSuggestions) {
+      hideGhostText(key)
+      return
+    }
     if (ghostRafIdRef.current[key] !== null && ghostRafIdRef.current[key] !== undefined) return
     ghostRafIdRef.current[key] = requestAnimationFrame(() => {
       ghostRafIdRef.current[key] = null
@@ -350,7 +355,7 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
       }
       renderGhostText(key)
     })
-  }, [renderGhostText])
+  }, [renderGhostText, hideGhostText])
 
   /** 命令行结束 / 会话状态不可信：清空追踪和浮层 */
   const clearGhostText = useCallback((key: string) => {
@@ -1156,7 +1161,9 @@ const handlePointerUp = () => {
 
             // 命令提示引擎先处理按键（只做字符串运算）：返回 accept 时改为写入建议
             // （已输入部分 shell 那边已有，只补建议文本，且不广播）；返回 swallow 时吞掉不发给 shell。
-            const action = ghostEngine.handleInput(data)
+            const action = terminalSettingsRef.current.commandSuggestions
+              ? ghostEngine.handleInput(data)
+              : ({ type: 'pass' } as const)
             if (action.type === 'swallow') {
               scheduleGhostRender(key)
               return

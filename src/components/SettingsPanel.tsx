@@ -85,8 +85,10 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     setActiveCategory(category)
     localStorage.setItem('iterminal_settings_category', category)
   }, [])
-  const [tempSettings, setTempSettings] = useState<TerminalSettings>(terminalSettings)
-  const [hasTerminalChanges, setHasTerminalChanges] = useState(false)
+  // 设置改动即时生效：直接写入 store（它负责持久化），不再有「保存 / 取消」。
+  // 两个滑块拖动时先用草稿值预览，松手才真正应用到所有终端——字体、回滚缓冲区一变终端就要重排
+  const [fontSizeDraft, setFontSizeDraft] = useState<number | null>(null)
+  const [scrollbackDraft, setScrollbackDraft] = useState<number | null>(null)
   const [mcpEnabled, setMcpEnabled] = useState(() => {
     const saved = localStorage.getItem(STORAGE_KEYS.MCP_ENABLED)
     return saved ? saved === 'true' : false
@@ -272,11 +274,9 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
 
   useEffect(() => {
     if (visible) {
-      setTempSettings(terminalSettings)
-      setHasTerminalChanges(false)
       fetchLicense()
     }
-  }, [visible, terminalSettings, fetchLicense])
+  }, [visible, fetchLicense])
 
   useEffect(() => {
     if (visible && activeCategory === 'mcp') {
@@ -302,75 +302,62 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
   }, [visible, activeCategory])
 
   const handleFontChange = (value: TerminalSettings['fontFamily']) => {
-    setTempSettings(prev => ({ ...prev, fontFamily: value }))
-    setHasTerminalChanges(true)
+    updateTerminalSettings({ fontFamily: value })
   }
 
   const handleFontSizeChange = (value: number) => {
-    setTempSettings(prev => ({ ...prev, fontSize: value }))
-    setHasTerminalChanges(true)
+    setFontSizeDraft(null)
+    updateTerminalSettings({ fontSize: value })
   }
 
   const handleScrollbackChange = (value: number) => {
-    setTempSettings(prev => ({ ...prev, scrollback: value }))
-    setHasTerminalChanges(true)
+    setScrollbackDraft(null)
+    updateTerminalSettings({ scrollback: value })
   }
 
   const handleCopyOnSelectChange = (checked: boolean) => {
-    setTempSettings(prev => ({ ...prev, copyOnSelect: checked }))
-    setHasTerminalChanges(true)
+    updateTerminalSettings({ copyOnSelect: checked })
   }
 
   const handleCursorStyleChange = (value: 'block' | 'underline' | 'bar') => {
-    setTempSettings(prev => ({ ...prev, cursorStyle: value }))
-    setHasTerminalChanges(true)
+    updateTerminalSettings({ cursorStyle: value })
   }
 
   const handleCursorBlinkChange = (checked: boolean) => {
-    setTempSettings(prev => ({ ...prev, cursorBlink: checked }))
-    setHasTerminalChanges(true)
+    updateTerminalSettings({ cursorBlink: checked })
+  }
+
+  const handleCommandSuggestionsChange = (checked: boolean) => {
+    updateTerminalSettings({ commandSuggestions: checked })
   }
 
   const handleImportServerHistoryChange = (checked: boolean) => {
-    setTempSettings(prev => ({ ...prev, importServerHistory: checked }))
-    setHasTerminalChanges(true)
-  }
-
-  const handleSessionLogEnabledChange = (checked: boolean) => {
-    setTempSettings(prev => ({ ...prev, sessionLogEnabled: checked }))
-    setHasTerminalChanges(true)
-  }
-
-  const handleSessionLogDirChange = (value: string) => {
-    setTempSettings(prev => ({ ...prev, sessionLogDir: value }))
-    setHasTerminalChanges(true)
-  }
-
-  const handleOpenSessionLogDir = async () => {
-    try {
-      await open(await resolveSessionLogDir(tempSettings.sessionLogDir))
-    } catch (err) {
-      message.error(`无法打开日志目录: ${err}`)
-    }
-  }
-
-  const handleSave = () => {
-    const wasEnabled = terminalSettings.importServerHistory
-    updateTerminalSettings(tempSettings)
-    if (wasEnabled && !tempSettings.importServerHistory) {
+    updateTerminalSettings({ importServerHistory: checked })
+    if (!checked) {
       // 关掉：已导入的立即作废；重新打开后下次连接再导入
       clearImportedHistory()
-    } else if (!wasEnabled && tempSettings.importServerHistory) {
+    } else {
       // 打开：已连接的服务器现在就导入
       for (const conn of useTerminalStore.getState().connectedConnections) {
         void importShellHistory(conn.connectionId)
       }
     }
-    onClose()
   }
 
-  const handleClose = () => {
-    onClose()
+  const handleSessionLogEnabledChange = (checked: boolean) => {
+    updateTerminalSettings({ sessionLogEnabled: checked })
+  }
+
+  const handleSessionLogDirChange = (value: string) => {
+    updateTerminalSettings({ sessionLogDir: value })
+  }
+
+  const handleOpenSessionLogDir = async () => {
+    try {
+      await open(await resolveSessionLogDir(terminalSettings.sessionLogDir))
+    } catch (err) {
+      message.error(`无法打开日志目录: ${err}`)
+    }
   }
 
   const renderTerminalSettings = () => (
@@ -381,14 +368,15 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
 
       <div style={{ marginBottom: 20 }}>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
-          回滚缓冲区: {tempSettings.scrollback.toLocaleString()} 行
+          回滚缓冲区: {(scrollbackDraft ?? terminalSettings.scrollback).toLocaleString()} 行
         </Text>
         <Slider
           min={100}
           max={100000}
           step={100}
-          value={tempSettings.scrollback}
-          onChange={handleScrollbackChange}
+          value={scrollbackDraft ?? terminalSettings.scrollback}
+          onChange={value => setScrollbackDraft(value)}
+          onChangeComplete={handleScrollbackChange}
           marks={{ 100: '100', 10000: '1万', 50000: '5万', 100000: '10万' }}
         />
       </div>
@@ -397,7 +385,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: 'var(--color-text-secondary)' }}>选中即复制</Text>
           <Switch
-            checked={tempSettings.copyOnSelect}
+            checked={terminalSettings.copyOnSelect}
             onChange={handleCopyOnSelectChange}
           />
         </div>
@@ -411,7 +399,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
           光标样式
         </Text>
         <Select
-          value={tempSettings.cursorStyle}
+          value={terminalSettings.cursorStyle}
           onChange={handleCursorStyleChange}
           options={[
             { value: 'block', label: '块状' },
@@ -426,7 +414,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: 'var(--color-text-secondary)' }}>光标闪烁</Text>
           <Switch
-            checked={tempSettings.cursorBlink}
+            checked={terminalSettings.cursorBlink}
             onChange={handleCursorBlinkChange}
           />
         </div>
@@ -434,9 +422,22 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
 
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: 'var(--color-text-secondary)' }}>命令提示：输入时给出灰字建议</Text>
+          <Switch
+            checked={terminalSettings.commandSuggestions}
+            onChange={handleCommandSuggestionsChange}
+          />
+        </div>
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+          → 接受建议，⌥↑ / ⌥↓ 切换候选，Esc 隐藏。Tab 仍是服务器自带的补全
+        </Text>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: 'var(--color-text-secondary)' }}>命令提示：导入服务器历史</Text>
           <Switch
-            checked={tempSettings.importServerHistory}
+            checked={terminalSettings.importServerHistory}
             onChange={handleImportServerHistoryChange}
           />
         </div>
@@ -449,14 +450,14 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <Text style={{ color: 'var(--color-text-secondary)' }}>会话日志：把终端输出记录到本地文件</Text>
           <Switch
-            checked={tempSettings.sessionLogEnabled}
+            checked={terminalSettings.sessionLogEnabled}
             onChange={handleSessionLogEnabledChange}
           />
         </div>
-        {tempSettings.sessionLogEnabled && (
+        {terminalSettings.sessionLogEnabled && (
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
             <Input
-              value={tempSettings.sessionLogDir}
+              value={terminalSettings.sessionLogDir}
               onChange={(e) => handleSessionLogDirChange(e.target.value)}
               placeholder="~/iTerminal/logs"
               style={{ fontFamily: 'monospace' }}
@@ -476,7 +477,7 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         </Text>
         <div style={{ display: 'flex', gap: 8 }}>
           <Select
-            value={tempSettings.fontFamily}
+            value={terminalSettings.fontFamily}
             onChange={handleFontChange}
             options={availableFonts.map(font => ({
               value: font,
@@ -503,13 +504,14 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
       {layoutMode !== 'cockpit' ? (
       <div style={{ marginBottom: 20 }}>
         <Text style={{ color: 'var(--color-text-secondary)', display: 'block', marginBottom: 8 }}>
-          字体大小: {tempSettings.fontSize}px
+          字体大小: {(fontSizeDraft ?? terminalSettings.fontSize)}px
         </Text>
         <Slider
           min={10}
           max={24}
-          value={tempSettings.fontSize}
-          onChange={handleFontSizeChange}
+          value={fontSizeDraft ?? terminalSettings.fontSize}
+          onChange={value => setFontSizeDraft(value)}
+          onChangeComplete={handleFontSizeChange}
           marks={{ 10: '10', 14: '14', 18: '18', 24: '24' }}
         />
       </div>
@@ -541,8 +543,8 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
             border: '1px solid var(--color-border)',
             borderRadius: 6,
             padding: 12,
-            fontFamily: `"${tempSettings.fontFamily}", Menlo, Monaco, monospace`,
-            fontSize: tempSettings.fontSize,
+            fontFamily: `"${terminalSettings.fontFamily}", Menlo, Monaco, monospace`,
+            fontSize: terminalSettings.fontSize,
             color: 'var(--color-text)',
             whiteSpace: 'pre-wrap',
             lineHeight: 1.5,
@@ -1814,31 +1816,13 @@ ITERMINAL_MCP_TRANSPORT=sse node /Applications/iTerminal.app/Contents/Resources/
     }
   }
 
-  const showFooter = activeCategory === 'terminal' || activeCategory === 'appearance'
-  const isAppearancePage = activeCategory === 'appearance'
-
   return (
     <Modal
       className="settings-modal"
       title="系统设置"
       open={visible}
-      onCancel={handleClose}
-      footer={showFooter ? (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          {isAppearancePage ? (
-            <Button type="primary" onClick={handleClose}>
-              完成
-            </Button>
-          ) : (
-            <>
-              <Button onClick={handleClose}>取消</Button>
-              <Button type="primary" onClick={handleSave} disabled={!hasTerminalChanges}>
-                保存
-              </Button>
-            </>
-          )}
-        </div>
-      ) : null}
+      onCancel={onClose}
+      footer={null}
       width={700}
       styles={{
         body: { padding: 0 },
