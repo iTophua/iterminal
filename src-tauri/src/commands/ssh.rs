@@ -1,8 +1,6 @@
-use base64::Engine;
 use once_cell::sync::Lazy;
-use russh::client::{Handle, Handler};
-use russh::keys::PublicKeyBase64;
-use russh::{ChannelMsg, Disconnect};
+use russh::client::{Handle, Handler, KeyboardInteractiveAuthResponse};
+use russh::{ChannelMsg, Disconnect, MethodKind};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
@@ -12,15 +10,80 @@ use tauri::AppHandle;
 use tauri::Emitter;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
+use super::auth_prompt::{self, AuthPrompt, AuthQuestion};
+use super::host_key::{self, HostKeyChallenge, HostKeyPolicy, HostKeyReport};
 use super::license::get_max_connections;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// 认证方式
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMethod {
+    Password,
+    PublicKey,
+    /// 本机 ssh-agent 里的密钥
+    Agent,
+}
+
+impl AuthMethod {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "password" => Some(AuthMethod::Password),
+            "publickey" => Some(AuthMethod::PublicKey),
+            "agent" => Some(AuthMethod::Agent),
+            _ => None,
+        }
+    }
+}
+
+/// 一次连接需要的全部信息。新增字段都带 serde(default)：老的调用方只传
+/// host/port/username/password/key_file 也照样能用
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct SSHConnection {
     pub host: String,
     pub port: u16,
     pub username: String,
     pub password: Option<String>,
     pub key_file: Option<String>,
+    /// 私钥口令（私钥本身加了口令时必填）
+    #[serde(default)]
+    pub key_passphrase: Option<String>,
+    /// 认证方式；不传则按 key_file / password 推断
+    #[serde(default)]
+    pub auth_method: Option<AuthMethod>,
+    /// 跳板机：已保存连接的 id，连接经它转发
+    #[serde(default)]
+    pub jump_host_id: Option<String>,
+    /// 服务器 keyboard-interactive 提问的预备回答，按提问顺序取用（MCP 调用方可预先给出）；
+    /// 用完或不传则交给用户在界面上回答
+    #[serde(default)]
+    pub auth_answers: Option<Vec<String>>,
+}
+
+/// 解析请求里写的认证方式；不认识的值报错而不是悄悄忽略
+pub(crate) fn parse_auth_method(value: &str) -> Result<AuthMethod, String> {
+    AuthMethod::parse(value).ok_or_else(|| {
+        format!(
+            "auth_method 无效: {}（可选 password / publickey / agent）",
+            value
+        )
+    })
+}
+
+impl SSHConnection {
+    /// 由已保存的连接记录构造
+    pub(crate) fn from_record(record: &super::db::ConnectionRecord) -> Self {
+        Self {
+            host: record.host.clone(),
+            port: record.port,
+            username: record.username.clone(),
+            password: record.password.clone(),
+            key_file: record.key_file.clone(),
+            key_passphrase: record.key_passphrase.clone(),
+            auth_method: record.auth_method.as_deref().and_then(AuthMethod::parse),
+            jump_host_id: record.jump_host_id.clone(),
+            auth_answers: None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,20 +99,27 @@ pub struct CommandResult {
     pub output_truncated: bool,
 }
 
+/// SSH 客户端回调。目前只负责主机密钥校验，见 host_key.rs
 pub struct SshClientHandler {
-    pub host: String,
-    pub port: u16,
-    pub known_hosts_path: Option<std::path::PathBuf>,
+    host: String,
+    port: u16,
+    policy: HostKeyPolicy,
+    /// 需要用户确认的主机密钥放这里；随后建连失败，由调用方取出交给界面
+    challenge: Arc<std::sync::Mutex<Option<HostKeyChallenge>>>,
 }
 
 impl SshClientHandler {
-    pub fn new(host: String, port: u16) -> Self {
-        let known_hosts_path = dirs::home_dir().map(|h| h.join(".ssh").join("known_hosts"));
-        Self {
-            host,
-            port,
-            known_hosts_path,
-        }
+    pub fn new(host: String, port: u16, policy: HostKeyPolicy) -> (Self, HostKeyReport) {
+        let report = HostKeyReport::default();
+        (
+            Self {
+                host,
+                port,
+                policy,
+                challenge: report.0.clone(),
+            },
+            report,
+        )
     }
 }
 
@@ -60,62 +130,23 @@ impl Handler for SshClientHandler {
         &mut self,
         server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        let key_bytes = server_public_key.public_key_bytes();
-        let key_fingerprint = base64::engine::general_purpose::STANDARD.encode(&key_bytes);
-
-        if let Some(ref path) = self.known_hosts_path {
-            if path.exists() {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    for line in content.lines() {
-                        let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 3 {
-                            let hosts = parts[0];
-                            let stored_key = parts.get(2).unwrap_or(&"");
-
-                            let host_with_port = format!("[{}]:{}", self.host, self.port);
-                            let host_without_port = &self.host;
-
-                            if hosts.contains(host_without_port) || hosts.contains(&host_with_port)
-                            {
-                                if stored_key == &key_fingerprint {
-                                    return Ok(true);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let host_key = format!("{}:{}", self.host, self.port);
-        eprintln!(
-            "WARN: Unknown host key for {}. Fingerprint: {}",
-            host_key, key_fingerprint
-        );
-        eprintln!("INFO: Auto-accepting host key (use --strict-host-key-checking for strict mode)");
-
-        if let Some(ref path) = self.known_hosts_path {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let entry = format!(
-                "[{}]:{} {} {}\n",
-                self.host, self.port, "ssh-ed25519", key_fingerprint
-            );
-            let _ = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(path)
-                .and_then(|mut f| std::io::Write::write_all(&mut f, entry.as_bytes()));
-        }
-
-        Ok(true)
+        let report = HostKeyReport(self.challenge.clone());
+        Ok(host_key::verify(
+            &self.host,
+            self.port,
+            server_public_key,
+            self.policy,
+            report,
+        )
+        .await)
     }
 }
 
 pub struct SshSession {
     pub handle: Arc<Handle<SshClientHandler>>,
     pub connection: SSHConnection,
+    /// 经跳板机连接时持有的跳板链，见 EstablishedSession
+    pub jumps: Vec<Arc<Handle<SshClientHandler>>>,
 }
 
 pub struct ShellSession {
@@ -155,8 +186,487 @@ async fn cleanup_connection(connection_id: &str) {
     super::port_forward::cleanup_forwards(connection_id).await;
 }
 
+/// 建连超时：TCP + 握手 + 主机密钥校验
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// 认证超时。企业服务器认证栈可能很慢（PAM/sssd/LDAP、GSSAPI 等 DNS 反查），
+/// 实测有服务器 password 认证响应需要 10s+，5s 会把"慢"误判为"超时"。
+/// OpenSSH 客户端 LoginGraceTime 默认 120s，20s 已足够保守。
+const AUTH_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// 建好的 SSH 连接（尚未登记到 SESSIONS）
+pub struct EstablishedSession {
+    pub handle: Handle<SshClientHandler>,
+    /// 经跳板机连接时持有的跳板链（由外到内）。它们被 drop 会连带断开隧道，
+    /// 必须和 handle 活得一样久
+    pub jumps: Vec<Arc<Handle<SshClientHandler>>>,
+}
+
+/// 跳板机最多叠几层
+const MAX_JUMP_DEPTH: usize = 3;
+
+/// 用跳板机之前的检查：层数上限、成环
+fn check_jump(jump_id: &str, jump_name: &str, depth: usize, path: &[String]) -> Result<(), String> {
+    if depth >= MAX_JUMP_DEPTH {
+        return Err(format!("跳板机层数超过 {} 层", MAX_JUMP_DEPTH));
+    }
+    if path.iter().any(|id| id == jump_id) {
+        return Err(format!(
+            "跳板机配置成环（{}），请检查各连接的跳板机设置",
+            jump_name
+        ));
+    }
+    Ok(())
+}
+
+/// 建连失败的文案：有待确认的主机密钥时带回挑战（见 host_key::CHALLENGE_PREFIX），
+/// 否则是普通说明。error 为 None 表示超时。
+fn connect_error(report: &HostKeyReport, error: Option<&anyhow::Error>) -> String {
+    if let Some(challenge) = report.take() {
+        return challenge.to_error_string();
+    }
+    match error {
+        Some(e)
+            if matches!(
+                e.downcast_ref::<russh::Error>(),
+                Some(russh::Error::UnknownKey)
+            ) =>
+        {
+            "主机密钥校验未通过".to_string()
+        }
+        Some(e) => format!("连接失败: {}", e),
+        None => "连接超时，请检查网络或服务器地址".to_string(),
+    }
+}
+
+/// 建立 SSH 连接并完成认证，不登记到 SESSIONS。
+/// 终端连接、测试连接、SFTP 的独立连接都走这里——主机密钥校验和认证方式只有这一份实现。
+/// app 用来在需要用户回答验证提问时通知界面；传 None 则这类提问直接报错
+pub(crate) async fn establish_session(
+    connection: &SSHConnection,
+    policy: HostKeyPolicy,
+    app: Option<&AppHandle>,
+) -> Result<EstablishedSession, String> {
+    establish_session_inner(connection.clone(), policy, 0, Vec::new(), app).await
+}
+
+/// path 是这一路连接正在使用的跳板机 id，用来发现 A→B→A 这样的环。
+/// 参数全部取值而非借用：递归的 async fn 一旦带借用参数，spawn 处就会报
+/// Send is not general enough（高阶生命周期）
+async fn establish_session_inner(
+    connection: SSHConnection,
+    policy: HostKeyPolicy,
+    depth: usize,
+    path: Vec<String>,
+    app: Option<&AppHandle>,
+) -> Result<EstablishedSession, String> {
+    let mut config = russh::client::Config::default();
+    config.keepalive_interval = Some(Duration::from_secs(30));
+    config.keepalive_max = 3;
+    let config = Arc::new(config);
+    let (handler, report) = SshClientHandler::new(connection.host.clone(), connection.port, policy);
+
+    let (connect_result, jumps) = match connection.jump_host_id.clone() {
+        Some(jump_id) => {
+            let jump_record = load_saved_connection(&jump_id)?;
+            check_jump(&jump_id, &jump_record.name, depth, &path)?;
+            let mut path = path;
+            path.push(jump_id);
+            let jump_connection = SSHConnection::from_record(&jump_record);
+            // 递归调用装箱，否则 future 类型无限大
+            let jump_session = Box::pin(establish_session_inner(
+                jump_connection,
+                policy,
+                depth + 1,
+                path,
+                app,
+            ))
+            .await?;
+
+            // 目标主机名交给跳板机去解析：内网域名常常只有堡垒机解析得了
+            let EstablishedSession {
+                handle: jump_handle,
+                mut jumps,
+            } = jump_session;
+            let jump_handle = Arc::new(jump_handle);
+            let channel = jump_handle
+                .channel_open_direct_tcpip(
+                    connection.host.clone(),
+                    connection.port as u32,
+                    "127.0.0.1",
+                    0,
+                )
+                .await
+                .map_err(|e| {
+                    format!(
+                        "跳板机 {} 无法转发到 {}:{}: {}",
+                        jump_record.name, connection.host, connection.port, e
+                    )
+                })?;
+            jumps.push(jump_handle);
+            (
+                tokio::time::timeout(
+                    CONNECT_TIMEOUT,
+                    russh::client::connect_stream(config, channel.into_stream(), handler),
+                )
+                .await,
+                jumps,
+            )
+        }
+        None => {
+            let addr = format!("{}:{}", connection.host, connection.port);
+            let socket_addr = addr
+                .to_socket_addrs()
+                .ok()
+                .and_then(|mut a| a.next())
+                .ok_or("解析地址失败")?;
+            (
+                tokio::time::timeout(
+                    CONNECT_TIMEOUT,
+                    russh::client::connect(config, &socket_addr.to_string(), handler),
+                )
+                .await,
+                Vec::new(),
+            )
+        }
+    };
+
+    let mut handle = match connect_result {
+        Ok(Ok(handle)) => handle,
+        Ok(Err(e)) => return Err(connect_error(&report, Some(&e))),
+        Err(_) => return Err(connect_error(&report, None)),
+    };
+
+    authenticate(&mut handle, &connection, app).await?;
+
+    Ok(EstablishedSession { handle, jumps })
+}
+
+/// 按 id 取一条已保存的连接（跳板机用）
+fn load_saved_connection(id: &str) -> Result<super::db::ConnectionRecord, String> {
+    super::db::get_connections()?
+        .into_iter()
+        .find(|record| record.id == id)
+        .ok_or_else(|| "找不到跳板机的连接配置，请重新选择".to_string())
+}
+
+/// 认证。Err 的文案直接给用户看
+async fn authenticate(
+    handle: &mut Handle<SshClientHandler>,
+    connection: &SSHConnection,
+    app: Option<&AppHandle>,
+) -> Result<(), String> {
+    match resolve_auth_method(connection) {
+        AuthMethod::Password => {
+            match authenticate_with_password(handle, connection).await? {
+                PasswordAttempt::Accepted => Ok(()),
+                PasswordAttempt::Rejected {
+                    keyboard_interactive: true,
+                } => {
+                    // 密码被拒，但服务器开放 keyboard-interactive：开了二次验证（动态口令、
+                    // 短信验证码）或只认问答式登录的服务器只能从这里进
+                    authenticate_keyboard_interactive(handle, connection, app, true).await
+                }
+                PasswordAttempt::Rejected { .. } => Err("认证失败".to_string()),
+            }
+        }
+        AuthMethod::PublicKey => authenticate_with_key(handle, connection).await,
+        AuthMethod::Agent => authenticate_with_agent(handle, connection).await,
+    }
+}
+
+/// 这次连接用哪种认证。没指定时沿用老行为：有密钥文件用密钥，否则用密码
+fn resolve_auth_method(connection: &SSHConnection) -> AuthMethod {
+    connection.auth_method.unwrap_or(if connection.key_file.is_some() {
+        AuthMethod::PublicKey
+    } else {
+        AuthMethod::Password
+    })
+}
+
+/// 密码认证的结果。被拒时带上服务器是否还开放 keyboard-interactive
+enum PasswordAttempt {
+    Accepted,
+    Rejected { keyboard_interactive: bool },
+}
+
+async fn authenticate_with_password(
+    handle: &mut Handle<SshClientHandler>,
+    connection: &SSHConnection,
+) -> Result<PasswordAttempt, String> {
+    let Some(password) = &connection.password else {
+        return Err("未提供认证信息".to_string());
+    };
+    let auth_result = tokio::time::timeout(
+        AUTH_TIMEOUT,
+        handle.authenticate_password(&connection.username, password),
+    )
+    .await;
+
+    match auth_result {
+        Ok(Ok(russh::client::AuthResult::Success)) => Ok(PasswordAttempt::Accepted),
+        Ok(Ok(russh::client::AuthResult::Failure { remaining_methods })) => {
+            Ok(PasswordAttempt::Rejected {
+                keyboard_interactive: remaining_methods.contains(&MethodKind::KeyboardInteractive),
+            })
+        }
+        Ok(Err(e)) => Err(format!("认证失败: {}", e)),
+        Err(_) => Err("认证超时".to_string()),
+    }
+}
+
+/// 一轮 keyboard-interactive 认证里最多来回几问
+const MAX_PROMPT_ROUNDS: usize = 8;
+
+/// 提问像不像在要密码：不回显，且文案带 password / 密码 之类
+fn is_password_prompt(prompt: &russh::client::Prompt) -> bool {
+    if prompt.echo {
+        return false;
+    }
+    let text = prompt.prompt.to_lowercase();
+    text.contains("password") || text.contains("passwd") || text.contains("密码")
+}
+
+/// keyboard-interactive 认证：服务器一问一答（密码提示、动态口令、短信验证码……）。
+///
+/// 像密码的提问先用保存的密码自动回答；password_rejected 为 true 表示这把密码刚被拒过，
+/// 不再自动提交。其余提问优先用预先给的 auth_answers，没有就交给用户。
+async fn authenticate_keyboard_interactive(
+    handle: &mut Handle<SshClientHandler>,
+    connection: &SSHConnection,
+    app: Option<&AppHandle>,
+    password_rejected: bool,
+) -> Result<(), String> {
+    let mut password_spent = password_rejected;
+    let mut prepared = connection.auth_answers.clone().unwrap_or_default().into_iter();
+    let mut responses: Option<Vec<String>> = None;
+    let mut asked_user = false;
+
+    for _ in 0..MAX_PROMPT_ROUNDS {
+        // 超时只管网络往返，等用户回答的时间不算在内
+        let reply = if let Some(answers) = responses.take() {
+            tokio::time::timeout(
+                AUTH_TIMEOUT,
+                handle.authenticate_keyboard_interactive_respond(answers),
+            )
+            .await
+        } else {
+            tokio::time::timeout(
+                AUTH_TIMEOUT,
+                handle.authenticate_keyboard_interactive_start(
+                    &connection.username,
+                    None::<String>,
+                ),
+            )
+            .await
+        };
+
+        match reply {
+            Ok(Ok(KeyboardInteractiveAuthResponse::Success)) => return Ok(()),
+            Ok(Ok(KeyboardInteractiveAuthResponse::Failure { .. })) => {
+                return Err(if asked_user {
+                    "交互式验证未通过".to_string()
+                } else {
+                    "认证失败".to_string()
+                });
+            }
+            Ok(Ok(KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            })) => {
+                // 刚被拒过的密码又被单独问一次：再提交一遍只会多留一条失败记录
+                if password_rejected && prompts.len() == 1 && is_password_prompt(&prompts[0]) {
+                    return Err("认证失败".to_string());
+                }
+
+                let mut answers = vec![String::new(); prompts.len()];
+                let mut for_user = Vec::new();
+                for (index, prompt) in prompts.iter().enumerate() {
+                    let automatic = if is_password_prompt(prompt) && !password_spent {
+                        password_spent = true;
+                        connection.password.clone()
+                    } else {
+                        prepared.next()
+                    };
+                    match automatic {
+                        Some(answer) => answers[index] = answer,
+                        None => for_user.push(index),
+                    }
+                }
+
+                if !for_user.is_empty() {
+                    asked_user = true;
+                    let user_answers =
+                        ask_user(app, connection, &name, &instructions, &prompts, &for_user)
+                            .await?;
+                    for (index, answer) in for_user.into_iter().zip(user_answers) {
+                        answers[index] = answer;
+                    }
+                }
+                responses = Some(answers);
+            }
+            Ok(Err(e)) => return Err(format!("交互式验证失败: {}", e)),
+            Err(_) => return Err("认证超时".to_string()),
+        }
+    }
+    Err("服务器的验证提问轮数超出预期".to_string())
+}
+
+/// 把需要用户回答的提问发给界面并等回答
+#[allow(clippy::too_many_arguments)]
+fn build_question(
+    connection: &SSHConnection,
+    name: &str,
+    instruction: &str,
+    prompts: &[russh::client::Prompt],
+    indexes: &[usize],
+) -> AuthQuestion {
+    AuthQuestion {
+        id: String::new(),
+        host: connection.host.clone(),
+        port: connection.port,
+        username: connection.username.clone(),
+        name: name.to_string(),
+        instruction: instruction.to_string(),
+        prompts: indexes
+            .iter()
+            .map(|&index| AuthPrompt {
+                prompt: prompts[index].prompt.clone(),
+                echo: prompts[index].echo,
+            })
+            .collect(),
+    }
+}
+
+async fn ask_user(
+    app: Option<&AppHandle>,
+    connection: &SSHConnection,
+    name: &str,
+    instruction: &str,
+    prompts: &[russh::client::Prompt],
+    indexes: &[usize],
+) -> Result<Vec<String>, String> {
+    auth_prompt::ask(
+        app,
+        build_question(connection, name, instruction, prompts, indexes),
+    )
+    .await
+}
+
+async fn authenticate_with_key(
+    handle: &mut Handle<SshClientHandler>,
+    connection: &SSHConnection,
+) -> Result<(), String> {
+    let Some(key_file) = &connection.key_file else {
+        return Err("未提供认证信息".to_string());
+    };
+    let key_path = shellexpand::tilde(key_file).into_owned();
+    let key_pair = russh::keys::load_secret_key(&key_path, connection.key_passphrase.as_deref())
+        .map_err(|e| {
+            format!(
+                "加载密钥文件失败: {}。请确认路径正确、格式为 OpenSSH/PEM；私钥设了口令的话请填写私钥口令",
+                e
+            )
+        })?;
+
+    let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
+
+    let auth_result = tokio::time::timeout(
+        AUTH_TIMEOUT,
+        handle.authenticate_publickey(&connection.username, key_with_hash),
+    )
+    .await;
+
+    match auth_result {
+        Ok(Ok(auth)) if auth.success() => Ok(()),
+        Ok(Ok(_)) => Err("密钥认证失败。请检查密钥是否已添加到服务器".to_string()),
+        Ok(Err(e)) => Err(format!(
+            "密钥认证失败: {}。请检查密钥是否已添加到服务器",
+            e
+        )),
+        Err(_) => Err("密钥认证超时".to_string()),
+    }
+}
+
+/// 用本机 ssh-agent 里的密钥认证（YubiKey、1Password、系统 agent 等都在此列）。
+/// agent 里可能有多把钥匙，逐把尝试，任何一把被接受即成功。
+async fn authenticate_with_agent(
+    handle: &mut Handle<SshClientHandler>,
+    connection: &SSHConnection,
+) -> Result<(), String> {
+    // Unix 走 SSH_AUTH_SOCK；Windows 走 OpenSSH 代理服务的命名管道。
+    // 保留具体的流类型、不要转成 trait 对象（dynamic()）：那样这个 async fn 的 future
+    // 在 spawn 处会被判成 Send is not general enough（高阶生命周期推导不过去）
+    #[cfg(unix)]
+    let mut agent = russh::keys::agent::client::AgentClient::connect_env()
+        .await
+        .map_err(|_| agent_unavailable())?;
+    #[cfg(windows)]
+    let mut agent = russh::keys::agent::client::AgentClient::connect_named_pipe(
+        r"\\.\pipe\openssh-ssh-agent",
+    )
+    .await
+    .map_err(|_| agent_unavailable())?;
+
+    let identities = tokio::time::timeout(AUTH_TIMEOUT, agent.request_identities())
+        .await
+        .map_err(|_| "连接 ssh-agent 超时".to_string())?
+        .map_err(|e| format!("读取 ssh-agent 里的密钥失败: {}", e))?;
+    if identities.is_empty() {
+        return Err("ssh-agent 里没有密钥，请先用 ssh-add 添加".to_string());
+    }
+
+    let mut last_error = None;
+    for key in identities {
+        let attempt = tokio::time::timeout(
+            AUTH_TIMEOUT,
+            handle.authenticate_publickey_with(&connection.username, key, None, &mut agent),
+        )
+        .await;
+        match attempt {
+            Ok(Ok(auth)) if auth.success() => return Ok(()),
+            Ok(Ok(_)) => {}
+            Ok(Err(e)) => last_error = Some(e.to_string()),
+            Err(_) => return Err("ssh-agent 认证超时".to_string()),
+        }
+    }
+    Err(match last_error {
+        Some(e) => format!(
+            "ssh-agent 认证失败: {}。请确认 agent 里的公钥已添加到服务器",
+            e
+        ),
+        None => "ssh-agent 认证失败。请确认 agent 里的公钥已添加到服务器".to_string(),
+    })
+}
+
+fn agent_unavailable() -> String {
+    #[cfg(unix)]
+    {
+        "连不上 ssh-agent（环境变量 SSH_AUTH_SOCK 没设置或 agent 没在运行）。         从程序坞启动的应用读不到 shell 里设置的环境变量：请改用密钥文件认证，         或用 launchctl setenv SSH_AUTH_SOCK 指向 agent 的套接字"
+            .to_string()
+    }
+    #[cfg(windows)]
+    {
+        "连不上 ssh-agent。请确认 OpenSSH Authentication Agent 服务正在运行".to_string()
+    }
+}
+
 #[tauri::command]
-pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, String> {
+pub async fn connect_ssh(
+    id: String,
+    connection: SSHConnection,
+    app: AppHandle,
+) -> Result<bool, String> {
+    connect_ssh_with(id, connection, HostKeyPolicy::RequireTrusted, Some(app)).await
+}
+
+/// 应用界面一律严格校验主机密钥；MCP 链路由调用方显式说明是否自动信任新主机
+pub(crate) async fn connect_ssh_with(
+    id: String,
+    connection: SSHConnection,
+    policy: HostKeyPolicy,
+    app: Option<AppHandle>,
+) -> Result<bool, String> {
     {
         let sessions = SESSIONS.read().await;
         if sessions.contains_key(&id) {
@@ -173,101 +683,42 @@ pub async fn connect_ssh(id: String, connection: SSHConnection) -> Result<bool, 
         ));
     }
 
-    let addr = format!("{}:{}", connection.host, connection.port);
-    let socket_addr = addr
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut a| a.next())
-        .ok_or("解析地址失败")?;
-
-    let mut config = russh::client::Config::default();
-    config.keepalive_interval = Some(std::time::Duration::from_secs(30));
-    config.keepalive_max = 3;
-    let config = Arc::new(config);
-    let addr_str = socket_addr.to_string();
-    let handler = SshClientHandler::new(connection.host.clone(), connection.port);
-
-    let connect_result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        russh::client::connect(config, &addr_str, handler),
-    )
-    .await;
-
-    let mut handle = match connect_result {
-        Ok(Ok(handle)) => handle,
-        Ok(Err(e)) => return Err(format!("连接失败: {}", e)),
-        Err(_) => return Err("连接超时，请检查网络或服务器地址".to_string()),
-    };
-
-    // 认证超时 20s：企业服务器认证栈可能很慢（PAM/sssd/LDAP、GSSAPI 等 DNS 反查），
-    // 实测有服务器 password 认证响应需要 10s+。5s 会把"慢"误判为"超时"。
-    // OpenSSH 客户端 LoginGraceTime 默认 120s，20s 已足够保守。
-    let auth_success = if let Some(password) = &connection.password {
-        let auth_result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            handle.authenticate_password(&connection.username, password),
-        )
-        .await;
-
-        match auth_result {
-            Ok(Ok(auth)) => auth.success(),
-            Ok(Err(e)) => return Err(format!("认证失败: {}", e)),
-            Err(_) => return Err("认证超时".to_string()),
-        }
-    } else if let Some(key_file) = &connection.key_file {
-        let key_path = shellexpand::tilde(key_file).into_owned();
-        let key_pair = russh::keys::load_secret_key(&key_path, None).map_err(|e| {
-            format!(
-                "加载密钥文件失败: {}。请确保文件路径正确且格式为 OpenSSH/PEM",
-                e
-            )
-        })?;
-
-        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
-
-        let auth_result = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            handle.authenticate_publickey(&connection.username, key_with_hash),
-        )
-        .await;
-
-        match auth_result {
-            Ok(Ok(auth)) => auth.success(),
-            Ok(Err(e)) => return Err(format!("密钥认证失败: {}。请检查密钥是否已添加到服务器", e)),
-            Err(_) => return Err("密钥认证超时".to_string()),
-        }
-    } else {
-        return Err("未提供认证信息".to_string());
-    };
-
-    if !auth_success {
-        return Err("认证失败".to_string());
-    }
+    let EstablishedSession { handle, jumps } =
+        establish_session(&connection, policy, app.as_ref()).await?;
 
     {
         let mut sessions = SESSIONS.write().await;
         if sessions.contains_key(&id) {
             return Ok(true);
         }
-        sessions.insert(id, SshSession { 
-            handle: Arc::new(handle), 
-            connection,
-        });
+        sessions.insert(
+            id,
+            SshSession {
+                handle: Arc::new(handle),
+                connection,
+                jumps,
+            },
+        );
     }
     Ok(true)
 }
 
 #[tauri::command]
 pub async fn disconnect_ssh(id: String) -> Result<bool, String> {
-    cleanup_connection(&id).await;
-    
-    if let Some(session) = SESSIONS.write().await.remove(&id) {
+    close_session(&id).await;
+    Ok(true)
+}
+
+/// 断开并移除一条会话，连同它的 SFTP 连接和端口转发
+pub(crate) async fn close_session(id: &str) {
+    cleanup_connection(id).await;
+
+    if let Some(session) = SESSIONS.write().await.remove(id) {
         let _ = session
             .handle
             .disconnect(Disconnect::ByApplication, "Disconnected", "en")
             .await;
     }
-    Ok(true)
 }
 
 /// exec 默认超时：tail -f / journalctl -f 等不退出的命令会永久占用 channel
@@ -440,73 +891,24 @@ pub async fn execute_command_with_input(
 }
 
 #[tauri::command]
-pub async fn test_connection(connection: SSHConnection) -> Result<bool, String> {
-    let addr = format!("{}:{}", connection.host, connection.port);
-    let socket_addr = addr
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut a| a.next())
-        .ok_or("解析地址失败")?;
+pub async fn test_connection(connection: SSHConnection, app: AppHandle) -> Result<bool, String> {
+    test_connection_with(connection, HostKeyPolicy::RequireTrusted, Some(app)).await
+}
 
-    let config = Arc::new(russh::client::Config::default());
-    let handler = SshClientHandler::new(connection.host.clone(), connection.port);
-    let connect_result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        russh::client::connect(config, &socket_addr.to_string(), handler),
-    )
-    .await;
-
-    let mut handle = match connect_result {
-        Ok(Ok(handle)) => handle,
-        Ok(Err(e)) => return Err(format!("连接失败: {}", e)),
-        Err(_) => return Err("连接超时，请检查网络或服务器地址".to_string()),
-    };
-
-    let auth_success = match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            if let Some(password) = &connection.password {
-                handle
-                    .authenticate_password(&connection.username, password)
-                    .await
-                    .map(|auth| auth.success())
-                    .unwrap_or(false)
-            } else if let Some(key_file) = &connection.key_file {
-                let key_path = shellexpand::tilde(key_file).into_owned();
-                match russh::keys::load_secret_key(&key_path, None) {
-                    Ok(key_pair) => {
-                        let key_with_hash =
-                            russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
-                        handle
-                            .authenticate_publickey(&connection.username, key_with_hash)
-                            .await
-                            .map(|auth| auth.success())
-                            .unwrap_or(false)
-                    }
-                    Err(_) => false,
-                }
-            } else {
-                false
-            }
-        },
-    )
-    .await
-    {
-        Ok(result) => result,
-        Err(_) => {
-            tokio::spawn(async move {
-                let _ = handle
-                    .disconnect(Disconnect::ByApplication, "Test timeout", "en")
-                    .await;
-            });
-            return Err("认证超时".to_string());
-        }
-    };
-
+/// 测试连接：完整走一遍握手、主机密钥校验和认证，随即断开
+pub(crate) async fn test_connection_with(
+    connection: SSHConnection,
+    policy: HostKeyPolicy,
+    app: Option<AppHandle>,
+) -> Result<bool, String> {
+    let EstablishedSession {
+        handle,
+        jumps: _,
+    } = establish_session(&connection, policy, app.as_ref()).await?;
     let _ = handle
         .disconnect(Disconnect::ByApplication, "Test complete", "en")
         .await;
-    Ok(auth_success)
+    Ok(true)
 }
 
 #[tauri::command]
@@ -1245,4 +1647,123 @@ pub async fn kill_process(id: String, pid: u32, signal: Option<String>) -> Resul
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_method_parses_and_serializes() {
+        assert_eq!(parse_auth_method("agent").unwrap(), AuthMethod::Agent);
+        assert_eq!(parse_auth_method("publickey").unwrap(), AuthMethod::PublicKey);
+        assert_eq!(parse_auth_method("password").unwrap(), AuthMethod::Password);
+        assert!(parse_auth_method("key").is_err());
+        // 存库用的字符串形式
+        assert_eq!(serde_json::to_string(&AuthMethod::Agent).unwrap(), "\"agent\"");
+    }
+
+    #[test]
+    fn old_callers_without_new_fields_still_deserialize() {
+        let connection: SSHConnection = serde_json::from_str(
+            r#"{"host":"10.0.0.1","port":22,"username":"root","password":"pw","key_file":null}"#,
+        )
+        .unwrap();
+        assert_eq!(connection.key_passphrase, None);
+        assert_eq!(connection.auth_method, None);
+        assert_eq!(connection.jump_host_id, None);
+        // 老行为：没指定认证方式时，有密钥文件用密钥
+        assert_eq!(resolve_auth_method(&connection), AuthMethod::Password);
+        let with_key = SSHConnection {
+            key_file: Some("~/.ssh/id_ed25519".into()),
+            ..connection
+        };
+        assert_eq!(resolve_auth_method(&with_key), AuthMethod::PublicKey);
+    }
+
+    #[test]
+    fn explicit_auth_method_wins_over_inference() {
+        let connection = SSHConnection {
+            key_file: Some("~/.ssh/id_ed25519".into()),
+            auth_method: Some(AuthMethod::Agent),
+            ..Default::default()
+        };
+        assert_eq!(resolve_auth_method(&connection), AuthMethod::Agent);
+    }
+
+    #[test]
+    fn jump_checks_reject_cycles_and_too_many_layers() {
+        let path = vec!["b".to_string(), "c".to_string()];
+        assert!(check_jump("a", "a", 0, &path).is_ok());
+        assert!(check_jump("b", "web-b", 0, &path).unwrap_err().contains("成环"));
+        assert!(check_jump("b", "web-b", 0, &path).unwrap_err().contains("web-b"));
+        assert!(check_jump("a", "a", MAX_JUMP_DEPTH, &path)
+            .unwrap_err()
+            .contains("超过 3 层"));
+    }
+
+    #[test]
+    fn password_like_prompts_are_recognized() {
+        let prompt = |text: &str, echo| russh::client::Prompt {
+            prompt: text.into(),
+            echo,
+        };
+        assert!(is_password_prompt(&prompt("Password: ", false)));
+        assert!(is_password_prompt(&prompt("user@host's password:", false)));
+        assert!(is_password_prompt(&prompt("请输入密码:", false)));
+        // 动态口令、验证码不算密码，哪怕同样不回显
+        assert!(!is_password_prompt(&prompt("Verification code:", false)));
+        // 回显的提问（用户名之类）也不算
+        assert!(!is_password_prompt(&prompt("Password: ", true)));
+    }
+
+    #[test]
+    fn question_carries_only_the_prompts_left_for_the_user() {
+        let connection = SSHConnection {
+            host: "10.0.0.1".into(),
+            port: 2222,
+            username: "ops".into(),
+            ..Default::default()
+        };
+        let prompts = vec![
+            russh::client::Prompt {
+                prompt: "Password:".into(),
+                echo: false,
+            },
+            russh::client::Prompt {
+                prompt: "Verification code:".into(),
+                echo: false,
+            },
+            russh::client::Prompt {
+                prompt: "Region".into(),
+                echo: true,
+            },
+        ];
+        let question = build_question(
+            &connection,
+            "Google Authenticator",
+            "Enter code",
+            &prompts,
+            &[1, 2],
+        );
+        assert_eq!(
+            (question.host.as_str(), question.port, question.username.as_str()),
+            ("10.0.0.1", 2222, "ops")
+        );
+        assert_eq!(question.name, "Google Authenticator");
+        assert_eq!(question.instruction, "Enter code");
+        assert_eq!(
+            question.prompts,
+            vec![
+                AuthPrompt {
+                    prompt: "Verification code:".into(),
+                    echo: false
+                },
+                AuthPrompt {
+                    prompt: "Region".into(),
+                    echo: true
+                },
+            ]
+        );
+    }
 }

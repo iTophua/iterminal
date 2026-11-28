@@ -5,6 +5,9 @@
 
 // ============ 连接相关 ============
 
+/** 认证方式。不填时后端按有没有私钥文件推断（兼容老数据） */
+export type AuthMethod = 'password' | 'publickey' | 'agent'
+
 export interface Connection {
   id: string
   name: string
@@ -13,6 +16,11 @@ export interface Connection {
   username: string
   password?: string
   keyFile?: string
+  /** 私钥口令（私钥本身加了口令时用） */
+  keyPassphrase?: string
+  authMethod?: AuthMethod
+  /** 跳板机：另一条已保存连接的 id */
+  jumpHostId?: string
   group: string
   tags: string[]
   lastConnectedAt?: string

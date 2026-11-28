@@ -138,6 +138,13 @@ function fmtSize(bytes: number): string {
   return `${(bytes / 1073741824).toFixed(1)}G`;
 }
 
+/** Unix 秒 → "10-21 08:15"（本地时间，去年份与秒） */
+function fmtUnix(seconds: number): string {
+  const d = new Date(seconds * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** ISO 时间 → "10-21 08:15"（去年份与秒，列表场景够用） */
 function fmtTime(iso: string): string {
   return iso?.slice(5, 16).replace("T", " ") ?? "";
@@ -224,6 +231,104 @@ async function apiCall<T>(
   }
 }
 
+interface HostKeyInfo {
+  key_type: string;
+  key: string;
+  fingerprint: string;
+}
+
+interface SnippetRecord {
+  id: string;
+  title: string;
+  command: string;
+  description: string | null;
+  category: string | null;
+}
+
+interface SessionLogFile {
+  name: string;
+  size: number;
+  modified_at: number;
+}
+
+interface SshConfigEntry {
+  alias: string;
+  host_name: string;
+  port: number;
+  user: string | null;
+  identity_file: string | null;
+  proxy_jump: string | null;
+  unsupported: string | null;
+}
+
+interface BatchExecResult {
+  id: string;
+  label: string;
+  success: boolean;
+  output: string;
+  error: string | null;
+  timed_out: boolean;
+}
+
+interface KnownHostRecord {
+  host: string;
+  port: number;
+  key_type: string;
+  key: string;
+  fingerprint: string;
+  first_seen_at: string | null;
+}
+
+const HOST_KEY_CHALLENGE_PREFIX = "HOST_KEY_CHALLENGE:";
+
+/**
+ * 连接类工具统一走这里。主机密钥需要用户确认时，后端在错误里带挑战（JSON），
+ * 原样透传对 Agent 没有用——换成它下一步该做什么。
+ */
+async function connectTool(method: string, path: string, body?: unknown): Promise<unknown> {
+  // 慢认证服务器（PAM/GSSAPI）后端最长等 30s
+  const response = await apiCall<unknown>(method, path, body, 60000);
+  if (response.success) return response;
+
+  const error = response.error ?? "";
+  const index = error.indexOf(HOST_KEY_CHALLENGE_PREFIX);
+  if (index === -1) return response;
+
+  let challenge: {
+    kind: string;
+    host: string;
+    port: number;
+    presented: HostKeyInfo;
+    trusted?: HostKeyInfo;
+  } | null = null;
+  try {
+    challenge = JSON.parse(error.slice(index + HOST_KEY_CHALLENGE_PREFIX.length));
+  } catch {
+    return response;
+  }
+  if (!challenge?.presented) return response;
+
+  const { kind, host, port, presented, trusted } = challenge;
+  if (kind === "changed") {
+    return {
+      success: false,
+      host_key: "changed",
+      error:
+        `${host}:${port} 的主机密钥与之前信任的不一致（原 ${trusted?.key_type} ${trusted?.fingerprint}，` +
+        `现为 ${presented.key_type} ${presented.fingerprint}）。可能是服务器重装，也可能是中间人攻击，` +
+        "不能由你代为确认：请用户在 iTerminal 里连接一次该主机，在警告框里核对指纹后再重试",
+    };
+  }
+  return {
+    success: false,
+    host_key: "unknown",
+    error:
+      `尚未信任 ${host}:${port} 的主机密钥（${presented.key_type}，指纹 ${presented.fingerprint}）。` +
+      "iTerminal 会校验服务器身份，首次连接需要确认。向用户确认该指纹无误后，带 acceptHostKey: true " +
+      "重新调用即可信任并连接；已信任的密钥见 iter_list_known_hosts",
+  };
+}
+
 const tools: Tool[] = [
   {
     name: "iter_status",
@@ -233,7 +338,7 @@ const tools: Tool[] = [
   {
     name: "iter_connect",
     description:
-      "创建 SSH 连接（同 host:端口:用户 已有活跃连接时自动复用，不重复握手）。已保存的配置优先用 iter_quick_connect 按名称连接",
+      "创建 SSH 连接（同 host:端口:用户 已有活跃连接时自动复用，不重复握手）。已保存的配置优先用 iter_quick_connect 按名称连接。认证：password、keyFile 或 authMethod=agent 三选一",
     inputSchema: {
       type: "object",
       properties: {
@@ -242,8 +347,14 @@ const tools: Tool[] = [
         port: { type: "number", description: "SSH端口，默认22" },
         username: { type: "string", description: "用户名" },
         password: { type: "string", description: "密码" },
+        acceptHostKey: { type: "boolean", description: "这台主机首次连接、指纹是否已向用户核对并同意信任（等同 OpenSSH 的 accept-new），默认 false。iTerminal 会校验服务器身份：未信任时连接被拒绝并返回指纹；已信任的密钥发生变化时此参数无效，必须由用户在 iTerminal 的警告框里确认" },
+        keyFile: { type: "string", description: "本机私钥文件路径，如 ~/.ssh/id_ed25519（与 password 二选一）" },
+        keyPassphrase: { type: "string", description: "私钥口令（私钥本身加了口令时必填）" },
+        authMethod: { type: "string", enum: ["password", "publickey", "agent"], description: "认证方式，默认按有无 keyFile 推断；agent 表示用本机 ssh-agent 里的密钥（此时不需要 password/keyFile）" },
+        jumpHostId: { type: "string", description: "跳板机：一条已保存连接的 id（iter_list_saved_connections 可查），经它转发到目标主机" },
+        authAnswers: { type: "array", items: { type: "string" }, description: "服务器交互式验证（动态口令、短信验证码等）提问的预备回答，按提问顺序。不传则提问弹在 iTerminal 窗口里由用户回答" },
       },
-      required: ["id", "host", "username", "password"],
+      required: ["id", "host", "username"],
     },
   },
   {
@@ -267,8 +378,14 @@ const tools: Tool[] = [
         port: { type: "number", description: "SSH端口，默认22" },
         username: { type: "string", description: "用户名" },
         password: { type: "string", description: "密码" },
+        acceptHostKey: { type: "boolean", description: "这台主机首次连接、指纹是否已向用户核对并同意信任（等同 OpenSSH 的 accept-new），默认 false。iTerminal 会校验服务器身份：未信任时连接被拒绝并返回指纹；已信任的密钥发生变化时此参数无效，必须由用户在 iTerminal 的警告框里确认" },
+        keyFile: { type: "string", description: "本机私钥文件路径，如 ~/.ssh/id_ed25519（与 password 二选一）" },
+        keyPassphrase: { type: "string", description: "私钥口令（私钥本身加了口令时必填）" },
+        authMethod: { type: "string", enum: ["password", "publickey", "agent"], description: "认证方式，默认按有无 keyFile 推断；agent 表示用本机 ssh-agent 里的密钥（此时不需要 password/keyFile）" },
+        jumpHostId: { type: "string", description: "跳板机：一条已保存连接的 id（iter_list_saved_connections 可查），经它转发到目标主机" },
+        authAnswers: { type: "array", items: { type: "string" }, description: "服务器交互式验证（动态口令、短信验证码等）提问的预备回答，按提问顺序。不传则提问弹在 iTerminal 窗口里由用户回答" },
       },
-      required: ["host", "username", "password"],
+      required: ["host", "username"],
     },
   },
   {
@@ -287,6 +404,20 @@ const tools: Tool[] = [
         command: { type: "string", description: "要执行的命令" },
       },
       required: ["id", "command"],
+    },
+  },
+  {
+    name: "iter_batch_exec",
+    description:
+      "在多条连接上并发执行同一条命令并汇总每台的结果（批量看磁盘、批量重启服务等）。未连接的按保存的配置临时建连、跑完即断，不会在界面打开终端。单台最长 60 秒，持续输出的命令会被强制终止并带回已有输出",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ids: { type: "array", items: { type: "string" }, description: "连接 id 列表（iter_list_saved_connections / iter_list_connections 获取）" },
+        command: { type: "string", description: "要执行的命令" },
+        acceptHostKey: { type: "boolean", description: "同 iter_connect：临时建连时首次见到的主机密钥是否信任，默认 false" },
+      },
+      required: ["ids", "command"],
     },
   },
   {
@@ -428,6 +559,7 @@ const tools: Tool[] = [
       type: "object",
       properties: {
         id: { type: "string", description: "连接名称 / IP / IP 片段 / ID" },
+        acceptHostKey: { type: "boolean", description: "同 iter_connect：首次连接是否信任已核对过的主机密钥，默认 false" },
       },
       required: ["id"],
     },
@@ -444,9 +576,88 @@ const tools: Tool[] = [
         username: { type: "string", description: "登录用户名" },
         password: { type: "string", description: "密码（与 keyFile 二选一）" },
         keyFile: { type: "string", description: "私钥文件路径（与 password 二选一）" },
+        keyPassphrase: { type: "string", description: "私钥口令" },
+        authMethod: { type: "string", enum: ["password", "publickey", "agent"], description: "认证方式，默认按有无 keyFile 推断；agent 表示用本机 ssh-agent" },
+        jumpHostId: { type: "string", description: "跳板机：一条已保存连接的 id" },
         autoConnect: { type: "boolean", description: "保存后立即连接，默认false" },
+        acceptHostKey: { type: "boolean", description: "同 iter_connect：autoConnect 时首次连接是否信任已核对过的主机密钥，默认 false" },
       },
       required: ["name", "host", "username"],
+    },
+  },
+  {
+    name: "iter_preview_ssh_config",
+    description:
+      "预览用户 ~/.ssh/config 里可导入的 Host（别名 user@host:端口 [私钥] [经 跳板机]）。需要用户已有的服务器时先看这里，再用 iter_import_ssh_config 导入",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "iter_import_ssh_config",
+    description:
+      "把 ~/.ssh/config 里的 Host 导入为 iTerminal 的已保存连接（之后用 iter_quick_connect 连接）。主机和用户名都相同的连接会跳过，不会重复导入",
+    inputSchema: {
+      type: "object",
+      properties: {
+        group: { type: "string", description: "导入到的分组名，默认「默认」" },
+        aliases: { type: "array", items: { type: "string" }, description: "只导入这些别名；不给则全部" },
+      },
+    },
+  },
+  {
+    name: "iter_list_snippets",
+    description:
+      "列出用户保存的命令片段（标题 分类 命令）。片段里的 {{host}} {{port}} {{user}} {{name}} 表示目标连接信息、{{date}} {{time}} 等表示当前时间、{{input:提示}} 需向用户要一个值——执行前请自行替换成实际值；{{cursor}} 忽略",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "只看这个分类" },
+        keyword: { type: "string", description: "标题/命令里包含的关键字" },
+      },
+    },
+  },
+  {
+    name: "iter_list_session_logs",
+    description:
+      "列出 iTerminal 的终端会话日志文件，新的在前（需用户在 设置 → 终端 开启「会话日志」）。想知道用户之前在某台机器的终端里执行过什么、看到过什么输出时用",
+    inputSchema: {
+      type: "object",
+      properties: {
+        dir: { type: "string", description: "日志目录；默认 ~/iTerminal/logs。用户在设置里改过目录时传入" },
+        limit: { type: "number", description: "最多列几条，默认 20" },
+      },
+    },
+  },
+  {
+    name: "iter_read_session_log",
+    description: "读一份会话日志的末尾（纯文本，已去掉颜色等转义序列）。默认取末尾 64KB",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "日志文件名，iter_list_session_logs 给出" },
+        maxBytes: { type: "number", description: "取末尾多少字节，默认 65536" },
+        dir: { type: "string", description: "日志目录；默认 ~/iTerminal/logs" },
+      },
+      required: ["name"],
+    },
+  },
+  {
+    name: "iter_list_known_hosts",
+    description:
+      "列出 iTerminal 已信任的主机密钥（主机:端口 算法 SHA256 指纹 首次信任时间）。连接报主机密钥未信任或已变化时，用它向用户核对",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "iter_forget_known_host",
+    description:
+      "忘记一台主机的已信任密钥，下次连接重新询问。只在用户确认服务器确实更换了密钥之后使用",
+    inputSchema: {
+      type: "object",
+      properties: {
+        host: { type: "string", description: "主机地址" },
+        port: { type: "number", description: "SSH端口，默认22" },
+        keyType: { type: "string", description: "只忘掉某一种算法的密钥，如 ssh-ed25519；不给则忘掉该主机的全部" },
+      },
+      required: ["host"],
     },
   },
   {
@@ -602,8 +813,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           port,
           username: params.username,
           password: params.password,
+          acceptHostKey: params.acceptHostKey === true,
+          key_file: params.keyFile || null,
+          key_passphrase: params.keyPassphrase || null,
+          auth_method: params.authMethod || null,
+          jump_host_id: params.jumpHostId || null,
+          auth_answers: params.authAnswers ?? null,
         };
-        result = await apiCall<string>("POST", "/api/connections", body, 60000); // 慢认证服务器（PAM/GSSAPI）后端最长等 30s
+        result = await connectTool("POST", "/api/connections", body);
         break;
       }
 
@@ -619,8 +836,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           port: params.port || 22,
           username: params.username,
           password: params.password,
+          acceptHostKey: params.acceptHostKey === true,
+          key_file: params.keyFile || null,
+          key_passphrase: params.keyPassphrase || null,
+          auth_method: params.authMethod || null,
+          jump_host_id: params.jumpHostId || null,
+          auth_answers: params.authAnswers ?? null,
         };
-        result = await apiCall<boolean>("POST", "/api/connections/test", body, 60000);
+        result = await connectTool("POST", "/api/connections/test", body);
         break;
       }
 
@@ -638,6 +861,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           r.data.output = `[输出超 128KB，已保留末尾；需要头部或完整输出请用更精确的命令过滤，或重定向到文件后分段读取]\n${r.data.output.slice(-131072)}`;
         }
         result = r;
+        break;
+      }
+
+      case "iter_batch_exec": {
+        // 不限时：后端自带超时（建连 45s + 执行 60s）
+        const r = await apiCall<BatchExecResult[]>("POST", "/api/batch-exec", {
+          ids: params.ids,
+          command: params.command,
+          acceptHostKey: params.acceptHostKey === true,
+        }, 0);
+        if (!r.success || !Array.isArray(r.data)) {
+          result = r;
+          break;
+        }
+        const ok = r.data.filter((x) => x.success).length;
+        const lines = r.data.map((x) => {
+          const mark = x.success ? "✓" : x.timed_out ? "⏱" : "✗";
+          const detail = [x.error?.trimEnd(), x.output.trimEnd()].filter(Boolean).join("\n");
+          // 每台只带回末尾 2000 字符：30 台机器的完整输出能把上下文吃光
+          const shown =
+            detail.length > 2000 ? `${detail.slice(-2000)}\n…（输出过长，只保留末尾 2000 字符）` : detail;
+          return `${mark} ${x.label}${x.timed_out ? "（超时，输出不完整）" : ""}\n${shown || "（无输出）"}`;
+        });
+        result = `批量执行完成：成功 ${ok} / ${r.data.length}\n\n${lines.join("\n\n")}`;
         break;
       }
 
@@ -793,20 +1040,137 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
           connId = matches[0].id;
         }
-        result = await apiCall<string>("POST", `/api/saved-connections/${encodeURIComponent(connId)}/connect`, undefined, 60000);
+        result = await connectTool(
+          "POST",
+          `/api/saved-connections/${encodeURIComponent(connId)}/connect`,
+          params.acceptHostKey === true ? { acceptHostKey: true } : undefined,
+        );
         break;
       }
 
       case "iter_save_connection": {
-        result = await apiCall<string>("POST", "/api/saved-connections", {
+        result = await connectTool("POST", "/api/saved-connections", {
           name: params.name,
           host: params.host,
           port: params.port,
           username: params.username,
           password: params.password,
-          keyFile: params.keyFile,
+          // 后端字段是 snake_case：此前传 keyFile 被忽略，经 MCP 保存的连接一直丢私钥配置
+          key_file: params.keyFile || null,
+          key_passphrase: params.keyPassphrase || null,
+          auth_method: params.authMethod || null,
+          jump_host_id: params.jumpHostId || null,
           autoConnect: params.autoConnect ?? false,
+          acceptHostKey: params.acceptHostKey === true,
         });
+        break;
+      }
+
+      case "iter_preview_ssh_config": {
+        const r = await apiCall<SshConfigEntry[]>("GET", "/api/ssh-config");
+        if (r.success && Array.isArray(r.data)) {
+          result =
+            r.data.length === 0
+              ? "~/.ssh/config 里没有可导入的 Host"
+              : r.data
+                  .map((e) => {
+                    const parts = [e.alias, `${e.user ?? "<本机用户>"}@${e.host_name}:${e.port}`];
+                    if (e.identity_file) parts.push(`key=${e.identity_file}`);
+                    if (e.proxy_jump) parts.push(`via=${e.proxy_jump}`);
+                    if (e.unsupported) parts.push(`[不支持: ${e.unsupported}]`);
+                    return parts.join(" ");
+                  })
+                  .join("\n");
+        } else {
+          result = r;
+        }
+        break;
+      }
+
+      case "iter_import_ssh_config": {
+        result = await apiCall<{ imported: number; skipped: string[] }>("POST", "/api/ssh-config/import", {
+          group: params.group,
+          aliases: params.aliases,
+        });
+        break;
+      }
+
+      case "iter_list_snippets": {
+        const query = params.category ? `?category=${encodeURIComponent(String(params.category))}` : "";
+        const r = await apiCall<SnippetRecord[]>("GET", `/api/snippets${query}`);
+        if (r.success && Array.isArray(r.data)) {
+          const keyword = params.keyword ? String(params.keyword).toLowerCase() : "";
+          const items = r.data.filter((s) => !keyword || `${s.title} ${s.command}`.toLowerCase().includes(keyword));
+          result =
+            items.length === 0
+              ? "没有匹配的片段"
+              : `共 ${items.length} 条片段\n` +
+                items.map((s) => `${s.title}${s.category ? ` [${s.category}]` : ""}: ${s.command}${s.description ? ` — ${s.description}` : ""}`).join("\n");
+        } else {
+          result = r;
+        }
+        break;
+      }
+
+      case "iter_list_session_logs": {
+        const limit = Number(params.limit);
+        const query = new URLSearchParams();
+        if (params.dir) query.set("dir", String(params.dir));
+        if (params.limit && limit > 0) query.set("limit", String(Math.floor(limit)));
+        const r = await apiCall<SessionLogFile[]>("GET", `/api/session-logs?${query}`);
+        if (r.success && Array.isArray(r.data)) {
+          result =
+            r.data.length === 0
+              ? "还没有会话日志（用户可能没开启会话日志，或开启后还没有终端输出）"
+              : `共 ${r.data.length} 份日志，新的在前\n` +
+                r.data.map((f) => `${f.name} (${fmtSize(f.size)}, ${fmtUnix(f.modified_at)})`).join("\n");
+        } else {
+          result = r;
+        }
+        break;
+      }
+
+      case "iter_read_session_log": {
+        const query = new URLSearchParams({ name: String(params.name ?? "") });
+        if (params.dir) query.set("dir", String(params.dir));
+        const maxBytes = Number(params.maxBytes);
+        if (params.maxBytes && maxBytes > 0) query.set("max_bytes", String(Math.floor(maxBytes)));
+        const r = await apiCall<{ name: string; size: number; truncated: boolean; content: string }>(
+          "GET",
+          `/api/session-logs/read?${query}`
+        );
+        if (r.success && r.data) {
+          result = `${r.data.name}（${fmtSize(r.data.size)}${r.data.truncated ? "，只显示末尾" : ""}）\n\n${r.data.content}`;
+        } else {
+          result = r;
+        }
+        break;
+      }
+
+      case "iter_list_known_hosts": {
+        const r = await apiCall<KnownHostRecord[]>("GET", "/api/known-hosts");
+        if (r.success && Array.isArray(r.data)) {
+          result =
+            r.data.length === 0
+              ? "还没有信任过任何主机"
+              : `已信任 ${r.data.length} 条主机密钥\n` +
+                r.data
+                  .map(
+                    (k) =>
+                      `${k.host}:${k.port} ${k.key_type} ${k.fingerprint}` +
+                      (k.first_seen_at ? ` (${fmtTime(k.first_seen_at)})` : "")
+                  )
+                  .join("\n");
+        } else {
+          result = r;
+        }
+        break;
+      }
+
+      case "iter_forget_known_host": {
+        const query = new URLSearchParams({ host: String(params.host), port: String(Number(params.port) || 22) });
+        if (params.keyType) query.set("key_type", String(params.keyType));
+        result = await apiCall<boolean>("DELETE", `/api/known-hosts?${query}`);
         break;
       }
 

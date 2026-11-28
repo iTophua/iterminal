@@ -1,8 +1,18 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { Button, Input, Space, Tag, Modal, Form, Select, Typography, App, Upload, Checkbox, Row, Col, Radio } from 'antd'
-import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined, FolderOpenOutlined, SwapOutlined, CheckSquareOutlined, DesktopOutlined, CloudOutlined, DatabaseOutlined, ContainerOutlined, InboxOutlined, CodeOutlined } from '@ant-design/icons'
+import { PlusOutlined, SearchOutlined, DeleteOutlined, EditOutlined, PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, EnvironmentOutlined, KeyOutlined, CopyOutlined, ImportOutlined, LoadingOutlined, ExportOutlined, UploadOutlined, FolderOpenOutlined, SwapOutlined, CheckSquareOutlined, DesktopOutlined, CloudOutlined, DatabaseOutlined, ContainerOutlined, InboxOutlined, CodeOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
+import { connectSsh, testConnection, toSSHConnection, HostKeyDeclinedError } from '../services/ssh'
+import SshConfigImport from '../components/SshConfigImport'
+import BatchExecModal from '../components/BatchExecModal'
+
+/** 连接表单的认证方式单选。老数据没存认证方式时，按有没有私钥文件推断 */
+type AuthType = 'password' | 'key' | 'agent'
+const authTypeOf = (conn: Pick<Connection, 'authMethod' | 'keyFile'>): AuthType =>
+  conn.authMethod === 'agent' ? 'agent' : conn.authMethod === 'publickey' || conn.keyFile ? 'key' : 'password'
+const authMethodOf = (type: AuthType): NonNullable<Connection['authMethod']> =>
+  type === 'agent' ? 'agent' : type === 'key' ? 'publickey' : 'password'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { useTerminalStore, Connection } from '../stores/terminalStore'
 import { useHistoryStore } from '../stores/historyStore'
@@ -74,10 +84,11 @@ function Connections() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
   const [selectedExportIds, setSelectedExportIds] = useState<string[]>([])
   const [exportAll, setExportAll] = useState(true)
-  const [authType, setAuthType] = useState<'password' | 'key'>('password')
+  const [authType, setAuthType] = useState<AuthType>('password')
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [batchGroup, setBatchGroup] = useState<string>('')
   const [isBatchGroupModalOpen, setIsBatchGroupModalOpen] = useState(false)
+  const [isBatchExecOpen, setIsBatchExecOpen] = useState(false)
   const [isBatchMode, setIsBatchMode] = useState(false)
   const [draggedId, setDraggedId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
@@ -256,7 +267,7 @@ function Connections() {
     e.stopPropagation()
     setEditingConnection(conn)
     form.setFieldsValue(conn)
-    setAuthType(conn.keyFile ? 'key' : 'password')
+    setAuthType(authTypeOf(conn))
     setTestResult(null)
     setTestMessage('')
     setIsModalOpen(true)
@@ -269,7 +280,7 @@ function Connections() {
       ...conn,
       name: `${conn.name} (副本)`
     })
-    setAuthType(conn.keyFile ? 'key' : 'password')
+    setAuthType(authTypeOf(conn))
     setTestResult(null)
     setTestMessage('')
     setIsModalOpen(true)
@@ -460,7 +471,7 @@ function Connections() {
     
     try {
       if (editingConnection) {
-        const updated = { ...editingConnection, ...values, port }
+        const updated = { ...editingConnection, ...values, port, authMethod: authMethodOf(authType) }
         await saveConnection(updated)
         updateConnection(updated)
         message.success('连接已更新')
@@ -473,6 +484,9 @@ function Connections() {
           username: values.username || '',
           password: values.password,
           keyFile: values.keyFile,
+          keyPassphrase: values.keyPassphrase,
+          authMethod: authMethodOf(authType),
+          jumpHostId: values.jumpHostId,
           group: values.group || '默认',
           tags: values.tags || [],
           status: 'offline'
@@ -503,21 +517,22 @@ function Connections() {
     const currentTestId = ++testIdRef.current
 
     try {
-      const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile'])
+      const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile', 'keyPassphrase', 'jumpHostId'])
       const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
 
       setTestLoading(true)
       setTestResult(null)
       setTestMessage('')
 
-      const result = await invoke<boolean>('test_connection', {
-        connection: {
-          host: values.host,
-          port,
-          username: values.username,
-          password: values.password || null,
-          key_file: values.keyFile || null,
-        }
+      const result = await testConnection({
+        host: values.host,
+        port,
+        username: values.username,
+        password: values.password || null,
+        keyFile: values.keyFile || null,
+        keyPassphrase: values.keyPassphrase || null,
+        authMethod: authMethodOf(authType),
+        jumpHostId: values.jumpHostId || null,
       })
 
       if (testIdRef.current !== currentTestId) return
@@ -532,7 +547,7 @@ function Connections() {
     } catch (error) {
       if (testIdRef.current !== currentTestId) return
       setTestResult('failed')
-      setTestMessage(`连接失败：${error}`)
+      setTestMessage(error instanceof HostKeyDeclinedError ? '已取消：未信任该主机的密钥' : `连接失败：${error}`)
     } finally {
       if (testIdRef.current === currentTestId) {
         setTestLoading(false)
@@ -557,16 +572,7 @@ function Connections() {
     message.info(`正在连接 ${conn.name}...`)
 
     try {
-      await invoke('connect_ssh', {
-        id: conn.id,
-        connection: {
-          host: conn.host,
-          port: conn.port,
-          username: conn.username,
-          password: conn.password || null,
-          key_file: conn.keyFile || null,
-        }
-      })
+      await connectSsh(conn.id, toSSHConnection(conn))
 
       const shellId = await invoke<string>('get_shell', { id: conn.id })
 
@@ -582,6 +588,7 @@ function Connections() {
     } catch (error) {
       console.error('[Connections] Connection failed:', error)
       updateConnectionStatus(conn.id, 'offline')
+      if (error instanceof HostKeyDeclinedError) return
       message.error(`连接失败: ${error}`)
     }
   }
@@ -783,6 +790,7 @@ function Connections() {
         <Button icon={<ImportOutlined />} onClick={() => setIsQuickImportOpen(true)}>
           快速导入
         </Button>
+        <SshConfigImport />
         <Button icon={<ExportOutlined />} onClick={handleExportConnections}>
           导出
         </Button>
@@ -914,6 +922,14 @@ function Connections() {
                   disabled={selectedIds.length === 0}
                 >
                   批量删除
+                </Button>
+                <Button
+                  size="small"
+                  icon={<ThunderboltOutlined />}
+                  onClick={() => setIsBatchExecOpen(true)}
+                  disabled={selectedIds.length === 0}
+                >
+                  批量执行
                 </Button>
               </div>
             )}
@@ -1158,22 +1174,30 @@ function Connections() {
               onChange={(e) => {
                 const type = e.target.value
                 setAuthType(type)
-                if (type === 'password') {
-                  form.setFieldValue('keyFile', undefined)
-                } else {
+                if (type !== 'key') {
+                  form.setFieldsValue({ keyFile: undefined, keyPassphrase: undefined })
+                }
+                if (type !== 'password') {
                   form.setFieldValue('password', undefined)
                 }
               }}
             >
               <Radio value="password">密码</Radio>
-              <Radio value="key">密钥</Radio>
+              <Radio value="key">私钥文件</Radio>
+              <Radio value="agent">ssh-agent</Radio>
             </Radio.Group>
           </Form.Item>
           {authType === 'password' ? (
             <Form.Item name="password" label="密码" style={{ marginBottom: 12 }}>
               <Input.Password placeholder="输入密码" allowClear />
             </Form.Item>
+          ) : authType === 'agent' ? (
+            <Typography.Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>
+              用本机 ssh-agent 里的密钥登录（系统钥匙串、YubiKey、1Password 等），不用填私钥路径。
+              需 agent 在运行且已加载密钥（ssh-add -L 可查看）。
+            </Typography.Text>
           ) : (
+            <>
             <Form.Item 
               name="keyFile" 
               label="密钥文件"
@@ -1202,7 +1226,20 @@ function Connections() {
                 }
               />
             </Form.Item>
+            <Form.Item name="keyPassphrase" label="私钥口令" style={{ marginBottom: 12 }}>
+              <Input.Password placeholder="私钥没设口令可留空" allowClear autoComplete="new-password" />
+            </Form.Item>
+            </>
           )}
+          <Form.Item name="jumpHostId" label="跳板机" style={{ marginBottom: 12 }}>
+            <Select
+              allowClear
+              placeholder="不使用"
+              options={connections
+                .filter(c => c.id !== editingConnection?.id)
+                .map(c => ({ value: c.id, label: `${c.name}（${c.host}）` }))}
+            />
+          </Form.Item>
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item name="group" label="分组" initialValue="默认" style={{ marginBottom: 12 }}>
@@ -1387,6 +1424,12 @@ function Connections() {
           已选择 {exportAll ? connections.length : selectedExportIds.length} 个连接
         </div>
       </Modal>
+
+      <BatchExecModal
+        open={isBatchExecOpen}
+        onClose={() => setIsBatchExecOpen(false)}
+        targets={connections.filter(conn => selectedIds.includes(conn.id)).map(({ id, name }) => ({ id, name }))}
+      />
 
       <Modal
         title="批量调整分组"

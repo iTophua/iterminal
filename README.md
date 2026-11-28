@@ -26,7 +26,7 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 ### 核心特性
 
 - 🚀 **轻量高效** - 基于 Tauri，内存占用低，启动速度快
-- 🔐 **安全可靠** - AES-256-GCM 加密存储连接信息，支持 SSH 密钥认证，自动密码迁移
+- 🔐 **安全可靠** - AES-256-GCM 加密存储连接信息；首次连接核对主机密钥指纹，密钥变化会阻断并警告；支持密码、私钥（含口令）、ssh-agent 认证与二次验证
 - 🖥️ **多标签管理** - 支持同时打开多个 SSH 会话
 - 📐 **终端分屏** - 支持水平/垂直分屏，嵌套分屏，可拖拽调整大小
 - 🔍 **终端搜索** - 支持终端内容全文搜索
@@ -37,6 +37,10 @@ iTerminal 是一款类似于 XTerminal 的 SSH 连接管理工具，旨在帮助
 - 🐳 **Docker 管理** - 容器/镜像/日志/容器终端
 - ✨ **AI 助手** - AI 对话（感知终端上下文）+ 智能体 Agent 自主诊断服务器
 - 🪟 **多窗口支持** - 拖拽连接到边缘创建新窗口，完整终端功能复用
+- 🔗 **跳板机** - 连接可指定另一条已保存的连接作跳板（等同 ProxyJump），支持多级
+- ⚡ **批量执行** - 选中的多台服务器并发执行同一条命令，结果汇总成表，可复制、导出 CSV
+- 📥 **导入 ssh config** - 一键导入 `~/.ssh/config` 里已有的 Host 配置（含跳板机关系）
+- 📝 **会话日志** - 可选把终端输出（纯文本）按会话记录到本地文件，供审计复盘
 - 📋 **中文支持** - 完整的中文界面和右键菜单
 - 🌍 **跨平台** - 支持 Windows、macOS、Linux
 
@@ -294,7 +298,7 @@ npm run tauri build
 内置 MCP (Model Context Protocol) 服务器，支持 AI 助手集成：
 
 - MCP server 随 app 分发（不依赖 npm），在设置 → MCP 复制安装指令发给任意 AI 工具即可接入
-- 通过 HTTP API 控制 SSH 连接：命令执行、文件操作、传输、系统监控
+- 通过 HTTP API 控制 SSH 连接：命令执行、文件操作、传输、系统监控、批量执行、主机密钥管理、导入 ssh config、读取会话日志（工具清单见 [mcp/README.md](mcp/README.md)）
 - 注册的是稳定启动器（`~/.iterminal/bin/mcp-launcher.mjs`），app 升级后 Agent 下次拉起会话自动使用新版，无需重新注册
 
 ---
@@ -358,7 +362,7 @@ iTerminal/
 | 风险项 | 当前状态 | 建议 |
 |--------|----------|------|
 | 密码存储 | AES-256-GCM 加密存储 | 安全 |
-| 主机密钥验证 | 已跳过 | 后续版本将支持 known_hosts |
+| 主机密钥验证 | 首次连接确认指纹，密钥变化时阻断并警告 | 已信任的主机可在「设置 → 安全」查看/删除；用户自己 `~/.ssh/known_hosts` 里的信任直接沿用 |
 | 密钥认证 | 已实现 | 推荐使用密钥认证 |
 | 会话超时 | 无自动锁定 | 手动断开不使用的连接 |
 
@@ -438,8 +442,5 @@ iTerminal/
 
 欢迎提交 Issue 和 Pull Request！
 
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 创建 Pull Request
+本项目单人维护，日常直接在 `main` 上提交：提交信息用中文，格式 `type(范围): 描述`（如 `fix(terminal): ...`）。
+每次 push 会触发 CI（类型检查 + 测试 + 构建），打 `v*` tag 走发版流程。

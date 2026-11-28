@@ -1,12 +1,17 @@
 pub mod ai;
+pub mod auth_prompt;
+pub mod batch_exec;
 pub mod api;
 pub mod db;
 pub mod docker;
+pub mod host_key;
 pub mod license;
 pub mod mcp_register;
 pub mod port_forward;
+pub mod session_log;
 pub mod sftp;
 pub mod ssh;
+pub mod ssh_config;
 pub mod system;
 pub mod window;
 pub mod window_theme;

@@ -15,6 +15,8 @@ import { useTerminalStore, type SplitPane } from './stores/terminalStore'
 // 设置弹窗提升到全局层：驾驶舱布局隐藏侧边栏后仍可打开设置
 const SettingsPanel = lazy(() => import('./components/SettingsPanel'))
 import { invoke } from '@tauri-apps/api/core'
+import { connectSsh, toSSHConnection } from './services/ssh'
+import AuthQuestionListener from './components/AuthQuestionListener'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { readText as readClipboardText } from '@tauri-apps/plugin-clipboard-manager'
@@ -264,16 +266,7 @@ function SessionRestorer() {
           continue
         }
 
-        await invoke('connect_ssh', {
-          id: conn.id,
-          connection: {
-            host: conn.host,
-            port: conn.port,
-            username: conn.username,
-            password: conn.password,
-            key_file: conn.keyFile,
-          }
-        })
+        await connectSsh(conn.id, toSSHConnection(conn))
 
         // 先获取所有新的 shellId，再 restoreConnection，避免 Terminal 初始化时用到旧的 shellId
         const sessions = getAllSessionsFromPane(session.rootPane)
@@ -544,6 +537,7 @@ function MainApp() {
   return (
     <>
       <SessionRestorer />
+      <AuthQuestionListener />
       <SessionSaver />
       <MenuActionHandler />
       <McpConnectionHandler />

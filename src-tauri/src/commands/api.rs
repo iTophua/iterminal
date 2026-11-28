@@ -1,5 +1,5 @@
 use axum::{
-    extract::Path,
+    extract::{Path, Query},
     http::{Method, StatusCode},
     response::{IntoResponse, Json},
     routing::{delete, get, post},
@@ -11,8 +11,12 @@ use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::CorsLayer;
 
+use super::batch_exec;
 use super::db::{self, ConnectionRecord};
+use super::host_key::{self, HostKeyPolicy};
 use super::sftp::{self, FileEntry};
+use super::session_log;
+use super::ssh_config;
 use super::ssh::{self, CommandResult, MonitorData, SSHConnection};
 
 use once_cell::sync::Lazy;
@@ -76,6 +80,24 @@ pub struct ConnectRequest {
     pub port: Option<u16>,
     pub username: String,
     pub password: Option<String>,
+    /// 首次见到的主机密钥是否自动信任（等同 OpenSSH 的 accept-new）；缺省必须先在应用里确认过
+    #[serde(default)]
+    pub accept_host_key: bool,
+    /// 本机私钥文件路径
+    #[serde(default)]
+    pub key_file: Option<String>,
+    /// 私钥口令
+    #[serde(default)]
+    pub key_passphrase: Option<String>,
+    /// 认证方式：password / publickey / agent；不传按 key_file / password 推断
+    #[serde(default)]
+    pub auth_method: Option<String>,
+    /// 跳板机：已保存连接的 id
+    #[serde(default)]
+    pub jump_host_id: Option<String>,
+    /// 服务器交互式验证（动态口令等）提问的预备回答，按提问顺序；不传则弹在应用窗口里由用户回答
+    #[serde(default)]
+    pub auth_answers: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -247,6 +269,14 @@ pub fn create_api_router(app_handle: AppHandle, token: Option<String>) -> Router
             "/api/transfers/{task_id}",
             get(get_transfer_status_handler),
         )
+        .route("/api/batch-exec", post(batch_exec_handler))
+        .route("/api/session-logs", get(list_session_logs_handler))
+        .route("/api/session-logs/read", get(read_session_log_handler))
+        .route("/api/snippets", get(list_snippets_handler))
+        .route("/api/ssh-config", get(preview_ssh_config_handler))
+        .route("/api/ssh-config/import", post(import_ssh_config_handler))
+        .route("/api/known-hosts", get(list_known_hosts_handler))
+        .route("/api/known-hosts", delete(forget_known_host_handler))
         .route("/api/saved-connections", get(list_saved_connections))
         .route("/api/saved-connections", post(save_and_connect_handler))
         .route(
@@ -372,17 +402,59 @@ async fn list_connections() -> Json<ApiResponse<Vec<ConnectionState>>> {
     Json(ApiResponse::success(connections))
 }
 
+/// MCP 请求 → 连接参数。认证方式写得不对时报错，不悄悄忽略
+#[allow(clippy::too_many_arguments)]
+fn to_ssh_connection(
+    host: String,
+    port: Option<u16>,
+    username: String,
+    password: Option<String>,
+    key_file: Option<String>,
+    key_passphrase: Option<String>,
+    auth_method: Option<String>,
+    jump_host_id: Option<String>,
+) -> Result<SSHConnection, String> {
+    let auth_method = match auth_method {
+        None => None,
+        Some(value) => Some(ssh::parse_auth_method(&value)?),
+    };
+    Ok(SSHConnection {
+        host,
+        port: port.unwrap_or(22),
+        username,
+        password,
+        key_file,
+        key_passphrase,
+        auth_method,
+        jump_host_id,
+        auth_answers: None,
+    })
+}
+
+/// MCP 请求里的 accept_host_key → 主机密钥策略
+fn host_key_policy(accept_new: bool) -> HostKeyPolicy {
+    if accept_new {
+        HostKeyPolicy::AcceptNew
+    } else {
+        HostKeyPolicy::RequireTrusted
+    }
+}
+
 async fn create_connection(
     axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Json(payload): Json<ConnectRequest>,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
-    let connection = SSHConnection {
-        host: payload.host.clone(),
-        port: payload.port.unwrap_or(22),
-        username: payload.username.clone(),
-        password: payload.password.clone(),
-        key_file: None,
-    };
+    let connection = to_ssh_connection(
+        payload.host.clone(),
+        payload.port,
+        payload.username.clone(),
+        payload.password.clone(),
+        payload.key_file.clone(),
+        payload.key_passphrase.clone(),
+        payload.auth_method.clone(),
+        payload.jump_host_id.clone(),
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
 
     let details = format!(
         "{}@{}:{}",
@@ -391,7 +463,20 @@ async fn create_connection(
         payload.port.unwrap_or(22)
     );
 
-    match ssh::connect_ssh(payload.id.clone(), connection).await {
+    let policy = host_key_policy(payload.accept_host_key);
+    let connection = SSHConnection {
+        auth_answers: payload.auth_answers.clone(),
+        ..connection
+    };
+
+    match ssh::connect_ssh_with(
+        payload.id.clone(),
+        connection,
+        policy,
+        Some(state.app_handle.clone()),
+    )
+    .await
+    {
         Ok(_) => {
             emit_operation(
                 &state.app_handle,
@@ -471,18 +556,29 @@ async fn delete_connection(
 }
 
 async fn test_connection_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Json(payload): Json<ConnectRequest>,
 ) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    let policy = host_key_policy(payload.accept_host_key);
+    let connection = to_ssh_connection(
+        payload.host,
+        payload.port,
+        payload.username,
+        payload.password,
+        payload.key_file,
+        payload.key_passphrase,
+        payload.auth_method,
+        payload.jump_host_id,
+    )
+    .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
     let connection = SSHConnection {
-        host: payload.host,
-        port: payload.port.unwrap_or(22),
-        username: payload.username,
-        password: payload.password,
-        key_file: None,
+        auth_answers: payload.auth_answers,
+        ..connection
     };
 
-    match ssh::test_connection(connection).await {
-        Ok(_) => Ok(Json(ApiResponse::success(true))),
+    match ssh::test_connection_with(connection, policy, Some(state.app_handle.clone())).await
+    {
+        Ok(result) => Ok(Json(ApiResponse::success(result))),
         Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
     }
 }
@@ -996,6 +1092,17 @@ pub struct SaveConnectionRequest {
     /// 是否保存后自动连接
     #[serde(default)]
     pub auto_connect: bool,
+    /// 自动连接时，首次见到的主机密钥是否自动信任
+    #[serde(default)]
+    pub accept_host_key: bool,
+    #[serde(default)]
+    pub key_passphrase: Option<String>,
+    /// 认证方式：password / publickey / agent；不传按 key_file / password 推断
+    #[serde(default)]
+    pub auth_method: Option<String>,
+    /// 跳板机：已保存连接的 id
+    #[serde(default)]
+    pub jump_host_id: Option<String>,
 }
 
 async fn save_and_connect_handler(
@@ -1014,6 +1121,9 @@ async fn save_and_connect_handler(
         username: payload.username.clone(),
         password: payload.password.clone(),
         key_file: payload.key_file.clone(),
+        key_passphrase: payload.key_passphrase.clone(),
+        auth_method: payload.auth_method.clone(),
+        jump_host_id: payload.jump_host_id.clone(),
         group_name: None,
         tags: None,
         last_connected_at: None,
@@ -1041,14 +1151,26 @@ None,
 
     // 自动连接
     if payload.auto_connect {
-        let connection = SSHConnection {
-            host: payload.host.clone(),
-            port,
-            username: payload.username.clone(),
-            password: payload.password.clone(),
-            key_file: payload.key_file.clone(),
-        };
-        match ssh::connect_ssh(id.clone(), connection).await {
+        let policy = host_key_policy(payload.accept_host_key);
+        let connection = to_ssh_connection(
+            payload.host.clone(),
+            Some(port),
+            payload.username.clone(),
+            payload.password.clone(),
+            payload.key_file.clone(),
+            payload.key_passphrase.clone(),
+            payload.auth_method.clone(),
+            payload.jump_host_id.clone(),
+        )
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
+        match ssh::connect_ssh_with(
+        id.clone(),
+        connection,
+        policy,
+        Some(state.app_handle.clone()),
+    )
+    .await
+    {
             Ok(_) => {
                 emit_operation(
                     &state.app_handle,
@@ -1087,9 +1209,18 @@ None,
     Ok(Json(ApiResponse::success(id)))
 }
 
+/// POST /api/saved-connections/{id}/connect 的可选请求体
+#[derive(Debug, Default, Deserialize)]
+pub struct QuickConnectRequest {
+    /// 首次见到的主机密钥是否自动信任
+    #[serde(default)]
+    pub accept_host_key: bool,
+}
+
 async fn quick_connect_handler(
     axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
     Path(id): Path<String>,
+    request: Option<Json<QuickConnectRequest>>,
 ) -> Result<Json<ApiResponse<String>>, (StatusCode, Json<ApiResponse<String>>)> {
     let connections = db::get_connections()
         .map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
@@ -1101,23 +1232,29 @@ async fn quick_connect_handler(
         )
     })?;
 
-    let password = record.password.clone().unwrap_or_default();
-    let connection = SSHConnection {
-        host: record.host.clone(),
-        port: record.port,
-        username: record.username.clone(),
-        password: Some(password),
-        key_file: record.key_file.clone(),
-    };
+    let connection = SSHConnection::from_record(&record);
 
     let details = format!("{}@{}:{}", record.username, record.host, record.port);
+    let policy = host_key_policy(
+        request
+            .as_ref()
+            .map(|request| request.accept_host_key)
+            .unwrap_or(false),
+    );
     // 克隆前端需要的信息（emit_connection_opened 用）
     let conn_name = record.name.clone();
     let conn_host = record.host.clone();
     let conn_port = record.port;
     let conn_username = record.username.clone();
 
-    match ssh::connect_ssh(id.clone(), connection).await {
+    match ssh::connect_ssh_with(
+        id.clone(),
+        connection,
+        policy,
+        Some(state.app_handle.clone()),
+    )
+    .await
+    {
         Ok(_) => {
             emit_operation(
                 &state.app_handle,
@@ -1152,6 +1289,176 @@ async fn quick_connect_handler(
             );
             Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BatchExecRequest {
+    /// 已连接或已保存的连接 id
+    pub ids: Vec<String>,
+    pub command: String,
+    /// 临时建连时，首次见到的主机密钥是否自动信任
+    #[serde(default)]
+    pub accept_host_key: bool,
+}
+
+/// POST /api/batch-exec：在多条连接上并发执行同一条命令，汇总返回
+async fn batch_exec_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Json(payload): Json<BatchExecRequest>,
+) -> Result<Json<ApiResponse<Vec<batch_exec::BatchExecResult>>>, (StatusCode, Json<ApiResponse<Vec<batch_exec::BatchExecResult>>>)> {
+    if payload.ids.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::error("ids 不能为空")),
+        ));
+    }
+    let details = format!("{} 条连接: {}", payload.ids.len(), payload.command);
+    match batch_exec::run(
+        &payload.ids,
+        &payload.command,
+        host_key_policy(payload.accept_host_key),
+        Some(state.app_handle.clone()),
+    )
+    .await
+    {
+        Ok(results) => {
+            let failed = results.iter().filter(|result| !result.success).count();
+            emit_operation(
+                &state.app_handle,
+                "batch_exec",
+                None,
+                &format!("{}（成功 {} / 失败 {}）", details, results.len() - failed, failed),
+                true,
+        None,
+        None,
+            );
+            Ok(Json(ApiResponse::success(results)))
+        }
+        Err(e) => {
+            emit_operation(&state.app_handle, "batch_exec", None, &details, false, Some(&e), None);
+            Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SessionLogQuery {
+    /// 日志目录；不给用默认的 ~/iTerminal/logs
+    pub dir: Option<String>,
+    pub limit: Option<usize>,
+    pub name: Option<String>,
+    pub max_bytes: Option<u64>,
+}
+
+/// GET /api/session-logs：会话日志文件，新的在前
+async fn list_session_logs_handler(
+    axum::extract::Query(query): axum::extract::Query<SessionLogQuery>,
+) -> Json<ApiResponse<Vec<session_log::SessionLogFile>>> {
+    match session_log::list_session_logs(query.dir.clone(), query.limit) {
+        Ok(files) => Json(ApiResponse::success(files)),
+        Err(e) => Json(ApiResponse::error(&e)),
+    }
+}
+
+/// GET /api/session-logs/read?name=：读一份会话日志的末尾
+async fn read_session_log_handler(
+    axum::extract::Query(query): axum::extract::Query<SessionLogQuery>,
+) -> Result<Json<ApiResponse<session_log::SessionLogContent>>, (StatusCode, Json<ApiResponse<session_log::SessionLogContent>>)> {
+    let name = query.name.unwrap_or_default();
+    match session_log::read_session_log(query.dir.clone(), name, query.max_bytes) {
+        Ok(content) => Ok(Json(ApiResponse::success(content))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+/// GET /api/snippets：用户保存的命令片段
+async fn list_snippets_handler(
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<ApiResponse<Vec<db::Snippet>>> {
+    match db::list_snippets(query.get("category").cloned()) {
+        Ok(snippets) => Json(ApiResponse::success(snippets)),
+        Err(e) => Json(ApiResponse::error(&e)),
+    }
+}
+
+/// GET /api/ssh-config：预览用户 ~/.ssh/config 里可导入的 Host
+async fn preview_ssh_config_handler(
+) -> Result<Json<ApiResponse<Vec<ssh_config::SshConfigEntry>>>, (StatusCode, Json<ApiResponse<Vec<ssh_config::SshConfigEntry>>>)> {
+    match ssh_config::preview_ssh_config() {
+        Ok(entries) => Ok(Json(ApiResponse::success(entries))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SshConfigImportRequest {
+    /// 导入到的分组
+    pub group: Option<String>,
+    /// 只导入这些别名；不给则全部
+    pub aliases: Option<Vec<String>>,
+}
+
+/// POST /api/ssh-config/import：把 ~/.ssh/config 的 Host 存成连接
+async fn import_ssh_config_handler(
+    axum::extract::State(state): axum::extract::State<Arc<ApiState>>,
+    Json(payload): Json<SshConfigImportRequest>,
+) -> Result<Json<ApiResponse<ssh_config::SshConfigImportResult>>, (StatusCode, Json<ApiResponse<ssh_config::SshConfigImportResult>>)> {
+    let entries = ssh_config::preview_ssh_config().map_err(|e| (StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e))))?;
+    let entries: Vec<ssh_config::SshConfigEntry> = match &payload.aliases {
+        None => entries,
+        Some(aliases) => entries
+            .into_iter()
+            .filter(|entry| aliases.iter().any(|alias| alias.eq_ignore_ascii_case(&entry.alias)))
+            .collect(),
+    };
+
+    match ssh_config::import(&entries, payload.group.as_deref()) {
+        Ok(result) => {
+            // MCP 写库绕过了前端 store，通知前端重载连接列表
+            let _ = state.app_handle.emit("connections-changed", ());
+            emit_operation(
+                &state.app_handle,
+                "import_ssh_config",
+                None,
+                &format!("从 ~/.ssh/config 导入 {} 条连接", result.imported),
+                true,
+                None,
+        None,
+            );
+            Ok(Json(ApiResponse::success(result)))
+        }
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+/// GET /api/known-hosts：已信任的主机密钥
+async fn list_known_hosts_handler(
+) -> Result<
+    Json<ApiResponse<Vec<host_key::KnownHostRecord>>>,
+    (StatusCode, Json<ApiResponse<Vec<host_key::KnownHostRecord>>>),
+> {
+    match host_key::get_known_hosts() {
+        Ok(records) => Ok(Json(ApiResponse::success(records))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct KnownHostQuery {
+    pub host: String,
+    pub port: u16,
+    /// 只忘掉某一种类型；不给就忘掉这台主机的全部密钥
+    pub key_type: Option<String>,
+}
+
+/// DELETE /api/known-hosts：忘记一台主机的密钥，下次连接会重新询问
+async fn forget_known_host_handler(
+    Query(query): Query<KnownHostQuery>,
+) -> Result<Json<ApiResponse<bool>>, (StatusCode, Json<ApiResponse<bool>>)> {
+    match host_key::forget_host_key(query.host, query.port, query.key_type) {
+        Ok(_) => Ok(Json(ApiResponse::success(true))),
+        Err(e) => Err((StatusCode::BAD_REQUEST, Json(ApiResponse::error(&e)))),
     }
 }
 
@@ -1750,6 +2057,12 @@ mod tests {
             port: Some(22),
             username: "root".to_string(),
             password: Some("secret".to_string()),
+            accept_host_key: false,
+            key_file: None,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
+            auth_answers: None,
         };
         assert_eq!(req.id, "conn-1");
         assert_eq!(req.port, Some(22));

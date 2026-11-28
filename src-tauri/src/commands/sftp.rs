@@ -137,47 +137,22 @@ pub async fn get_mcp_transfer_status(task_id: &str) -> Option<McpTransferStatus>
 async fn create_sftp_connection(
     connection: &super::ssh::SSHConnection,
 ) -> Result<Arc<SftpSession>, String> {
-    use super::ssh::SshClientHandler;
-    use std::net::ToSocketAddrs;
+    use super::ssh::EstablishedSession;
+    use super::host_key::HostKeyPolicy;
 
-    let addr = format!("{}:{}", connection.host, connection.port);
-    let socket_addr = addr
-        .to_socket_addrs()
-        .ok()
-        .and_then(|mut a| a.next())
-        .ok_or("解析地址失败")?;
-
-    let config = Arc::new(russh::client::Config::default());
-    let addr_str = socket_addr.to_string();
-    let handler = SshClientHandler::new(connection.host.clone(), connection.port);
-
-    let mut handle = russh::client::connect(config, &addr_str, handler)
-        .await
-        .map_err(|e| format!("SFTP连接失败: {}", e))?;
-
-    if let Some(password) = &connection.password {
-        let auth = handle
-            .authenticate_password(&connection.username, password)
+    // 与终端连接走同一套主机密钥校验和认证。这里没法弹窗确认：终端连上时已经确认过，
+    // 再被拦下只可能是密钥变了，换成看得懂的提示
+    let EstablishedSession {
+        handle,
+        jumps: _,
+    } = super::ssh::establish_session(connection, HostKeyPolicy::RequireTrusted, None)
             .await
-            .map_err(|e| format!("SFTP认证失败: {}", e))?;
-        if !auth.success() {
-            return Err("SFTP认证失败".to_string());
-        }
-    } else if let Some(key_file) = &connection.key_file {
-        let key_path = shellexpand::tilde(key_file).into_owned();
-        let key_pair = russh::keys::load_secret_key(&key_path, None)
-            .map_err(|e| format!("加载密钥文件失败: {}", e))?;
-        let key_with_hash = russh::keys::PrivateKeyWithHashAlg::new(Arc::new(key_pair), None);
-        let auth = handle
-            .authenticate_publickey(&connection.username, key_with_hash)
-            .await
-            .map_err(|e| format!("SFTP密钥认证失败: {}", e))?;
-        if !auth.success() {
-            return Err("SFTP密钥认证失败".to_string());
-        }
-    } else {
-        return Err("SFTP需要密码或密钥认证".to_string());
-    }
+            .map_err(|e| {
+                format!(
+                    "SFTP连接失败: {}",
+                    super::host_key::describe(&e).unwrap_or(e)
+                )
+            })?;
 
     let channel = handle
         .channel_open_session()

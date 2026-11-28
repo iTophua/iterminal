@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useRef, lazy, Suspense } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { connectSsh, toSSHConnection } from '../services/ssh'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useTerminalStore, type SplitPane } from '../stores/terminalStore'
 import { getAllSessions } from '../utils/paneUtils'
@@ -63,16 +64,7 @@ function TerminalWindow() {
         connectionId = data.connectionId
         targetConnectionIdRef.current = data.connectionId
         
-        await invoke('connect_ssh', {
-          id: data.connectionId,
-          connection: {
-            host: data.connection.host,
-            port: data.connection.port,
-            username: data.connection.username,
-            password: data.connection.password,
-            key_file: data.connection.keyFile,
-          }
-        })
+        await connectSsh(data.connectionId, toSSHConnection(data.connection))
 
         const sessions = getAllSessions(data.rootPane)
         

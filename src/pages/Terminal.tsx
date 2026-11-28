@@ -67,11 +67,15 @@ import { DragToNewWindowOverlay } from './terminal/components/DragToNewWindowOve
 import { useConnectionDragToNewWindow } from './terminal/hooks/useConnectionDrag'
 import { getAllSessions, getActiveSessionInPane, findPaneBySessionId, hasSplitChildren, getVisibleSessions } from '../utils/paneUtils'
 import { recordConnectionHistory } from '../services/database'
+import { connectSsh, toSSHConnection, HostKeyDeclinedError } from '../services/ssh'
 import { createCommandTracker, CommandTracker } from '../utils/shellOutputParser'
 import { matchShortcut } from '../utils/shortcutUtils'
 import { applyXtermImePatch } from '../utils/xtermImePatch'
 import { getXtermCellMetrics, isAlternateBuffer } from '../utils/xtermMetrics'
 import { GhostTextEngine, layoutGhostLines } from '../utils/ghostTextEngine'
+import { renderSnippet, cursorBackKeys, type RenderedSnippet } from '../utils/snippetVariables'
+import { createSessionLogger } from '../services/sessionLog'
+import type { SessionLogger } from '../utils/sessionLog'
 import { paintGhostText, hideGhostText as hideOverlayElement } from '../components/GhostTextOverlay'
 import { findSuggestions } from '../services/historyService'
 import type { Connection } from '../types/shared'
@@ -81,6 +85,11 @@ interface TerminalProps {
 }
 
 // 获取分组 CSS 类名（用于环境标签主题适配）
+/** 片段里的 {{host}} 之类按这条连接展开 */
+const snippetContextOf = (connection: Pick<Connection, 'host' | 'port' | 'username' | 'name'>) =>
+  (command: string): RenderedSnippet =>
+    renderSnippet(command, { host: connection.host, port: connection.port, user: connection.username, name: connection.name })
+
 function getGroupClass(group: string): string {
   const map: Record<string, string> = {
     '生产环境': 'group-accent-production',
@@ -192,6 +201,45 @@ function Terminal({ singleConnectionMode = false }: TerminalProps) {
   // ghost text 按帧合并：同一帧内多次触发（连续按键、多个回显块）只同步/绘制一次
   const ghostRafIdRef = useRef<{ [key: string]: number | null }>({})
   const messageRef = useRef(message)
+  // 会话日志：每个会话一个写入器（见 utils/sessionLog.ts），设置里开启后才建
+  const sessionLoggersRef = useRef<Map<string, SessionLogger>>(new Map())
+
+  /** 会话结束：释放终端实例，顺带把会话日志收尾 */
+  const disposeTerminal = (key: string) => {
+    terminalInstances.current[key]?.dispose()
+    void sessionLoggersRef.current.get(key)?.close()
+    sessionLoggersRef.current.delete(key)
+  }
+
+  /** 终端输出 → 会话日志。设置里关着就不记录；文件在该会话第一条输出到达时才建 */
+  const logSessionOutput = (key: string, chunk: string) => {
+    const logger = sessionLoggersRef.current.get(key)
+    const settings = useTerminalStore.getState().terminalSettings
+    if (!settings.sessionLogEnabled) {
+      // 设置刚被关掉：还开着的立即收尾
+      if (logger) {
+        void logger.close()
+        sessionLoggersRef.current.delete(key)
+      }
+      return
+    }
+    if (logger) {
+      logger.push(chunk)
+      return
+    }
+    const [connId] = key.split('_')
+    const connection = useTerminalStore.getState().connectedConnections.find(c => c.connectionId === connId)?.connection
+    const created = createSessionLogger(
+      settings.sessionLogDir,
+      { name: connection?.name ?? connId, host: connection?.host ?? '', port: connection?.port ?? 22, user: connection?.username ?? '' },
+      error => {
+        console.debug('[SessionLog] 写入失败，已停止记录', error)
+        messageRef.current.warning('会话日志写入失败，已停止记录，请检查日志目录')
+      },
+    )
+    sessionLoggersRef.current.set(key, created)
+    created.push(chunk)
+  }
   useEffect(() => { messageRef.current = message }, [message])
   
   /** 隐藏命令提示浮层 */
@@ -1184,6 +1232,7 @@ const handlePointerUp = () => {
               // 回调在数据解析完成时触发，此时缓冲区已更新，可以读屏；按帧合并，见 scheduleGhostRender
               term.write(event.payload, () => scheduleGhostRender(key))
 
+              if (typeof event.payload === 'string') logSessionOutput(key, event.payload)
               const tracker = commandTrackersRef.current[key]
               if (tracker && typeof event.payload === 'string') {
                 const result = tracker.processOutput(event.payload, term)
@@ -1301,11 +1350,15 @@ const handlePointerUp = () => {
   }, [])
 
   const disconnectHandledRef = useRef<Set<string>>(new Set())
+  // 主机密钥没获信任的连接不再自动重连：否则每次重试都会再弹一次确认框。
+  // 用户手动点重连时解除，重新给一次确认机会
+  const reconnectBlockedRef = useRef<Set<string>>(new Set())
 
   const handleReconnect = useCallback(async (connectionId: string, isManual: boolean = true) => {
     const conn = connectedConnections.find(c => c.connectionId === connectionId)
     if (!conn || conn.reconnecting) return
 
+    if (isManual) reconnectBlockedRef.current.delete(connectionId)
     setConnectionReconnecting(connectionId, true)
 
     const sessions = getAllSessions(conn.rootPane)
@@ -1316,34 +1369,21 @@ const handlePointerUp = () => {
 
       // store 里没凭据时（如 MCP 建连早期版本留下的连接对象），从保存的连接里找回，
       // 否则后端报"未提供认证信息"
-      let password = conn.connection.password
-      let keyFile = conn.connection.keyFile
-      if (!password && !keyFile) {
+      let params = toSSHConnection(conn.connection)
+      if (!params.password && !params.key_file && !params.auth_method) {
         try {
           const { getConnections } = await import('../services/database')
           const all = await getConnections()
           const saved =
             all.find(c => c.id === connectionId) ||
             all.find(c => c.host === conn.connection.host && c.port === conn.connection.port && c.username === conn.connection.username)
-          if (saved) {
-            password = saved.password
-            keyFile = saved.keyFile
-          }
+          if (saved) params = toSSHConnection(saved)
         } catch {
           // 查询失败则按原样尝试（保持旧行为）
         }
       }
 
-      await invoke('connect_ssh', {
-        id: connectionId,
-        connection: {
-          host: conn.connection.host,
-          port: conn.connection.port,
-          username: conn.connection.username,
-          password,
-          key_file: keyFile,
-        }
-      })
+      await connectSsh(connectionId, params)
 
       for (const session of sessionsWithShell) {
         const key = `${connectionId}_${session.id}`
@@ -1370,6 +1410,7 @@ const handlePointerUp = () => {
 
             term.write(event.payload)
 
+            if (typeof event.payload === 'string') logSessionOutput(key, event.payload)
             const tracker = commandTrackersRef.current[key]
             if (tracker && typeof event.payload === 'string') {
               const result = tracker.processOutput(event.payload, term)
@@ -1419,6 +1460,9 @@ const handlePointerUp = () => {
       const errorMsg = err instanceof Error ? err.message : String(err)
       if (isManual) {
         message.error(`重连失败: ${errorMsg}`)
+      } else if (err instanceof HostKeyDeclinedError) {
+        reconnectBlockedRef.current.add(connectionId)
+        message.warning(`${conn.connection.name} 的主机密钥未获信任，已停止自动重连`)
       }
       const nextAttempt = (conn.reconnectAttempt || 1) + 1
       const nextDelay = getReconnectDelay(nextAttempt)
@@ -1431,6 +1475,7 @@ const handlePointerUp = () => {
     
     disconnectedConns.forEach(conn => {
       if (reconnectTimersRef.current[conn.connectionId]) return
+      if (reconnectBlockedRef.current.has(conn.connectionId)) return
 
       const attempt = conn.reconnectAttempt || 1
       const delay = conn.reconnectNextDelay || getReconnectDelay(attempt)
@@ -1569,7 +1614,7 @@ const handlePointerUp = () => {
     }
     
     if (terminalInstances.current[key]) {
-      terminalInstances.current[key].dispose()
+      disposeTerminal(key)
       delete terminalInstances.current[key]
     }
     delete fitAddons.current[key]
@@ -1612,7 +1657,7 @@ const handlePointerUp = () => {
       
       if (s.shellId) await invoke('close_shell', { id: s.shellId }).catch(() => {})
       if (terminalInstances.current[key]) {
-        terminalInstances.current[key].dispose()
+        disposeTerminal(key)
         delete terminalInstances.current[key]
       }
       delete fitAddons.current[key]
@@ -1912,7 +1957,7 @@ const handlePointerUp = () => {
       }
       if (s.shellId) await invoke('close_shell', { id: s.shellId }).catch(() => {})
       if (terminalInstances.current[key]) {
-        terminalInstances.current[key].dispose()
+        disposeTerminal(key)
         delete terminalInstances.current[key]
       }
       delete fitAddons.current[key]
@@ -2093,16 +2138,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     message.info(`正在连接 ${conn.name}...`)
 
     try {
-      await invoke('connect_ssh', {
-        id: conn.id,
-        connection: {
-          host: conn.host,
-          port: conn.port,
-          username: conn.username,
-          password: conn.password || null,
-          key_file: conn.keyFile || null,
-        }
-      })
+      await connectSsh(conn.id, toSSHConnection(conn))
 
       const shellId = await invoke<string>('get_shell', { id: conn.id })
       addConnection(conn, shellId)
@@ -2110,7 +2146,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       await refreshRecentConnections()
       message.success(`已连接到 ${conn.name}`)
     } catch (error) {
-      message.error(`连接失败: ${error}`)
+      if (!(error instanceof HostKeyDeclinedError)) message.error(`连接失败: ${error}`)
     }
   }, [connectedConnections, addConnection, setActiveConnection, message, refreshRecentConnections])
 
@@ -2139,7 +2175,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       }
       if (s.shellId) await invoke('close_shell', { id: s.shellId }).catch(() => {})
       if (terminalInstances.current[key]) {
-        terminalInstances.current[key].dispose()
+        disposeTerminal(key)
         delete terminalInstances.current[key]
       }
       delete fitAddons.current[key]
@@ -2333,7 +2369,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
           delete unlistenersRef.current[key]
         }
         if (terminalInstances.current[key]) {
-          terminalInstances.current[key].dispose()
+          disposeTerminal(key)
           delete terminalInstances.current[key]
         }
         delete fitAddons.current[key]
@@ -2452,16 +2488,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
     }
     message.info(`正在连接 ${conn.name}...`)
     try {
-      await invoke('connect_ssh', {
-        id: conn.id,
-        connection: {
-          host: conn.host,
-          port: conn.port,
-          username: conn.username,
-          password: conn.password || null,
-          key_file: conn.keyFile || null,
-        }
-      })
+      await connectSsh(conn.id, toSSHConnection(conn))
       const shellId = await invoke<string>('get_shell', { id: conn.id })
       const sessionId = addConnection(conn, shellId)
       useTerminalStore.getState().setCockpitFocusKey(`${conn.id}_${sessionId}`)
@@ -2469,7 +2496,7 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
       await refreshRecentConnections()
       message.success(`已连接到 ${conn.name}`)
     } catch (error) {
-      message.error(`连接失败: ${error}`)
+      if (!(error instanceof HostKeyDeclinedError)) message.error(`连接失败: ${error}`)
     }
   }, [connectedConnections, addConnection, setActiveConnection, message, refreshRecentConnections])
 
@@ -3060,8 +3087,17 @@ if (matchShortcut(e, shortcutSettings.nextSession)) {
               const activeSess = getActiveSessionInPane(conn.rootPane)
               if (!activeSess) return
               const key = `${activeConnectionId}_${activeSess.id}`
-              enqueueWrite(key, cmd)
-              noteExternalWrite(key, cmd)
+              // 片段里的 {{host}} 之类按当前连接展开；{{cursor}} 之后的内容照常写入，再把光标退回去
+              const { before, after } = snippetContextOf(conn.connection)(cmd)
+              enqueueWrite(key, before + after)
+              if (after) enqueueWrite(key, cursorBackKeys(after))
+              noteExternalWrite(key, before + after)
+            }}
+            onCopy={async (cmd) => {
+              const conn = connectedConnections.find(c => c.connectionId === activeConnectionId)
+              if (!conn) return
+              const { before, after } = snippetContextOf(conn.connection)(cmd)
+              await writeText(before + after)
             }}
           />
           </Suspense>

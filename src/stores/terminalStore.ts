@@ -9,6 +9,12 @@ export interface Connection {
   username: string
   password?: string
   keyFile?: string
+  /** 私钥口令（私钥本身加了口令时用） */
+  keyPassphrase?: string
+  /** 认证方式，不填时后端按有没有私钥文件推断 */
+  authMethod?: 'password' | 'publickey' | 'agent'
+  /** 跳板机：另一条已保存连接的 id */
+  jumpHostId?: string
   group: string
   tags: string[]
   status: 'online' | 'offline' | 'connecting'
@@ -105,6 +111,9 @@ export interface TerminalSettings {
   cursorBlink: boolean
   // 连接时导入服务器上的 shell 历史（~/.bash_history 等）作为命令提示候选
   importServerHistory: boolean
+  // 会话日志：把终端输出（去掉转义序列）按会话写到本地文本文件
+  sessionLogEnabled: boolean
+  sessionLogDir: string
 }
 
 // 默认终端设置
@@ -116,6 +125,8 @@ export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   cursorStyle: 'block',
   cursorBlink: true,
   importServerHistory: true,
+  sessionLogEnabled: false,
+  sessionLogDir: '~/iTerminal/logs',
 }
 
 export interface ShortcutSettings {

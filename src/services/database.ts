@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import { Connection } from '../types/shared'
+import { Connection, AuthMethod } from '../types/shared'
 import { STORAGE_KEYS } from '../config/constants'
 
 interface ConnectionRecord {
@@ -10,6 +10,9 @@ interface ConnectionRecord {
   username: string
   password: string | null
   key_file: string | null
+  key_passphrase: string | null
+  auth_method: AuthMethod | null
+  jump_host_id: string | null
   group_name: string | null
   tags: string | null
   last_connected_at: string | null
@@ -26,6 +29,9 @@ function recordToConnection(record: ConnectionRecord): Connection {
     username: record.username,
     password: record.password || undefined,
     keyFile: record.key_file || undefined,
+    keyPassphrase: record.key_passphrase || undefined,
+    authMethod: record.auth_method || undefined,
+    jumpHostId: record.jump_host_id || undefined,
     group: record.group_name || '默认',
     tags: record.tags ? JSON.parse(record.tags) : [],
     lastConnectedAt: record.last_connected_at || undefined,
@@ -42,6 +48,9 @@ function connectionToRecord(conn: Connection): ConnectionRecord {
     username: conn.username,
     password: conn.password || null,
     key_file: conn.keyFile || null,
+    key_passphrase: conn.keyPassphrase || null,
+    auth_method: conn.authMethod || null,
+    jump_host_id: conn.jumpHostId || null,
     group_name: conn.group || null,
     tags: conn.tags.length > 0 ? JSON.stringify(conn.tags) : null,
     last_connected_at: conn.lastConnectedAt || null,
@@ -138,6 +147,9 @@ export async function migrateFromLocalStorage(): Promise<number> {
     username: conn.username,
     password: conn.password || null,
     key_file: conn.keyFile || null,
+    key_passphrase: conn.keyPassphrase || null,
+    auth_method: conn.authMethod || null,
+    jump_host_id: conn.jumpHostId || null,
     group_name: conn.group || null,
     tags: conn.tags && conn.tags.length > 0 ? JSON.stringify(conn.tags) : null,
     last_connected_at: conn.lastConnectedAt || null,

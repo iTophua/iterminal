@@ -6,7 +6,8 @@ import { useHistoryStore } from '../stores/historyStore'
 
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined, RobotOutlined, CloudDownloadOutlined } from '@ant-design/icons'
+import { CodeOutlined, BgColorsOutlined, KeyOutlined, InfoCircleOutlined, SunOutlined, MoonOutlined, DesktopOutlined, ApiOutlined, CheckCircleOutlined, CloseCircleOutlined, CopyOutlined, CrownOutlined, ReloadOutlined, CheckOutlined, RobotOutlined, CloudDownloadOutlined, SafetyCertificateOutlined } from '@ant-design/icons'
+import KnownHostsSettings from './KnownHostsSettings'
 import { terminalThemesList } from '../styles/themes/terminal-themes'
 import { themeList } from '../styles/themes/app-themes'
 import { COCKPIT_THEME_LIST } from '../styles/themes/cockpit-themes'
@@ -15,6 +16,7 @@ import { getVersion } from '@tauri-apps/api/app'
 import { open } from '@tauri-apps/plugin-shell'
 import { STORAGE_KEYS, API_CONFIG } from '../config/constants'
 import { getAiConfig, saveAiConfig, listAiModels, testAiConnection, AI_BASE_URL_PRESETS, type AiConfig } from '../services/ai'
+import { resolveSessionLogDir } from '../services/sessionLog'
 
 const { Text } = Typography
 
@@ -31,11 +33,12 @@ drwxr-xr-x  12 user  staff   384 Mar 14 10:00 .
 user@server:~$ echo "Hello, Terminal!"
 Hello, Terminal!`
 
-type SettingCategory = 'appearance' | 'terminal' | 'mcp' | 'ai' | 'license' | 'shortcuts' | 'about'
+type SettingCategory = 'appearance' | 'terminal' | 'security' | 'mcp' | 'ai' | 'license' | 'shortcuts' | 'about'
 
 const SETTING_CATEGORIES = [
   { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
   { key: 'terminal', label: '终端', icon: <CodeOutlined /> },
+  { key: 'security', label: '安全', icon: <SafetyCertificateOutlined /> },
   { key: 'mcp', label: 'MCP', icon: <ApiOutlined /> },
   { key: 'ai', label: 'AI 助手', icon: <RobotOutlined /> },
   { key: 'license', label: 'License', icon: <CrownOutlined /> },
@@ -333,6 +336,24 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
     setHasTerminalChanges(true)
   }
 
+  const handleSessionLogEnabledChange = (checked: boolean) => {
+    setTempSettings(prev => ({ ...prev, sessionLogEnabled: checked }))
+    setHasTerminalChanges(true)
+  }
+
+  const handleSessionLogDirChange = (value: string) => {
+    setTempSettings(prev => ({ ...prev, sessionLogDir: value }))
+    setHasTerminalChanges(true)
+  }
+
+  const handleOpenSessionLogDir = async () => {
+    try {
+      await open(await resolveSessionLogDir(tempSettings.sessionLogDir))
+    } catch (err) {
+      message.error(`无法打开日志目录: ${err}`)
+    }
+  }
+
   const handleSave = () => {
     const wasEnabled = terminalSettings.importServerHistory
     updateTerminalSettings(tempSettings)
@@ -421,6 +442,31 @@ export default function SettingsPanel({ visible, onClose }: SettingsPanelProps) 
         </div>
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
           连接时读取服务器上的 shell 历史（~/.bash_history 等）作为命令提示的候选，不写入本地历史
+        </Text>
+      </div>
+
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <Text style={{ color: 'var(--color-text-secondary)' }}>会话日志：把终端输出记录到本地文件</Text>
+          <Switch
+            checked={tempSettings.sessionLogEnabled}
+            onChange={handleSessionLogEnabledChange}
+          />
+        </div>
+        {tempSettings.sessionLogEnabled && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+            <Input
+              value={tempSettings.sessionLogDir}
+              onChange={(e) => handleSessionLogDirChange(e.target.value)}
+              placeholder="~/iTerminal/logs"
+              style={{ fontFamily: 'monospace' }}
+            />
+            <Button onClick={() => void handleOpenSessionLogDir()}>打开目录</Button>
+          </div>
+        )}
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
+          每个会话一个文本文件（去掉颜色等转义序列，保留命令输出），文件名含连接名和时间。开启后从当前还在输出的会话开始记录，关掉立即停止。
+          日志里可能有命令输出带出的敏感信息，注意保管。
         </Text>
       </div>
 
@@ -1685,6 +1731,8 @@ ITERMINAL_MCP_TRANSPORT=sse node /Applications/iTerminal.app/Contents/Resources/
         return renderAppearanceSettings()
       case 'terminal':
         return renderTerminalSettings()
+      case 'security':
+        return <KnownHostsSettings />
       case 'mcp':
         return renderMcpSettings()
       case 'ai':

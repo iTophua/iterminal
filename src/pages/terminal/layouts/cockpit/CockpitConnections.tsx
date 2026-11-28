@@ -2,6 +2,9 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { App, AutoComplete, Button, Form, Input, Modal, Popconfirm, Select } from 'antd'
 import { ApiOutlined, CopyOutlined, DeleteOutlined, EditOutlined, ExportOutlined, ImportOutlined, LoadingOutlined, PlusOutlined, SearchOutlined, TagsOutlined } from '@ant-design/icons'
 import { invoke } from '@tauri-apps/api/core'
+import { testConnection, HostKeyDeclinedError } from '../../../../services/ssh'
+import SshConfigImport from '../../../../components/SshConfigImport'
+import BatchExecModal from '../../../../components/BatchExecModal'
 import type { ConnectedConnection, Connection } from '../../../../stores/terminalStore'
 import { useTerminalStore } from '../../../../stores/terminalStore'
 import { saveConnection, deleteConnection, getConnections, exportConnections, importConnections, downloadExportFile } from '../../../../services/database'
@@ -34,12 +37,15 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
   const [batchMode, setBatchMode] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [batchGroup, setBatchGroup] = useState<string | undefined>(undefined)
+  const [batchExecOpen, setBatchExecOpen] = useState(false)
   const [testLoading, setTestLoading] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'failed' | null>(null)
   const [testMessage, setTestMessage] = useState('')
   const [testCooldown, setTestCooldown] = useState(false)
   const testIdRef = useRef(0)
   const [form] = Form.useForm()
+  // 字段用 hidden 而不是按条件卸载：卸载会让 validateFields 丢掉它的值，编辑时把另一种凭据清空
+  const authMethod = Form.useWatch('authMethod', form) || 'password'
 
   /** 用表单当前值做一次真实连接+认证测试（与经典布局表单同一后端命令） */
   const handleTestConnection = useCallback(async () => {
@@ -56,20 +62,21 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
     }
     const currentTestId = ++testIdRef.current
     try {
-      const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile'])
+      const values = await form.validateFields(['host', 'port', 'username', 'password', 'keyFile', 'keyPassphrase', 'authMethod', 'jumpHostId'])
       const port = typeof values.port === 'string' ? parseInt(values.port, 10) || 22 : values.port || 22
       setTestLoading(true)
       setTestResult(null)
       setTestMessage('')
       const t0 = performance.now()
-      const result = await invoke<boolean>('test_connection', {
-        connection: {
-          host: values.host,
-          port,
-          username: values.username,
-          password: values.password || null,
-          key_file: values.keyFile || null,
-        }
+      const result = await testConnection({
+        host: values.host,
+        port,
+        username: values.username,
+        password: values.password || null,
+        keyFile: values.keyFile || null,
+        keyPassphrase: values.keyPassphrase || null,
+        authMethod: values.authMethod || 'password',
+        jumpHostId: values.jumpHostId || null,
       })
       if (testIdRef.current !== currentTestId) return
       const elapsed = Math.round(performance.now() - t0)
@@ -84,7 +91,7 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
       if (testIdRef.current !== currentTestId) return
       if (error && typeof error === 'object' && 'errorFields' in error) return // 表单校验错误，字段上已提示
       setTestResult('failed')
-      setTestMessage(`连接失败：${error}`)
+      setTestMessage(error instanceof HostKeyDeclinedError ? '已取消：未信任该主机的密钥' : `连接失败：${error}`)
     } finally {
       if (testIdRef.current === currentTestId) setTestLoading(false)
     }
@@ -125,7 +132,7 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
   const openCreate = useCallback(() => {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ port: 22, group: '默认' })
+    form.setFieldsValue({ port: 22, group: '默认', authMethod: 'password' })
     resetTestState()
     setFormOpen(true)
   }, [form, resetTestState])
@@ -136,6 +143,9 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
     form.setFieldsValue({
       name: conn.name, host: conn.host, port: conn.port, username: conn.username,
       password: conn.password || '', keyFile: conn.keyFile || '',
+      keyPassphrase: conn.keyPassphrase || '',
+      authMethod: conn.authMethod || (conn.keyFile ? 'publickey' : 'password'),
+      jumpHostId: conn.jumpHostId,
       group: conn.group || '默认', tags: (conn.tags || []).join(', '),
     })
     resetTestState()
@@ -154,6 +164,9 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
         username: values.username,
         password: values.password || undefined,
         keyFile: values.keyFile || undefined,
+        keyPassphrase: values.keyPassphrase || undefined,
+        authMethod: values.authMethod || 'password',
+        jumpHostId: values.jumpHostId || undefined,
         group: values.group || '默认',
         tags: (values.tags || '').split(/[,，]/).map((t: string) => t.trim()).filter(Boolean),
         status: 'offline',
@@ -179,6 +192,9 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
       name: `${conn.name} (副本)`,
       host: conn.host, port: conn.port, username: conn.username,
       password: conn.password || '', keyFile: conn.keyFile || '',
+      keyPassphrase: conn.keyPassphrase || '',
+      authMethod: conn.authMethod || (conn.keyFile ? 'publickey' : 'password'),
+      jumpHostId: conn.jumpHostId,
       group: conn.group || '默认', tags: (conn.tags || []).join(', '),
     })
     resetTestState()
@@ -231,6 +247,7 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
           >
             <ImportOutlined style={{ fontSize: 12 }} /> 导入
           </button>
+          <SshConfigImport buttonClassName="ck-conn-tool" onImported={() => void refresh()} />
           <input
             id="ck-conn-import"
             type="file"
@@ -299,6 +316,7 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
           >
             应用
           </button>
+          <button className="ck-conn-tool" disabled={selected.size === 0} onClick={() => setBatchExecOpen(true)}>批量执行</button>
           <button className="ck-conn-tool" onClick={() => { setSelected(new Set()) }}>清空选择</button>
         </div>
       )}
@@ -359,6 +377,12 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
         )}
       </div>
 
+      <BatchExecModal
+        open={batchExecOpen}
+        onClose={() => setBatchExecOpen(false)}
+        targets={allConnections.filter(conn => selected.has(conn.id)).map(({ id, name }) => ({ id, name }))}
+      />
+
       <Modal
         title={editing ? `编辑连接 · ${editing.name}` : '新建连接'}
         open={formOpen}
@@ -386,7 +410,7 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
           style={{ marginTop: 12 }}
           onValuesChange={changed => {
             // 连接相关字段变化后旧测试结果不再可信，立即清空
-            if (testMessage && ['host', 'port', 'username', 'password', 'keyFile'].some(f => f in changed)) {
+            if (testMessage && ['host', 'port', 'username', 'password', 'keyFile', 'keyPassphrase', 'authMethod', 'jumpHostId'].some(f => f in changed)) {
               setTestResult(null)
               setTestMessage('')
             }
@@ -404,8 +428,36 @@ export function CockpitConnections({ connectedConnections, onConnect }: CockpitC
           <Form.Item name="username" label="用户名" rules={[{ required: true, message: '请输入用户名' }]}>
             <Input placeholder="root" />
           </Form.Item>
-          <Form.Item name="password" label="密码"><Input.Password placeholder="密码认证（可留空）" autoComplete="new-password" /></Form.Item>
-          <Form.Item name="keyFile" label="私钥路径"><Input placeholder="/Users/you/.ssh/id_rsa（可留空）" /></Form.Item>
+          <Form.Item name="authMethod" label="认证方式">
+            <Select options={[
+              { value: 'password', label: '密码' },
+              { value: 'publickey', label: '私钥文件' },
+              { value: 'agent', label: 'ssh-agent（本机 agent 里的密钥）' },
+            ]} />
+          </Form.Item>
+          <Form.Item name="password" label="密码" hidden={authMethod !== 'password'}>
+            <Input.Password placeholder="密码认证（可留空）" autoComplete="new-password" />
+          </Form.Item>
+          {authMethod === 'agent' && (
+            <div style={{ fontSize: 12, color: 'var(--color-text-secondary)', marginTop: -12, marginBottom: 16 }}>
+              用本机 ssh-agent 里的密钥登录（系统钥匙串、YubiKey、1Password 等）。需 agent 在运行且已加载密钥（ssh-add -L 可查看）。
+            </div>
+          )}
+          <Form.Item name="keyFile" label="私钥路径" hidden={authMethod !== 'publickey'}>
+            <Input placeholder="/Users/you/.ssh/id_rsa（可留空）" />
+          </Form.Item>
+          <Form.Item name="keyPassphrase" label="私钥口令" hidden={authMethod !== 'publickey'}>
+            <Input.Password placeholder="私钥没设口令可留空" autoComplete="new-password" />
+          </Form.Item>
+          <Form.Item name="jumpHostId" label="跳板机">
+            <Select
+              allowClear
+              placeholder="不使用：直连"
+              options={allConnections
+                .filter(c => c.id !== editing?.id)
+                .map(c => ({ value: c.id, label: `${c.name}（${c.host}）` }))}
+            />
+          </Form.Item>
           <div style={{ display: 'flex', gap: 8 }}>
             <Form.Item name="group" label="分组" style={{ flex: 1 }}>
               {/* AutoComplete 取值为单字符串；勿用 Select mode="tags"（返回数组，

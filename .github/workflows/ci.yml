@@ -1,0 +1,97 @@
+name: CI
+
+# 每次 push / PR 都跑一遍类型检查、测试和构建。
+# 发版流程（打 tag → 构建 → Release）在 release.yml，那边只构建不测试；
+# 这里负责把关：测试不过就不该继续往 main 上叠。
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支来了新提交就取消还在跑的旧一轮
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: 前端（类型检查 + 测试 + 构建）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install
+
+      - name: 类型检查
+        run: pnpm exec tsc --noEmit
+
+      - name: 单元测试
+        run: pnpm exec vitest run
+
+      - name: 生产构建
+        run: pnpm run build
+
+      - name: MCP server 类型检查并构建
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm run build
+        working-directory: ./mcp
+
+  rust:
+    name: Rust 测试（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS 一并跑：窗口主题等代码只在 macos 下参与编译
+        os: [ubuntu-22.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 安装系统依赖（Ubuntu）
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+
+      # tauri 的构建脚本要求前端产物目录和打包资源都在：照 beforeBuildCommand 的步骤准备一遍
+      # （prepare-bundle 发现 MCP 没构建、缺依赖时会自己装并构建）
+      - name: 准备前端产物与 MCP 资源包
+        run: |
+          pnpm install
+          pnpm run build
+          node mcp/scripts/prepare-bundle.mjs
+
+      - name: 测试
+        run: cargo test --manifest-path src-tauri/Cargo.toml

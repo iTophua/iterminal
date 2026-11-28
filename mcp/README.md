@@ -70,12 +70,36 @@ MCP server 不再发布到 npm，而是**随 iTerminal 桌面应用分发**（�
 | `iter_quick_connect` | Connect saved profile by **name / IP / IP fragment** (e.g. `11.114`) |
 | `iter_list_saved_connections` | List saved profiles (compact text) |
 | `iter_save_connection` | Save new connection |
+| `iter_batch_exec` | Run one command on many connections concurrently and get per-host results (auto-connects saved profiles, disconnects after) |
+| `iter_preview_ssh_config` / `iter_import_ssh_config` | Preview / import `~/.ssh/config` Host entries as saved connections |
+| `iter_list_snippets` | List saved command snippets (`{{host}}`-style variables must be filled by the caller) |
+| `iter_list_known_hosts` / `iter_forget_known_host` | List / forget trusted host keys |
+| `iter_list_session_logs` / `iter_read_session_log` | List terminal session logs / read the tail of one (requires the user to enable session logging in Settings → Terminal) |
 | `iter_list_processes` | Top processes by memory (default 20) |
 | `iter_kill_process` | Kill process by pid |
 | `iter_compress` / `iter_extract` | tar.gz compress / extract |
 | `iter_search_files` | Glob search files |
 
 Token 消耗优化：返回统一紧凑序列化，大列表（目录/进程/连接）转紧凑文本行。
+
+## Host Key Verification
+
+iTerminal verifies the server's host key before authenticating, like OpenSSH does:
+
+- **Unknown key**: the connection is refused and the tool returns the SHA256 fingerprint. Ask the user to confirm it, then retry with `acceptHostKey: true` (same as OpenSSH's `accept-new`; the key is then recorded).
+- **Changed key**: always refused, and `acceptHostKey` does not apply. The user has to confirm it in iTerminal's warning dialog by connecting once from the app. Use `iter_forget_known_host` only after the user confirmed the server really changed its key.
+- Keys the user already trusts in `~/.ssh/known_hosts` are honored automatically; iTerminal never writes to that file.
+
+## Connection Options
+
+`iter_connect`, `iter_test_connection` and `iter_save_connection` accept:
+
+| Parameter | Meaning |
+|---|---|
+| `keyFile`, `keyPassphrase` | Private key file and its passphrase |
+| `authMethod` | `password` / `publickey` / `agent` (default: inferred from `keyFile`) |
+| `jumpHostId` | Saved connection id to use as a jump host (ProxyJump; chaining supported) |
+| `authAnswers` | Pre-filled answers for keyboard-interactive prompts (OTP etc.), in order. Without them the prompt is shown in the iTerminal window for the user to answer |
 
 ## Usage Examples
 

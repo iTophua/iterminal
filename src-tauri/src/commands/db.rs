@@ -16,6 +16,15 @@ pub struct ConnectionRecord {
     pub username: String,
     pub password: Option<String>,
     pub key_file: Option<String>,
+    /// 私钥口令（落库时与密码一样加密）
+    #[serde(default)]
+    pub key_passphrase: Option<String>,
+    /// 认证方式：password / publickey / agent；空则按 password / key_file 推断
+    #[serde(default)]
+    pub auth_method: Option<String>,
+    /// 跳板机：已保存连接的 id
+    #[serde(default)]
+    pub jump_host_id: Option<String>,
     pub group_name: Option<String>,
     pub tags: Option<String>,
     pub last_connected_at: Option<String>,
@@ -144,6 +153,15 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     if let Err(e) = conn.execute("ALTER TABLE connections ADD COLUMN key_file TEXT", []) {
         if !e.to_string().contains("duplicate column") {
             eprintln!("Warning: Failed to add key_file column: {}", e);
+        }
+    }
+
+    // 私钥口令 / 认证方式 / 跳板机
+    for column in ["key_passphrase TEXT", "auth_method TEXT", "jump_host_id TEXT"] {
+        if let Err(e) = conn.execute(&format!("ALTER TABLE connections ADD COLUMN {column}"), []) {
+            if !e.to_string().contains("duplicate column") {
+                eprintln!("Warning: Failed to add {column} column: {e}");
+            }
         }
     }
 
@@ -285,6 +303,20 @@ pub fn init_database(app_handle: tauri::AppHandle) -> Result<bool, String> {
     )
     .map_err(|e| e.to_string())?;
 
+    // 主机密钥信任记录（host_key.rs）：每台主机的每种密钥类型一条
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS known_hosts (
+            host TEXT NOT NULL,
+            port INTEGER NOT NULL,
+            key_type TEXT NOT NULL,
+            key TEXT NOT NULL,
+            first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (host, port, key_type)
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
     // 迁移：新增 result 列（存储 exec 命令的输出结果，截断到 2000 字符）
     // 失败说明列已存在，忽略
     let _ = conn.execute("ALTER TABLE mcp_logs ADD COLUMN result TEXT", []);
@@ -376,13 +408,15 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
     let conn = get_db()?;
 
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order FROM connections ORDER BY sort_order, name"
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order, key_passphrase, auth_method, jump_host_id FROM connections ORDER BY sort_order, name"
     ).map_err(|e| e.to_string())?;
 
     let connections = stmt
         .query_map([], |row| {
             let password_encrypted: Option<String> = row.get(5)?;
             let password = password_encrypted.and_then(|enc| decrypt_password(&enc));
+            let passphrase_encrypted: Option<String> = row.get(13)?;
+            let key_passphrase = passphrase_encrypted.and_then(|enc| decrypt_password(&enc));
 
             Ok(ConnectionRecord {
                 id: row.get(0)?,
@@ -392,6 +426,9 @@ pub fn get_connections() -> Result<Vec<ConnectionRecord>, String> {
                 username: row.get(4)?,
                 password,
                 key_file: row.get(6)?,
+                key_passphrase,
+                auth_method: row.get(14)?,
+                jump_host_id: row.get(15)?,
                 group_name: row.get(7)?,
                 tags: row.get(8)?,
                 last_connected_at: row.get(9)?,
@@ -418,9 +455,11 @@ pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
 
     let encrypted_password = connection.password.as_ref().map(|p| encrypt_password(p));
 
+    let encrypted_passphrase = connection.key_passphrase.as_ref().map(|p| encrypt_password(p));
+
     conn.execute(
-        "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+        "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, key_passphrase, auth_method, jump_host_id, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)",
         rusqlite::params![
             connection.id,
             connection.name,
@@ -431,6 +470,9 @@ pub fn save_connection(connection: ConnectionRecord) -> Result<bool, String> {
             connection.key_file,
             connection.group_name,
             connection.tags,
+            encrypted_passphrase,
+            connection.auth_method,
+            connection.jump_host_id,
         ],
     ).map_err(|e| e.to_string())?;
 
@@ -535,6 +577,9 @@ pub fn import_connections(json_data: String, merge: bool) -> Result<usize, Strin
             username: c.username,
             password: c.password,
             key_file: c.key_file,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
             group_name: c.group_name,
             tags: c.tags.map(|t| serde_json::to_string(&t).unwrap_or_default()),
             last_connected_at: c.last_connected_at,
@@ -555,9 +600,10 @@ pub fn import_connections(json_data: String, merge: bool) -> Result<usize, Strin
     let mut imported_count = 0;
     for record in connections {
         let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
+        let encrypted_passphrase = record.key_passphrase.as_ref().map(|p| encrypt_password(p));
         tx.execute(
-            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, key_passphrase, auth_method, jump_host_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)",
             rusqlite::params![
                 record.id,
                 record.name,
@@ -568,6 +614,9 @@ pub fn import_connections(json_data: String, merge: bool) -> Result<usize, Strin
                 record.key_file,
                 record.group_name,
                 record.tags,
+                encrypted_passphrase,
+                record.auth_method,
+                record.jump_host_id,
             ],
         ).map_err(|e| e.to_string())?;
         imported_count += 1;
@@ -621,9 +670,10 @@ pub fn import_all_data(json_data: String) -> Result<usize, String> {
     let mut imported_count = 0;
     for record in import_data.connections.clone() {
         let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
+        let encrypted_passphrase = record.key_passphrase.as_ref().map(|p| encrypt_password(p));
         tx.execute(
-            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, key_passphrase, auth_method, jump_host_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)",
             rusqlite::params![
                 record.id,
                 record.name,
@@ -634,6 +684,9 @@ pub fn import_all_data(json_data: String) -> Result<usize, String> {
                 record.key_file,
                 record.group_name,
                 record.tags,
+                encrypted_passphrase,
+                record.auth_method,
+                record.jump_host_id,
             ],
         ).map_err(|e| e.to_string())?;
         imported_count += 1;
@@ -724,11 +777,12 @@ pub fn migrate_from_localstorage(connections_json: String) -> Result<usize, Stri
     let mut migrated_count = 0;
     for record in connections {
         let encrypted_password = record.password.as_ref().map(|p| encrypt_password(p));
+        let encrypted_passphrase = record.key_passphrase.as_ref().map(|p| encrypt_password(p));
 
         // 使用 INSERT OR IGNORE 避免覆盖已有数据
         let result = tx.execute(
-            "INSERT OR IGNORE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP)",
+            "INSERT OR IGNORE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, key_passphrase, auth_method, jump_host_id, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP)",
             rusqlite::params![
                 record.id,
                 record.name,
@@ -739,6 +793,9 @@ pub fn migrate_from_localstorage(connections_json: String) -> Result<usize, Stri
                 record.key_file,
                 record.group_name,
                 record.tags,
+                encrypted_passphrase,
+                record.auth_method,
+                record.jump_host_id,
             ],
         );
 
@@ -794,13 +851,15 @@ pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionReco
     let limit = limit.unwrap_or(10);
 
     let mut stmt = conn.prepare(
-        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order FROM connections WHERE last_connected_at IS NOT NULL ORDER BY last_connected_at DESC LIMIT ?"
+        "SELECT id, name, host, port, username, password, key_file, group_name, tags, last_connected_at, created_at, updated_at, sort_order, key_passphrase, auth_method, jump_host_id FROM connections WHERE last_connected_at IS NOT NULL ORDER BY last_connected_at DESC LIMIT ?"
     ).map_err(|e| e.to_string())?;
 
     let connections = stmt
         .query_map([limit as i32], |row| {
             let password_encrypted: Option<String> = row.get(5)?;
             let password = password_encrypted.and_then(|enc| decrypt_password(&enc));
+            let passphrase_encrypted: Option<String> = row.get(13)?;
+            let key_passphrase = passphrase_encrypted.and_then(|enc| decrypt_password(&enc));
 
             Ok(ConnectionRecord {
                 id: row.get(0)?,
@@ -810,6 +869,9 @@ pub fn get_recent_connections(limit: Option<usize>) -> Result<Vec<ConnectionReco
                 username: row.get(4)?,
                 password,
                 key_file: row.get(6)?,
+                key_passphrase,
+                auth_method: row.get(14)?,
+                jump_host_id: row.get(15)?,
                 group_name: row.get(7)?,
                 tags: row.get(8)?,
                 last_connected_at: row.get(9)?,
@@ -1507,6 +1569,9 @@ mod tests {
                 username TEXT NOT NULL,
                 password TEXT,
                 key_file TEXT,
+                key_passphrase TEXT,
+                auth_method TEXT,
+                jump_host_id TEXT,
                 group_name TEXT,
                 tags TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -1537,9 +1602,11 @@ mod tests {
 
         let encrypted_password = connection.password.as_ref().map(|p| encrypt_password(p));
 
+        let encrypted_passphrase = connection.key_passphrase.as_ref().map(|p| encrypt_password(p));
+
         conn.execute(
-            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, updated_at, sort_order)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, CURRENT_TIMESTAMP, ?10)",
+            "INSERT OR REPLACE INTO connections (id, name, host, port, username, password, key_file, group_name, tags, key_passphrase, auth_method, jump_host_id, updated_at, sort_order)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, CURRENT_TIMESTAMP, ?13)",
             rusqlite::params![
                 connection.id,
                 connection.name,
@@ -1550,6 +1617,9 @@ mod tests {
                 connection.key_file,
                 connection.group_name,
                 connection.tags,
+                encrypted_passphrase,
+                connection.auth_method,
+                connection.jump_host_id,
                 connection.sort_order,
             ],
         ).map_err(|e| e.to_string())?;
@@ -1563,13 +1633,15 @@ mod tests {
         let conn = db.lock().map_err(|e| e.to_string())?;
 
         let mut stmt = conn.prepare(
-            "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at, sort_order FROM connections ORDER BY name"
+            "SELECT id, name, host, port, username, password, key_file, group_name, tags, created_at, updated_at, sort_order, key_passphrase, auth_method, jump_host_id FROM connections ORDER BY name"
         ).map_err(|e| e.to_string())?;
 
         let connections = stmt
             .query_map([], |row| {
                 let password_encrypted: Option<String> = row.get(5)?;
                 let password = password_encrypted.and_then(|enc| decrypt_password(&enc));
+                let passphrase_encrypted: Option<String> = row.get(12)?;
+                let key_passphrase = passphrase_encrypted.and_then(|enc| decrypt_password(&enc));
 
                 Ok(ConnectionRecord {
                     id: row.get(0)?,
@@ -1579,6 +1651,9 @@ mod tests {
                     username: row.get(4)?,
                     password,
                     key_file: row.get(6)?,
+                    key_passphrase,
+                    auth_method: row.get(13)?,
+                    jump_host_id: row.get(14)?,
                     group_name: row.get(7)?,
                     tags: row.get(8)?,
                     last_connected_at: None,
@@ -1612,6 +1687,9 @@ mod tests {
             username: "root".to_string(),
             password: Some("secret123".to_string()),
             key_file: None,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
             group_name: Some("Production".to_string()),
             tags: Some(r#"["tag1","tag2"]"#.to_string()),
             last_connected_at: None,
@@ -1641,6 +1719,9 @@ mod tests {
             username: "user".to_string(),
             password: Some("my_password".to_string()),
             key_file: None,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
             group_name: None,
             tags: None,
             last_connected_at: None,
@@ -1667,6 +1748,9 @@ mod tests {
             username: "user".to_string(),
             password: None,
             key_file: None,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
             group_name: None,
             tags: None,
             last_connected_at: None,
@@ -1694,6 +1778,9 @@ mod tests {
             username: "user".to_string(),
             password: None,
             key_file: None,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
             group_name: None,
             tags: None,
             last_connected_at: None,
@@ -1712,6 +1799,9 @@ mod tests {
             username: "admin".to_string(),
             password: Some("newpass".to_string()),
             key_file: None,
+            key_passphrase: None,
+            auth_method: None,
+            jump_host_id: None,
             group_name: Some("Production".to_string()),
             tags: None,
             last_connected_at: None,
@@ -1781,6 +1871,9 @@ mod tests {
                 username: "root".to_string(),
                 password: Some(format!("pass{}", i)),
                 key_file: None,
+                key_passphrase: None,
+                auth_method: None,
+                jump_host_id: None,
                 group_name: None,
                 tags: None,
             last_connected_at: None,

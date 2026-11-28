@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { Button, Tooltip, Empty, Input, Modal, Form, Select, App, Tag } from 'antd'
+import { Button, Tooltip, Empty, Input, Modal, Form, Select, App, Tag, Typography } from 'antd'
 import {
   CloseOutlined,
   PlusOutlined,
@@ -11,14 +11,17 @@ import {
 } from '@ant-design/icons'
 import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { listSnippets, saveSnippet, deleteSnippet, type Snippet } from '../services/snippets'
+import { findInputPrompts } from '../utils/snippetVariables'
 
 interface SnippetsPanelProps {
   onClose: () => void
-  /** 将命令插入当前活动终端的输入行（不自动执行） */
+  /** 将命令插入当前活动终端的输入行（不自动执行）。变量由终端一侧按当前连接展开 */
   onInsert?: (command: string) => void
+  /** 按当前连接展开变量后复制；不传则原样复制 */
+  onCopy?: (command: string) => Promise<void>
 }
 
-export default function SnippetsPanel({ onClose, onInsert }: SnippetsPanelProps) {
+export default function SnippetsPanel({ onClose, onInsert, onCopy }: SnippetsPanelProps) {
   const { message } = App.useApp()
   const [snippets, setSnippets] = useState<Snippet[]>([])
   const [loading, setLoading] = useState(false)
@@ -27,6 +30,9 @@ export default function SnippetsPanel({ onClose, onInsert }: SnippetsPanelProps)
   const [editVisible, setEditVisible] = useState(false)
   const [editing, setEditing] = useState<Snippet | null>(null)
   const [form] = Form.useForm()
+  // 片段里带 {{input:提示语}} 时，插入前先把值收齐
+  const [inputFor, setInputFor] = useState<{ command: string; prompts: string[] } | null>(null)
+  const [inputForm] = Form.useForm()
 
   const loadSnippets = useCallback(async () => {
     setLoading(true)
@@ -68,21 +74,32 @@ export default function SnippetsPanel({ onClose, onInsert }: SnippetsPanelProps)
 
   const handleCopy = useCallback(async (cmd: string) => {
     try {
-      await writeText(cmd)
+      if (onCopy) {
+        await onCopy(cmd)
+      } else {
+        await writeText(cmd)
+      }
       message.success('已复制到剪贴板')
     } catch (err) {
       message.error(`复制失败: ${err}`)
     }
-  }, [message])
+  }, [onCopy, message])
 
   const handleInsert = useCallback((cmd: string) => {
-    if (onInsert) {
-      onInsert(cmd)
-      message.success('已插入终端')
-    } else {
+    if (!onInsert) {
       handleCopy(cmd)
+      return
     }
-  }, [onInsert, handleCopy, message])
+    const prompts = findInputPrompts(cmd)
+    if (prompts.length > 0) {
+      // {{input:…}} 先弹窗收值；其余变量由终端按当前连接展开
+      inputForm.resetFields()
+      setInputFor({ command: cmd, prompts })
+      return
+    }
+    onInsert(cmd)
+    message.success('已插入终端')
+  }, [onInsert, handleCopy, message, inputForm])
 
   const handleEdit = useCallback((snippet: Snippet | null) => {
     setEditing(snippet)
@@ -261,6 +278,38 @@ export default function SnippetsPanel({ onClose, onInsert }: SnippetsPanelProps)
         )}
       </div>
 
+      {/* {{input:提示语}} 收集：插入前让用户补值 */}
+      <Modal
+        title="补充片段内容"
+        open={inputFor !== null}
+        okText="插入"
+        cancelText="取消"
+        onCancel={() => setInputFor(null)}
+        onOk={async () => {
+          const values = await inputForm.validateFields()
+          const answers = (inputFor?.prompts ?? []).map((_, i) => String(values[`v${i}`] ?? ''))
+          const command = (inputFor?.command ?? '').replace(
+            /\{\{\s*input:[\s\S]*?\s*\}\}/gi,
+            () => answers.shift() ?? '',
+          )
+          setInputFor(null)
+          onInsert?.(command)
+          message.success('已插入终端')
+        }}
+        destroyOnClose
+      >
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12 }}>
+          这个片段有需要你填写的地方：
+        </Typography.Paragraph>
+        <Form form={inputForm} layout="vertical">
+          {inputFor?.prompts.map((prompt, i) => (
+            <Form.Item key={`${i}-${prompt}`} name={`v${i}`} label={prompt}>
+              <Input autoFocus={i === 0} allowClear />
+            </Form.Item>
+          ))}
+        </Form>
+      </Modal>
+
       {/* 编辑/新建对话框 */}
       <Modal
         title={editing ? '编辑片段' : '新建片段'}
@@ -278,6 +327,18 @@ export default function SnippetsPanel({ onClose, onInsert }: SnippetsPanelProps)
           <Form.Item name="command" label="命令" rules={[{ required: true, message: '请输入命令' }]}>
             <Input.TextArea placeholder="systemctl restart nginx" autoSize={{ minRows: 2, maxRows: 6 }} />
           </Form.Item>
+          <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginTop: -12 }}>
+            可用变量（花括号写法，不影响命令里 shell 自己的 $VAR）：
+            <Typography.Text code>{'{{host}}'}</Typography.Text>
+            <Typography.Text code>{'{{port}}'}</Typography.Text>
+            <Typography.Text code>{'{{user}}'}</Typography.Text>
+            <Typography.Text code>{'{{name}}'}</Typography.Text>
+            <Typography.Text code>{'{{date}}'}</Typography.Text>
+            <Typography.Text code>{'{{time}}'}</Typography.Text>
+            <Typography.Text code>{'{{uuid}}'}</Typography.Text>
+            ；<Typography.Text code>{'{{cursor}}'}</Typography.Text> 标记插入后光标停的位置；
+            <Typography.Text code>{'{{input:提示语}}'}</Typography.Text> 插入时弹窗让你填一个值。
+          </Typography.Paragraph>
           <Form.Item name="description" label="说明（可选）">
             <Input placeholder="这条命令的用途" allowClear />
           </Form.Item>
